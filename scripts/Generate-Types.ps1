@@ -18,6 +18,8 @@ $Types.Add('export type Signal = { read Connect: (Self: Signal, Callback: (...an
 $Types.Add('export type Vector2 = { read X: number, read Y: number }')
 $Types.Add('export type UDim = { read Scale: number, read Offset: number }')
 $Types.Add('export type UDim2 = { read X: UDim, read Y: UDim }')
+$Types.Add('export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2 }')
+$Types.Add('export type PointerInputSignal = { read Connect: (Self: PointerInputSignal, Callback: (Input: PointerInput) -> ()) -> Connection }')
 $Types.Add('')
 
 $ClassMap = @{}
@@ -43,7 +45,10 @@ foreach ($Class in $Schema.classes) {
         if (-not $MethodTypes.ContainsKey($Method)) { throw "[LUI:Reflection] Unknown method: $Method" }
         $Types.Add("    read ${Method}: $($MethodTypes[$Method]),")
     }
-    foreach ($Signal in $Class.signals) { $Types.Add("    read ${Signal}: Signal,") }
+    foreach ($Signal in $Class.signals) {
+        $SignalType = if ($Signal -in @('InputBegan', 'InputChanged', 'InputEnded')) { 'PointerInputSignal' } else { 'Signal' }
+        $Types.Add("    read ${Signal}: $SignalType,")
+    }
     $Types.Add('}')
     $Types.Add('')
 }

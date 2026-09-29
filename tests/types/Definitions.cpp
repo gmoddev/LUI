@@ -46,6 +46,11 @@ int main() {
         local Windows = app:GetService("WindowService"):GetWindows()
         local BackendName: string = app:GetService("PlatformService").BackendName
         Input.TextChanged:Connect(function() Slider.Value = 6 end)
+        Input.InputBegan:Connect(function(Event)
+            local Position: Vector2 = Event.Position
+            local PointerId: number = Event.PointerId
+            assert(Position.X >= 0 and PointerId >= 0)
+        end)
         Window.Visible = #Windows > 0 and BackendName ~= ""
         local Width: number = Root.AbsoluteSize.X
         assert(Width >= 0)
@@ -55,6 +60,13 @@ int main() {
         --!strict
         local Root = Instance.new("Frame", {})
         Root.AbsoluteSize = Vector2.new(1, 1)
+    )");
+    Resolver.Scripts.emplace("inputReadOnly", R"(
+        --!strict
+        local Input = Instance.new("TextBox", {})
+        Input.InputBegan:Connect(function(Event)
+            Event.PointerId = 5
+        end)
     )");
     Resolver.Scripts.emplace("unknownClass", R"(
         --!strict
@@ -111,6 +123,7 @@ int main() {
     for (const Luau::TypeError& Error : ReadOnly.errors)
         FoundReadOnlyError |= Luau::toString(Error).find("read-only") != std::string::npos;
     Failures += Check(FoundReadOnlyError, "read-only property assignment was not rejected as read-only");
+    Failures += Check(!Frontend.check("inputReadOnly").errors.empty(), "read-only input payload assignment typechecked");
     Luau::CheckResult UnknownClass = Frontend.check("unknownClass");
     Failures += Check(!UnknownClass.errors.empty(), "unknown class typechecked");
     Failures += Check(!Frontend.check("invalidInit").errors.empty(), "invalid typed constructor properties typechecked");

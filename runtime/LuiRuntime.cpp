@@ -39,6 +39,12 @@ struct BoundsValue {
     double Height = 0;
 };
 
+struct PointerInputValue {
+    unsigned int PointerId = 0;
+    std::string Device;
+    VectorValue Position;
+};
+
 struct Node {
     int Id = 0;
     int Reference = 0;
@@ -50,6 +56,7 @@ struct Node {
     bool Checked = false;
     bool IsFocused = false;
     bool IsHovered = false;
+    std::unordered_map<unsigned int, PointerInputValue> ActivePointers;
     std::string ClassName;
     std::string Name;
     std::string Title;
@@ -293,13 +300,24 @@ static std::string FormatSize(const SizeValue& Value) {
     return Buffer;
 }
 
-static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal) {
+static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
+    const PointerInputValue* Input = nullptr) {
     const std::vector<int> Snapshot = Value->Listeners;
     for (int Id : Snapshot) {
         auto Found = Runtime->Listeners.find(Id);
         if (Found == Runtime->Listeners.end() || !Found->second.Active || Found->second.Signal != Signal || Value->Destroyed) continue;
         lua_getref(Runtime->State, Found->second.Reference);
-        if (lua_pcall(Runtime->State, 0, 0, 0) != LUA_OK) {
+        if (Input) {
+            lua_createtable(Runtime->State, 0, 3);
+            lua_pushstring(Runtime->State, Input->Device.c_str());
+            lua_setfield(Runtime->State, -2, "Device");
+            lua_pushnumber(Runtime->State, Input->PointerId);
+            lua_setfield(Runtime->State, -2, "PointerId");
+            PushVector(Runtime->State, Input->Position);
+            lua_setfield(Runtime->State, -2, "Position");
+            lua_setreadonly(Runtime->State, -1, true);
+        }
+        if (lua_pcall(Runtime->State, Input ? 1 : 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau callback failed";
             EmitLog(Runtime, "Error", "Signal: " + Runtime->LastError);
@@ -308,16 +326,27 @@ static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal) {
     }
 }
 
-static void ClearInvalidHover(LuiRuntime* Runtime) {
-    std::vector<int> HoveredIds;
+static void ClearInvalidInput(LuiRuntime* Runtime) {
+    std::vector<int> InvalidIds;
     for (const auto& Pair : Runtime->Nodes) {
-        if (Pair.second->IsHovered && !CanReceiveInput(Runtime, Pair.second.get())) HoveredIds.push_back(Pair.first);
+        if ((Pair.second->IsHovered || !Pair.second->ActivePointers.empty()) &&
+            !CanReceiveInput(Runtime, Pair.second.get())) InvalidIds.push_back(Pair.first);
     }
-    for (int Id : HoveredIds) {
+    std::sort(InvalidIds.begin(), InvalidIds.end());
+    for (int Id : InvalidIds) {
         Node* Value = Runtime->Nodes.at(Id).get();
-        if (!Value->IsHovered || CanReceiveInput(Runtime, Value)) continue;
-        Value->IsHovered = false;
-        FireSignal(Runtime, Value, "MouseLeave");
+        if (CanReceiveInput(Runtime, Value)) continue;
+        auto ActivePointers = std::move(Value->ActivePointers);
+        Value->ActivePointers.clear();
+        if (Value->IsHovered) {
+            Value->IsHovered = false;
+            FireSignal(Runtime, Value, "MouseLeave");
+        }
+        std::vector<unsigned int> PointerIds;
+        for (const auto& Pair : ActivePointers) PointerIds.push_back(Pair.first);
+        std::sort(PointerIds.begin(), PointerIds.end());
+        for (unsigned int PointerId : PointerIds)
+            FireSignal(Runtime, Value, "InputEnded", &ActivePointers.at(PointerId));
     }
 }
 
@@ -360,7 +389,7 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
     if (Parent) Parent->Children.push_back(Value->Id);
     QueueParent(Runtime, Value);
     Runtime->LayoutDirty = true;
-    ClearInvalidHover(Runtime);
+    ClearInvalidInput(Runtime);
     FireSignal(Runtime, Value, "Changed");
 }
 
@@ -413,13 +442,13 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         if (lua_type(State, ValueIndex) != LUA_TBOOLEAN) luaL_error(State, "Visible must be boolean");
         Value->Visible = lua_toboolean(State, ValueIndex) != 0;
         QueueProperty(Runtime, Value, Name, Value->Visible ? "true" : "false");
-        if (!Value->Visible) ClearInvalidHover(Runtime);
+        if (!Value->Visible) ClearInvalidInput(Runtime);
     } else if (Key == "Enabled" || Key == "Checked") {
         if (lua_type(State, ValueIndex) != LUA_TBOOLEAN) luaL_error(State, "%s must be boolean", Name);
         bool Parsed = lua_toboolean(State, ValueIndex) != 0;
         if (Key == "Enabled") {
             Value->Enabled = Parsed;
-            if (!Parsed) ClearInvalidHover(Runtime);
+            if (!Parsed) ClearInvalidInput(Runtime);
         }
         else Value->Checked = Parsed;
         QueueProperty(Runtime, Value, Name, Parsed ? "true" : "false");
@@ -675,7 +704,8 @@ static int NodeIndex(lua_State* State) {
     const bool IsMethod = Key == "Destroy" || Key == "Clone" || Key == "GetChildren" ||
         Key == "GetDescendants" || Key == "FindFirstChild" || Key == "IsA";
     const bool IsSignal = Key == "Changed" || Key == "Destroying" ||
-        ((Key == "Focused" || Key == "FocusLost" || Key == "MouseEnter" || Key == "MouseLeave") &&
+        ((Key == "Focused" || Key == "FocusLost" || Key == "MouseEnter" || Key == "MouseLeave" ||
+            Key == "InputBegan" || Key == "InputChanged" || Key == "InputEnded") &&
             LuiSchema::IsA(Value->ClassName, "GuiObject")) ||
         (Key == "Activated" && (Value->ClassName == "TextButton" || Value->ClassName == "CheckBox")) ||
         (Key == "TextChanged" && Value->ClassName == "TextBox") ||
@@ -736,6 +766,9 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "FocusLost" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "FocusLost");
     else if (Key == "MouseEnter" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "MouseEnter");
     else if (Key == "MouseLeave" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "MouseLeave");
+    else if (Key == "InputBegan" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "InputBegan");
+    else if (Key == "InputChanged" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "InputChanged");
+    else if (Key == "InputEnded" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "InputEnded");
     else if (Key == "Changed") PushSignal(State, Value, "Changed");
     else if (Key == "Destroying") PushSignal(State, Value, "Destroying");
     else lua_pushnil(State);
@@ -1293,6 +1326,39 @@ extern "C" LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, in
     if (Value->IsHovered != Parsed) {
         Value->IsHovered = Parsed;
         FireSignal(Runtime, Value, Parsed ? "MouseEnter" : "MouseLeave");
+    }
+    FlushLayout(Runtime);
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
+    unsigned int PointerId, double X, double Y) {
+    if (!CheckOwner(Runtime) || Phase < 0 || Phase > 3 || Device < 0 || Device > 3 ||
+        (Phase != 3 && (!std::isfinite(X) || !std::isfinite(Y)))) return 0;
+    auto Found = Runtime->Nodes.find(Id);
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
+        !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
+    Node* Value = Found->second.get();
+    auto Active = Value->ActivePointers.find(PointerId);
+    static const char* Devices[] = {"Mouse", "Pen", "Touch", "Touchpad"};
+    if (Phase == 0) {
+        if (!CanReceiveInput(Runtime, Value)) return 0;
+        if (Active == Value->ActivePointers.end()) {
+            PointerInputValue Input{PointerId, Devices[Device], {X, Y}};
+            Value->ActivePointers.emplace(PointerId, Input);
+            FireSignal(Runtime, Value, "InputBegan", &Input);
+        }
+    } else if (Phase == 1) {
+        if (!CanReceiveInput(Runtime, Value)) return 0;
+        PointerInputValue Input{PointerId, Devices[Device], {X, Y}};
+        if (Active != Value->ActivePointers.end()) Active->second = Input;
+        FireSignal(Runtime, Value, "InputChanged", &Input);
+    } else {
+        if (Active == Value->ActivePointers.end()) return 0;
+        PointerInputValue Input = Active->second;
+        if (Phase == 2) Input.Position = {X, Y};
+        Value->ActivePointers.erase(Active);
+        FireSignal(Runtime, Value, "InputEnded", &Input);
     }
     FlushLayout(Runtime);
     return 1;

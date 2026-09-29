@@ -4,6 +4,8 @@ export type Signal = { read Connect: (Self: Signal, Callback: (...any) -> ()) ->
 export type Vector2 = { read X: number, read Y: number }
 export type UDim = { read Scale: number, read Offset: number }
 export type UDim2 = { read X: UDim, read Y: UDim }
+export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2 }
+export type PointerInputSignal = { read Connect: (Self: PointerInputSignal, Callback: (Input: PointerInput) -> ()) -> Connection }
 
 export type Instance = {
     Name: string,
@@ -40,6 +42,9 @@ export type GuiObject = Instance & {
     read FocusLost: Signal,
     read MouseEnter: Signal,
     read MouseLeave: Signal,
+    read InputBegan: PointerInputSignal,
+    read InputChanged: PointerInputSignal,
+    read InputEnded: PointerInputSignal,
 }
 
 export type Frame = GuiObject & {

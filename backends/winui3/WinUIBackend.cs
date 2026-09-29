@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 
 namespace Lui.WinUI;
@@ -153,12 +154,53 @@ internal sealed class WinUIBackend
                 NewView.Element.GotFocus += (_, _) => { Diagnostic($"GotFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 1); };
                 NewView.Element.LostFocus += (_, _) => { Diagnostic($"LostFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 0); };
                 NewView.Element.PointerEntered += (_, _) => { Diagnostic($"PointerEntered {Id}"); Native.Lui_HoverChanged(Runtime, Id, 1); };
-                NewView.Element.PointerExited += (_, _) => { Diagnostic($"PointerExited {Id}"); Native.Lui_HoverChanged(Runtime, Id, 0); };
+                NewView.Element.PointerExited += (_, Args) => {
+                    Diagnostic($"PointerExited {Id}");
+                    Native.Lui_HoverChanged(Runtime, Id, 0);
+                    OnPointerInput(Id, NewView, 3, Args);
+                };
+                NewView.Element.AddHandler(UIElement.PointerPressedEvent,
+                    new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 0, Args)), true);
+                NewView.Element.AddHandler(UIElement.PointerMovedEvent,
+                    new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 1, Args)), true);
+                NewView.Element.AddHandler(UIElement.PointerReleasedEvent,
+                    new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 2, Args)), true);
+                NewView.Element.AddHandler(UIElement.PointerCanceledEvent,
+                    new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
+                NewView.Element.AddHandler(UIElement.PointerCaptureLostEvent,
+                    new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
             }
             Views.Add(Id, NewView);
             Diagnostic($"Create end {Id} {ClassName}");
         }
         catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Create: " + Error); }
+    }
+
+    private void OnPointerInput(int Id, View Target, int Phase, PointerRoutedEventArgs Args)
+    {
+        try
+        {
+            if (Target.Element is null) return;
+            int Device = Args.Pointer.PointerDeviceType switch
+            {
+                Microsoft.UI.Input.PointerDeviceType.Mouse => 0,
+                Microsoft.UI.Input.PointerDeviceType.Pen => 1,
+                Microsoft.UI.Input.PointerDeviceType.Touch => 2,
+                Microsoft.UI.Input.PointerDeviceType.Touchpad => 3,
+                _ => -1,
+            };
+            if (Device < 0) return;
+            if (Phase == 3)
+            {
+                Diagnostic($"PointerCanceled {Id} {Args.Pointer.PointerId}");
+                Native.Lui_PointerInput(Runtime, Id, Phase, Device, Args.Pointer.PointerId, 0, 0);
+                return;
+            }
+            var Point = Args.GetCurrentPoint(Target.Element);
+            Diagnostic($"PointerInput {Id} {Phase} {Device} {Point.PointerId} {Point.Position.X} {Point.Position.Y}");
+            Native.Lui_PointerInput(Runtime, Id, Phase, Device, Point.PointerId, Point.Position.X, Point.Position.Y);
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer: " + Error); }
     }
 
     private void OnProperty(IntPtr Context, int Id, string Name, string Value)
@@ -334,6 +376,9 @@ internal sealed class WinUIBackend
         internal static extern int Lui_FocusChanged(IntPtr Runtime, int Id, int Focused);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_HoverChanged(IntPtr Runtime, int Id, int Hovered);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_PointerInput(IntPtr Runtime, int Id, int Phase, int Device,
+            uint PointerId, double X, double Y);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_Pump(IntPtr Runtime);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

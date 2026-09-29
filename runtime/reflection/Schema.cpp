@@ -7,7 +7,7 @@ namespace LuiSchema {
 static constexpr ClassDefinition Classes[] = {
     {"Instance", "", false, false, "Destroy,Clone,GetChildren,GetDescendants,FindFirstChild,IsA", "Changed,Destroying"},
     {"Window", "Instance", true, true, "", ""},
-    {"GuiObject", "Instance", false, false, "", "Focused,FocusLost,MouseEnter,MouseLeave"},
+    {"GuiObject", "Instance", false, false, "", "Focused,FocusLost,MouseEnter,MouseLeave,InputBegan,InputChanged,InputEnded"},
     {"Frame", "GuiObject", true, true, "", ""},
     {"TextLabel", "GuiObject", true, true, "", ""},
     {"GuiButton", "GuiObject", false, false, "", ""},

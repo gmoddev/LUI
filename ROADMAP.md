@@ -17,7 +17,7 @@ Build the embedded Luau VM, one UI scheduler, `Instance`, properties, `Signal`/`
 
 ## Foundation 1 — Canonical UI semantics
 
-**Status:** in progress. Shared reflection, generated and typechecked Luau definitions, API docs, derived geometry, padding/list/grid layout, size constraints, common controls, focus and hover signals, basic services, and headless conformance tests are implemented. Native control qualification and the remaining semantic scope are tracked in [Foundation 1 notes](docs/FOUNDATION-1.md).
+**Status:** in progress. Shared reflection, generated and typechecked Luau definitions, API docs, derived geometry, padding/list/grid layout, size constraints, common controls, focus, hover, and pointer input signals, basic services, and headless conformance tests are implemented. Native control qualification and the remaining semantic scope are tracked in [Foundation 1 notes](docs/FOUNDATION-1.md).
 
 Define and test property defaults and validation, lifecycle, layout, input, focus, common controls, basic services, reflection, generated Luau types, and a backend conformance suite. This is the semantic baseline for other backends.
 

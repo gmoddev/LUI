@@ -80,4 +80,12 @@ Button.MouseLeave:Connect(function()
     Button.Text = "Submit"
 end)
 
+Button.InputBegan:Connect(function(Event)
+    print("[LUI:Input] Press " .. Event.Device .. " #" .. Event.PointerId)
+end)
+
+Button.InputEnded:Connect(function(Event)
+    print("[LUI:Input] Release " .. Event.Device .. " #" .. Event.PointerId)
+end)
+
 Window.Visible = true

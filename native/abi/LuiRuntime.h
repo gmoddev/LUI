@@ -40,6 +40,9 @@ LUI_API int LUI_CALL Lui_CheckedChanged(LuiRuntime* Runtime, int Id, int Checked
 LUI_API int LUI_CALL Lui_ValueChanged(LuiRuntime* Runtime, int Id, double Value);
 LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, int Focused);
 LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered);
+/* Phase: 0 pressed, 1 moved, 2 released, 3 canceled. Device: 0 mouse, 1 pen, 2 touch, 3 touchpad. */
+LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
+    unsigned int PointerId, double X, double Y);
 LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetLastError(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetSchemaJson(void);

@@ -820,6 +820,8 @@ FocusLost
 
 The backend converts platform events into canonical LUI events.
 
+In the current Foundation 1 implementation, `InputBegan`, `InputChanged`, and `InputEnded` report pointer press, movement, and release or cancellation on `GuiObject`. The callback receives a read-only `PointerInput` value with a portable device name (`Mouse`, `Pen`, `Touch`, or `Touchpad`), a pointer ID, and a position in the target object's logical coordinates. Movement may occur without a press. The runtime pairs accepted presses with one end event; hiding, disabling, or reparenting an active target under a hidden ancestor ends its presses. Keyboard input remains planned.
+
 Focus navigation must not depend on backend-specific application code.
 
 Keyboard, pointer, touch, and accessibility activation should converge on common semantic events such as `Activated` whenever appropriate.
