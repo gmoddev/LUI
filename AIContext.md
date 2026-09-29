@@ -1,6 +1,6 @@
 # AI context for LUI
 
-Read this before making changes. LUI is at **documentation and repository scaffold** stage. No runtime, backend, CLI, generated types, or application package is implemented. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
+Read this before making changes. LUI is at **Foundation 0 development proof** stage. The native Luau runtime, small Instance model, WinUI host, and headless tests build. Interactive GUI behavior has not yet been qualified. No CLI, generated types, production package, or other platform backend exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
 
 ## Project intent
 
@@ -23,5 +23,7 @@ Build a native desktop framework where ordinary Luau application code uses Roblo
 3. Define semantics and tests at the runtime boundary before coupling an API to a backend.
 4. Update documentation when changing public behavior. Capture settled decisions in `docs/decisions/`.
 5. State exactly what was built and verified, including platform and tooling limitations.
+
+Foundation 0's internal C host callbacks are in `native/abi/LuiRuntime.h`. They are not the stable extension ABI described for Foundation 2. See [Foundation 0 notes](docs/FOUNDATION-0.md) for the implemented Luau surface and build instructions.
 
 The examples in the original spec are design illustrations. New code should follow the repository naming and diagnostic conventions in [AGENTS.md](AGENTS.md).

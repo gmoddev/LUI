@@ -2,7 +2,7 @@
 
 LUI (Luau UI) is a planned native desktop application framework with Roblox-like Luau semantics. Application code creates `Instance` objects, sets properties, connects signals, and uses services. LUI owns layout, lifecycle, scheduling, and input semantics; platform backends render native controls.
 
-**Status:** repository foundation and design documentation. There is no runnable framework, build, or released package yet. The first implementation target is a small Windows proof using embedded Luau and WinUI 3.
+**Status:** Foundation 0 development proof. The native runtime and WinUI 3 host build, and the headless semantic tests pass. GUI launch and visual behavior still need an interactive desktop check. This is not a released package or production SDK.
 
 ```lua
 local Window = Instance.new("Window", {
@@ -21,12 +21,13 @@ end)
 Window.Visible = true
 ```
 
-This is target API syntax from the design, not an executable example today.
+This syntax is implemented in the Foundation 0 proof. See [build and run instructions](docs/FOUNDATION-0.md) and the [working example](examples/hello.luau).
 
 ## Design
 
 - [Full product and architecture specification](docs/SPEC.md)
 - [Architecture summary and boundaries](docs/ARCHITECTURE.md)
+- [Foundation 0 build and scope](docs/FOUNDATION-0.md)
 - [Roadmap and milestone acceptance criteria](ROADMAP.md)
 - [AI and contributor context](AIContext.md)
 - [Agent instructions](AGENTS.md)
@@ -47,7 +48,7 @@ LUI's public semantics are backend independent. The first backend is WinUI 3 on 
 | `tests/` | Runtime, layout, conformance, integration tests |
 | `docs/` | Specification and architecture records |
 
-These directories mark intended module boundaries. They contain no implementation yet.
+Implementation currently lives in `runtime/`, `native/abi/`, `backends/winui3/`, `tests/runtime/`, and `examples/`. Other directories mark planned module boundaries.
 
 ## Contributing
 

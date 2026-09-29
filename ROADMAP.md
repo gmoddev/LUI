@@ -4,6 +4,8 @@ The foundations below follow the [LUI specification](docs/SPEC.md#52-short-roadm
 
 ## Foundation 0 — Runtime and Windows proof
 
+**Status:** native runtime and WinUI host build; headless semantics pass. Interactive GUI launch and visual qualification remain to be checked. See [Foundation 0 notes](docs/FOUNDATION-0.md).
+
 Build the embedded Luau VM, one UI scheduler, `Instance`, properties, `Signal`/`Connection`, parenting, basic lifecycle, `UDim`/`UDim2`, simple layout, and a minimal WinUI 3 backend for `Window`, `Frame`, `TextLabel`, and `TextButton`.
 
 **Exit criteria**
@@ -43,4 +45,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Begin Foundation 0 with a small buildable runtime skeleton and a written backend contract. Decide and pin the initial Luau revision, C++ toolchain, Windows App SDK version, dependency acquisition method, and supported Windows baseline as part of that implementation. Do not claim a build or platform guarantee until it is verified.
+Qualify the Foundation 0 executable in an interactive Windows desktop session, then close any issues found in control creation, sizing, visibility, and activation. After that, start Foundation 1's canonical semantic model and conformance suite.
