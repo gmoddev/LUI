@@ -9,6 +9,11 @@ namespace Lui.WinUI;
 
 internal sealed class WinUIBackend
 {
+    internal static void Diagnostic(string Message)
+    {
+        LuiDiagnostics.Log("WinUI", Message);
+    }
+
     private sealed class View
     {
         public Microsoft.UI.Xaml.Window? Window;
@@ -26,7 +31,9 @@ internal sealed class WinUIBackend
     private readonly Native.ParentCallback ParentCallback;
     private readonly Native.ArrangeCallback ArrangeCallback;
     private readonly Native.DestroyCallback DestroyCallback;
+    private readonly Native.LogCallback LogCallback;
     private readonly IntPtr Runtime;
+    private string LastReportedError = string.Empty;
 
     public string LastError => Marshal.PtrToStringUTF8(Native.Lui_GetLastError(Runtime)) ?? "unknown error";
 
@@ -37,8 +44,10 @@ internal sealed class WinUIBackend
         ParentCallback = OnParent;
         ArrangeCallback = OnArrange;
         DestroyCallback = OnDestroy;
+        LogCallback = OnNativeLog;
         Runtime = Native.Lui_Create();
         if (Runtime == IntPtr.Zero) throw new InvalidOperationException("Could not initialize Luau");
+        Native.Lui_SetLogCallback(Runtime, IntPtr.Zero, LogCallback);
         Native.Lui_SetBackendName(Runtime, "winui3");
         Native.Lui_SetBackend(Runtime, new Native.BackendCallbacks
         {
@@ -58,15 +67,36 @@ internal sealed class WinUIBackend
         }
         catch (Exception Error)
         {
-            Trace.TraceError("[LUI:WinUI] {0}", Error);
+            LuiDiagnostics.Error("WinUI", Error.ToString());
             return false;
         }
     }
 
-    public void Pump() => Native.Lui_Pump(Runtime);
+    public void Pump()
+    {
+        int Completed = Native.Lui_Pump(Runtime);
+        if (Completed > 0) LuiDiagnostics.Log("Scheduler", $"Completed {Completed} callback(s)");
+        string Error = LastError;
+        if (!string.IsNullOrEmpty(Error) && Error != LastReportedError)
+        {
+            LastReportedError = Error;
+            LuiDiagnostics.Error("Runtime", Error);
+        }
+    }
+
+    private static void OnNativeLog(IntPtr Context, string Level, string Message)
+    {
+        if (Level == "Error") LuiDiagnostics.Error("Luau", Message);
+        else
+        {
+            Trace.WriteLine("[LUI:Luau] " + Message);
+            LuiDiagnostics.Log("Luau", Message);
+        }
+    }
 
     private void OnCreate(IntPtr Context, int Id, string ClassName)
     {
+        Diagnostic($"Create begin {Id} {ClassName}");
         try
         {
             View NewView = new();
@@ -86,31 +116,31 @@ internal sealed class WinUIBackend
                     break;
                 case "TextButton":
                     Button Button = new();
-                    Button.Click += (_, _) => Native.Lui_Activate(Runtime, Id);
+                    Button.Click += (_, _) => { Diagnostic($"Click {Id}"); Native.Lui_Activate(Runtime, Id); };
                     NewView.Element = Button;
                     break;
                 case "TextBox":
                     TextBox Input = new();
                     Input.TextChanged += (_, _) => {
-                        if (!NewView.ApplyingProperty) Native.Lui_TextChanged(Runtime, Id, Input.Text);
+                        if (!NewView.ApplyingProperty) { Diagnostic($"TextChanged {Id}"); Native.Lui_TextChanged(Runtime, Id, Input.Text); }
                     };
                     NewView.Element = Input;
                     break;
                 case "CheckBox":
                     CheckBox Check = new();
                     Check.Checked += (_, _) => {
-                        if (!NewView.ApplyingProperty) Native.Lui_CheckedChanged(Runtime, Id, 1);
+                        if (!NewView.ApplyingProperty) { Diagnostic($"Checked {Id}"); Native.Lui_CheckedChanged(Runtime, Id, 1); }
                     };
                     Check.Unchecked += (_, _) => {
-                        if (!NewView.ApplyingProperty) Native.Lui_CheckedChanged(Runtime, Id, 0);
+                        if (!NewView.ApplyingProperty) { Diagnostic($"Unchecked {Id}"); Native.Lui_CheckedChanged(Runtime, Id, 0); }
                     };
-                    Check.Click += (_, _) => Native.Lui_Activate(Runtime, Id);
+                    Check.Click += (_, _) => { Diagnostic($"Click {Id}"); Native.Lui_Activate(Runtime, Id); };
                     NewView.Element = Check;
                     break;
                 case "Slider":
                     Slider Slider = new();
                     Slider.ValueChanged += (_, Args) => {
-                        if (!NewView.ApplyingProperty) Native.Lui_ValueChanged(Runtime, Id, Args.NewValue);
+                        if (!NewView.ApplyingProperty) { Diagnostic($"ValueChanged {Id} {Args.NewValue}"); Native.Lui_ValueChanged(Runtime, Id, Args.NewValue); }
                     };
                     NewView.Element = Slider;
                     break;
@@ -120,16 +150,18 @@ internal sealed class WinUIBackend
             }
             if (NewView.Element is not null)
             {
-                NewView.Element.GotFocus += (_, _) => Native.Lui_FocusChanged(Runtime, Id, 1);
-                NewView.Element.LostFocus += (_, _) => Native.Lui_FocusChanged(Runtime, Id, 0);
+                NewView.Element.GotFocus += (_, _) => { Diagnostic($"GotFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 1); };
+                NewView.Element.LostFocus += (_, _) => { Diagnostic($"LostFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 0); };
             }
             Views.Add(Id, NewView);
+            Diagnostic($"Create end {Id} {ClassName}");
         }
-        catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Create: {0}", Error); }
+        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Create: " + Error); }
     }
 
     private void OnProperty(IntPtr Context, int Id, string Name, string Value)
     {
+        Diagnostic($"Property begin {Id} {Name} {Value}");
         try
         {
             if (!Views.TryGetValue(Id, out View? Target)) return;
@@ -175,8 +207,9 @@ internal sealed class WinUIBackend
                 }
             }
             finally { Target.ApplyingProperty = false; }
+            Diagnostic($"Property end {Id} {Name}");
         }
-        catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Property: {0}", Error); }
+        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Property: " + Error); }
     }
 
     private static void SetRange(Slider Target, string Name, string Value)
@@ -197,6 +230,7 @@ internal sealed class WinUIBackend
 
     private void OnParent(IntPtr Context, int Id, int ParentId)
     {
+        Diagnostic($"Parent {Id} {ParentId}");
         try
         {
             View Child = Views[Id];
@@ -206,11 +240,12 @@ internal sealed class WinUIBackend
             Child.ParentId = ParentId;
             if (ParentId != 0) Views[ParentId].Container?.Children.Add(Child.Element);
         }
-        catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Parent: {0}", Error); }
+        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Parent: " + Error); }
     }
 
     private void OnArrange(IntPtr Context, int Id, double X, double Y, double Width, double Height)
     {
+        Diagnostic($"Arrange {Id} {X} {Y} {Width} {Height}");
         try
         {
             if (!Views.TryGetValue(Id, out View? Target)) return;
@@ -233,11 +268,12 @@ internal sealed class WinUIBackend
                 Canvas.SetTop(Element, Y - ParentY);
             }
         }
-        catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Arrange: {0}", Error); }
+        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Arrange: " + Error); }
     }
 
     private void OnDestroy(IntPtr Context, int Id)
     {
+        Diagnostic($"Destroy {Id}");
         try
         {
             if (!Views.Remove(Id, out View? Target)) return;
@@ -245,7 +281,7 @@ internal sealed class WinUIBackend
                 Parent.Container?.Children.Remove(Target.Element);
             Target.Window?.Close();
         }
-        catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Destroy: {0}", Error); }
+        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Destroy: " + Error); }
     }
 
     private static class Native
@@ -260,6 +296,8 @@ internal sealed class WinUIBackend
         internal delegate void ArrangeCallback(IntPtr Context, int Id, double X, double Y, double Width, double Height);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void DestroyCallback(IntPtr Context, int Id);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate void LogCallback(IntPtr Context, [MarshalAs(UnmanagedType.LPUTF8Str)] string Level, [MarshalAs(UnmanagedType.LPUTF8Str)] string Message);
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct BackendCallbacks
@@ -278,6 +316,8 @@ internal sealed class WinUIBackend
         internal static extern void Lui_SetBackend(IntPtr Runtime, BackendCallbacks Callbacks);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackendName(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Name);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void Lui_SetLogCallback(IntPtr Runtime, IntPtr Context, LogCallback Callback);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_RunScript(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Source, [MarshalAs(UnmanagedType.LPUTF8Str)] string ChunkName);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

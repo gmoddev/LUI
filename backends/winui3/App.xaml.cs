@@ -10,21 +10,25 @@ public partial class App : Application
 
     public App()
     {
+        LuiDiagnostics.Initialize(Environment.GetCommandLineArgs().Skip(1).Any(Argument => Argument == "--diagnostics"));
+        UnhandledException += (_, Args) => LuiDiagnostics.Error("Xaml", Args.Exception.ToString());
         InitializeComponent();
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs Args)
     {
+        string[] Arguments = Environment.GetCommandLineArgs();
         try
         {
             Backend = new WinUIBackend();
-            string[] Arguments = Environment.GetCommandLineArgs();
-            string ScriptPath = Arguments.Length > 1
-                ? Path.GetFullPath(Arguments[1])
+            string? ScriptArgument = Arguments.Skip(1).FirstOrDefault(Argument => Argument != "--diagnostics");
+            string ScriptPath = ScriptArgument is not null
+                ? Path.GetFullPath(ScriptArgument)
                 : Path.Combine(AppContext.BaseDirectory, "examples", "hello.luau");
+            LuiDiagnostics.Log("App", "Loading " + ScriptPath);
             if (!Backend.RunFile(ScriptPath))
             {
-                Trace.TraceError("[LUI:WinUI] Script failed: {0}", Backend.LastError);
+                LuiDiagnostics.Error("App", "Script failed: " + Backend.LastError);
                 Exit();
                 return;
             }
@@ -32,10 +36,11 @@ public partial class App : Application
             PumpTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
             PumpTimer.Tick += (_, _) => Backend.Pump();
             PumpTimer.Start();
+            LuiDiagnostics.Log("App", "Ready");
         }
         catch (Exception Error)
         {
-            Trace.TraceError("[LUI:WinUI] Startup failed: {0}", Error);
+            LuiDiagnostics.Error("App", "Startup failed: " + Error);
             Exit();
         }
     }

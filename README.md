@@ -23,6 +23,8 @@ Window.Visible = true
 
 This syntax is implemented in the Foundation 0 proof. See [build and run instructions](docs/FOUNDATION-0.md) and the [working example](examples/hello.luau).
 
+The WinUI host supports `--diagnostics` for live traces and a saved crash/error log. See [Foundation 1 run instructions](docs/FOUNDATION-1.md#verify).
+
 ## Design
 
 - [Full product and architecture specification](docs/SPEC.md)

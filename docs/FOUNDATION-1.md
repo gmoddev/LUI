@@ -1,6 +1,6 @@
 # Foundation 1: canonical UI semantics
 
-Foundation 1 is in progress. The current implementation extends the Foundation 0 proof with shared layout, controls, services, runtime reflection, generated API files, and headless conformance tests. The expanded WinUI controls compile; their interactive behavior still needs desktop qualification.
+Foundation 1 is in progress. The current implementation extends the Foundation 0 proof with shared layout, controls, services, runtime reflection, generated API files, and headless conformance tests. The expanded WinUI controls compile and the controls example launches on Windows; interactive event behavior still needs desktop qualification.
 
 ## Implemented in this increment
 
@@ -23,6 +23,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Windows.ps1
 This runs headless runtime, layout, and control conformance tests, regenerates types and API docs, and builds the WinUI host. Use `Lui.WinUI.exe examples/controls.luau` from the generated output folder to inspect the expanded controls on an interactive Windows desktop. The example is also copied into the output folder.
 
 For the current local build, run `out\Foundation1-win-x64-debug\Lui.WinUI.exe` from `out\Foundation1-win-x64-debug`; the default launch loads the Foundation 0 hello example. To open the controls example, pass `examples\controls.luau` as the argument.
+
+Add `--diagnostics` before or after the script path to open a live diagnostics console. It shows WinUI create/property/layout/input traces, Luau `print()` output, runtime errors, and caught .NET or XAML exceptions. Each line is also saved under `%LOCALAPPDATA%\LUI\Logs` with a timestamp and process ID. The console closes with the app, but the log remains after a crash. Normal launches keep diagnostics off.
+
+```powershell
+.\Lui.WinUI.exe --diagnostics examples\controls.luau
+```
 
 ## Remaining Foundation 1 work
 

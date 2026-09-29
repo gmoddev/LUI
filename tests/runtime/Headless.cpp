@@ -15,6 +15,7 @@ struct TestBackend {
     std::unordered_map<int, double> Widths;
     std::unordered_map<int, std::string> Text;
     std::vector<std::string> Events;
+    std::vector<std::string> Logs;
     int Destroyed = 0;
 };
 
@@ -41,6 +42,10 @@ static void LUI_CALL OnDestroy(void* Context, int) {
     ++static_cast<TestBackend*>(Context)->Destroyed;
 }
 
+static void LUI_CALL OnLog(void* Context, const char* Level, const char* Message) {
+    static_cast<TestBackend*>(Context)->Logs.push_back(std::string(Level) + ":" + Message);
+}
+
 static int Check(bool Condition, const char* Message) {
     if (!Condition) std::fprintf(stderr, "[LUI:Test] %s\n", Message);
     return Condition ? 0 : 1;
@@ -51,6 +56,7 @@ int main() {
     if (!Runtime) return Check(false, "could not create runtime");
     TestBackend Backend;
     Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
+    Lui_SetLogCallback(Runtime, &Backend, OnLog);
     const char* Script = R"(
         Window = Instance.new("Window", {Title = "Hello", Size = UDim2.fromOffset(800, 600)})
         Frame = Instance.new("Frame", {Name = "Root", Size = UDim2.new(0.5, 0, 1, 0), Parent = Window})
@@ -100,6 +106,11 @@ int main() {
         "Assertions") == 1, Lui_GetLastError(Runtime));
     Failures += Check(Lui_Activate(Runtime, 3) == 0, "destroyed button remained active");
     Failures += Check(Backend.Destroyed == 7, "destroyed descendants mismatch");
+    Failures += Check(Lui_RunScript(Runtime, "print('hello', 42)", "Print") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(std::find(Backend.Logs.begin(), Backend.Logs.end(), "Print:hello\t42") != Backend.Logs.end(), "Luau print was not logged");
+    Failures += Check(Lui_RunScript(Runtime, "error('expected diagnostic')", "Error") == 0, "expected script error");
+    Failures += Check(std::any_of(Backend.Logs.begin(), Backend.Logs.end(),
+        [](const std::string& Entry) { return Entry.find("Error:Runtime: ") == 0; }), "Luau error was not logged");
     Lui_Destroy(Runtime);
     std::ifstream ExampleFile(LUI_EXAMPLE_PATH);
     Failures += Check(ExampleFile.good(), "example file was not found");

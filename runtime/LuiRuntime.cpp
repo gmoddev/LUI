@@ -96,6 +96,8 @@ struct LuiRuntime {
     lua_State* State = nullptr;
     std::thread::id Owner;
     LuiBackendCallbacks Backend{};
+    void* LogContext = nullptr;
+    LuiLogCallback LogCallback = nullptr;
     std::string BackendName = "headless";
     std::unordered_map<std::string, int> ServiceRefs;
     std::unordered_map<int, std::unique_ptr<Node>> Nodes;
@@ -114,6 +116,26 @@ struct SignalValue {
 };
 
 static void FlushLayout(LuiRuntime* Runtime);
+static LuiRuntime* GetRuntime(lua_State* State);
+
+static void EmitLog(LuiRuntime* Runtime, const char* Level, const std::string& Message) {
+    if (Runtime->LogCallback) Runtime->LogCallback(Runtime->LogContext, Level, Message.c_str());
+    else std::fprintf(Level[0] == 'E' ? stderr : stdout, "[LUI:%s] %s\n", Level, Message.c_str());
+}
+
+static int LuiPrint(lua_State* State) {
+    std::string Message;
+    const int Count = lua_gettop(State);
+    for (int Index = 1; Index <= Count; ++Index) {
+        if (Index > 1) Message += '\t';
+        luaL_tolstring(State, Index, nullptr);
+        const char* Text = lua_tostring(State, -1);
+        if (Text) Message += Text;
+        lua_pop(State, 1);
+    }
+    EmitLog(GetRuntime(State), "Print", Message);
+    return 0;
+}
 
 static bool CanReceiveInput(const LuiRuntime* Runtime, const Node* Value) {
     if (Value->Destroyed || !Value->Visible || !Value->Enabled) return false;
@@ -274,7 +296,7 @@ static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal) {
         if (lua_pcall(Runtime->State, 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau callback failed";
-            std::fprintf(stderr, "[LUI:Signal] %s\n", Runtime->LastError.c_str());
+            EmitLog(Runtime, "Error", "Signal: " + Runtime->LastError);
             lua_pop(Runtime->State, 1);
         }
     }
@@ -925,6 +947,8 @@ static int AppGetService(lua_State* State) {
 }
 
 static void RegisterGlobals(lua_State* State) {
+    lua_pushcfunction(State, LuiPrint, "print");
+    lua_setglobal(State, "print");
     RegisterMeta(State, "LuiNodeMeta", NodeIndex, NodeNewIndex);
     RegisterMeta(State, "LuiSignalMeta", SignalIndex);
     RegisterMeta(State, "LuiConnectionMeta", ConnectionIndex);
@@ -995,6 +1019,12 @@ extern "C" LUI_API void LUI_CALL Lui_SetBackendName(LuiRuntime* Runtime, const c
     Runtime->BackendName = Name;
 }
 
+extern "C" LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* Context, LuiLogCallback Callback) {
+    if (!CheckOwner(Runtime)) return;
+    Runtime->LogContext = Context;
+    Runtime->LogCallback = Callback;
+}
+
 extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName) {
     if (!CheckOwner(Runtime) || !Source) return 0;
     try {
@@ -1004,7 +1034,7 @@ extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* S
         if (Status != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau script failed";
-            std::fprintf(stderr, "[LUI:Runtime] %s\n", Runtime->LastError.c_str());
+            EmitLog(Runtime, "Error", "Runtime: " + Runtime->LastError);
             lua_pop(Runtime->State, 1);
             FlushLayout(Runtime);
             return 0;
@@ -1014,7 +1044,7 @@ extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* S
         return 1;
     } catch (const std::exception& Error) {
         Runtime->LastError = Error.what();
-        std::fprintf(stderr, "[LUI:Runtime] %s\n", Runtime->LastError.c_str());
+        EmitLog(Runtime, "Error", "Runtime: " + Runtime->LastError);
         FlushLayout(Runtime);
         return 0;
     }
@@ -1104,7 +1134,7 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         if (lua_pcall(Runtime->State, 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "scheduled callback failed";
-            std::fprintf(stderr, "[LUI:Scheduler] %s\n", Runtime->LastError.c_str());
+            EmitLog(Runtime, "Error", "Scheduler: " + Runtime->LastError);
             lua_pop(Runtime->State, 1);
         }
         lua_unref(Runtime->State, Call.Reference);
