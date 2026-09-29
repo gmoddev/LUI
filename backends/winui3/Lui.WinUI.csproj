@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="../../examples/hello.luau" Link="examples/hello.luau" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../examples/controls.luau" Link="examples/controls.luau" CopyToOutputDirectory="PreserveNewest" />
     <None Include="$(LuiNativeDll)" Link="LuiRuntime.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiNativeDll)' != ''" />
   </ItemGroup>
 </Project>

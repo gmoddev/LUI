@@ -4,7 +4,7 @@ The foundations below follow the [LUI specification](docs/SPEC.md#52-short-roadm
 
 ## Foundation 0 — Runtime and Windows proof
 
-**Status:** native runtime and WinUI host build; headless semantics pass. Interactive GUI launch and visual qualification remain to be checked. See [Foundation 0 notes](docs/FOUNDATION-0.md).
+**Status:** complete. Native runtime and WinUI host build; headless semantics pass; the user verified interactive GUI behavior on 2026-09-29. See [Foundation 0 notes](docs/FOUNDATION-0.md).
 
 Build the embedded Luau VM, one UI scheduler, `Instance`, properties, `Signal`/`Connection`, parenting, basic lifecycle, `UDim`/`UDim2`, simple layout, and a minimal WinUI 3 backend for `Window`, `Frame`, `TextLabel`, and `TextButton`.
 
@@ -16,6 +16,8 @@ Build the embedded Luau VM, one UI scheduler, `Instance`, properties, `Signal`/`
 - Build instructions pin the Luau and Windows SDK dependencies needed to reproduce the proof.
 
 ## Foundation 1 — Canonical UI semantics
+
+**Status:** in progress. Shared reflection, generated types and API docs, derived geometry, padding/list layout, common controls, basic services, and headless conformance tests are implemented. Native control qualification and the remaining semantic scope are tracked in [Foundation 1 notes](docs/FOUNDATION-1.md).
 
 Define and test property defaults and validation, lifecycle, layout, input, focus, common controls, basic services, reflection, generated Luau types, and a backend conformance suite. This is the semantic baseline for other backends.
 
@@ -45,4 +47,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Qualify the Foundation 0 executable in an interactive Windows desktop session, then close any issues found in control creation, sizing, visibility, and activation. After that, start Foundation 1's canonical semantic model and conformance suite.
+Complete Foundation 1's semantic model and conformance suite, then qualify the expanded WinUI control set in an interactive desktop session.

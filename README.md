@@ -2,7 +2,7 @@
 
 LUI (Luau UI) is a planned native desktop application framework with Roblox-like Luau semantics. Application code creates `Instance` objects, sets properties, connects signals, and uses services. LUI owns layout, lifecycle, scheduling, and input semantics; platform backends render native controls.
 
-**Status:** Foundation 0 development proof. The native runtime and WinUI 3 host build, and the headless semantic tests pass. GUI launch and visual behavior still need an interactive desktop check. This is not a released package or production SDK.
+**Status:** Foundation 0 is complete: the native runtime and WinUI 3 host build, headless tests pass, and interactive behavior was verified by the user on 2026-09-29. Foundation 1 is in progress. This is not a released package or production SDK.
 
 ```lua
 local Window = Instance.new("Window", {
@@ -28,6 +28,8 @@ This syntax is implemented in the Foundation 0 proof. See [build and run instruc
 - [Full product and architecture specification](docs/SPEC.md)
 - [Architecture summary and boundaries](docs/ARCHITECTURE.md)
 - [Foundation 0 build and scope](docs/FOUNDATION-0.md)
+- [Foundation 1 progress and remaining work](docs/FOUNDATION-1.md)
+- [Implemented API reference](docs/API.md)
 - [Roadmap and milestone acceptance criteria](ROADMAP.md)
 - [AI and contributor context](AIContext.md)
 - [Agent instructions](AGENTS.md)

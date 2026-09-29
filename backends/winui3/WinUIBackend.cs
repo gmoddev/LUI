@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -14,6 +15,9 @@ internal sealed class WinUIBackend
         public UIElement? Element;
         public Canvas? Container;
         public int ParentId;
+        public double BoundsX;
+        public double BoundsY;
+        public bool ApplyingProperty;
     }
 
     private readonly Dictionary<int, View> Views = new();
@@ -35,6 +39,7 @@ internal sealed class WinUIBackend
         DestroyCallback = OnDestroy;
         Runtime = Native.Lui_Create();
         if (Runtime == IntPtr.Zero) throw new InvalidOperationException("Could not initialize Luau");
+        Native.Lui_SetBackendName(Runtime, "winui3");
         Native.Lui_SetBackend(Runtime, new Native.BackendCallbacks
         {
             Create = CreateCallback,
@@ -84,6 +89,39 @@ internal sealed class WinUIBackend
                     Button.Click += (_, _) => Native.Lui_Activate(Runtime, Id);
                     NewView.Element = Button;
                     break;
+                case "TextBox":
+                    TextBox Input = new();
+                    Input.TextChanged += (_, _) => {
+                        if (!NewView.ApplyingProperty) Native.Lui_TextChanged(Runtime, Id, Input.Text);
+                    };
+                    NewView.Element = Input;
+                    break;
+                case "CheckBox":
+                    CheckBox Check = new();
+                    Check.Checked += (_, _) => {
+                        if (!NewView.ApplyingProperty) Native.Lui_CheckedChanged(Runtime, Id, 1);
+                    };
+                    Check.Unchecked += (_, _) => {
+                        if (!NewView.ApplyingProperty) Native.Lui_CheckedChanged(Runtime, Id, 0);
+                    };
+                    Check.Click += (_, _) => Native.Lui_Activate(Runtime, Id);
+                    NewView.Element = Check;
+                    break;
+                case "Slider":
+                    Slider Slider = new();
+                    Slider.ValueChanged += (_, Args) => {
+                        if (!NewView.ApplyingProperty) Native.Lui_ValueChanged(Runtime, Id, Args.NewValue);
+                    };
+                    NewView.Element = Slider;
+                    break;
+                case "ProgressBar":
+                    NewView.Element = new ProgressBar();
+                    break;
+            }
+            if (NewView.Element is not null)
+            {
+                NewView.Element.GotFocus += (_, _) => Native.Lui_FocusChanged(Runtime, Id, 1);
+                NewView.Element.LostFocus += (_, _) => Native.Lui_FocusChanged(Runtime, Id, 0);
             }
             Views.Add(Id, NewView);
         }
@@ -95,27 +133,66 @@ internal sealed class WinUIBackend
         try
         {
             if (!Views.TryGetValue(Id, out View? Target)) return;
-            switch (Name)
+            Target.ApplyingProperty = true;
+            try
             {
-                case "Title" when Target.Window is not null:
-                    Target.Window.Title = Value;
-                    break;
-                case "Text" when Target.Element is TextBlock Label:
-                    Label.Text = Value;
-                    break;
-                case "Text" when Target.Element is Button Button:
-                    Button.Content = Value;
-                    break;
-                case "Visible" when Target.Window is not null:
-                    if (Value == "true") Target.Window.Activate();
-                    else Target.Window.AppWindow.Hide();
-                    break;
-                case "Visible" when Target.Element is not null:
-                    Target.Element.Visibility = Value == "true" ? Visibility.Visible : Visibility.Collapsed;
-                    break;
+                switch (Name)
+                {
+                    case "Title" when Target.Window is not null:
+                        Target.Window.Title = Value;
+                        break;
+                    case "Text" when Target.Element is TextBlock Label:
+                        Label.Text = Value;
+                        break;
+                    case "Text" when Target.Element is Button Button:
+                        Button.Content = Value;
+                        break;
+                    case "Text" when Target.Element is TextBox Input:
+                        Input.Text = Value;
+                        break;
+                    case "Text" when Target.Element is CheckBox Check:
+                        Check.Content = Value;
+                        break;
+                    case "Checked" when Target.Element is CheckBox Check:
+                        Check.IsChecked = Value == "true";
+                        break;
+                    case "Enabled" when Target.Element is Control Control:
+                        Control.IsEnabled = Value == "true";
+                        break;
+                    case "Minimum" or "Maximum" or "Value" when Target.Element is Slider Slider:
+                        SetRange(Slider, Name, Value);
+                        break;
+                    case "Minimum" or "Maximum" or "Value" when Target.Element is ProgressBar Progress:
+                        SetRange(Progress, Name, Value);
+                        break;
+                    case "Visible" when Target.Window is not null:
+                        if (Value == "true") Target.Window.Activate();
+                        else Target.Window.AppWindow.Hide();
+                        break;
+                    case "Visible" when Target.Element is not null:
+                        Target.Element.Visibility = Value == "true" ? Visibility.Visible : Visibility.Collapsed;
+                        break;
+                }
             }
+            finally { Target.ApplyingProperty = false; }
         }
         catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Property: {0}", Error); }
+    }
+
+    private static void SetRange(Slider Target, string Name, string Value)
+    {
+        double Parsed = double.Parse(Value, CultureInfo.InvariantCulture);
+        if (Name == "Minimum") Target.Minimum = Parsed;
+        else if (Name == "Maximum") Target.Maximum = Parsed;
+        else Target.Value = Parsed;
+    }
+
+    private static void SetRange(ProgressBar Target, string Name, string Value)
+    {
+        double Parsed = double.Parse(Value, CultureInfo.InvariantCulture);
+        if (Name == "Minimum") Target.Minimum = Parsed;
+        else if (Name == "Maximum") Target.Maximum = Parsed;
+        else Target.Value = Parsed;
     }
 
     private void OnParent(IntPtr Context, int Id, int ParentId)
@@ -137,6 +214,8 @@ internal sealed class WinUIBackend
         try
         {
             if (!Views.TryGetValue(Id, out View? Target)) return;
+            Target.BoundsX = X;
+            Target.BoundsY = Y;
             if (Target.Window is not null)
             {
                 Target.Window.AppWindow.Resize(new Windows.Graphics.SizeInt32(
@@ -146,8 +225,12 @@ internal sealed class WinUIBackend
             {
                 Element.Width = Width;
                 Element.Height = Height;
-                Canvas.SetLeft(Element, X);
-                Canvas.SetTop(Element, Y);
+                View? ParentView = Target.ParentId != 0 && Views.TryGetValue(Target.ParentId, out View? FoundParent)
+                    ? FoundParent : null;
+                double ParentX = ParentView?.BoundsX ?? 0;
+                double ParentY = ParentView?.BoundsY ?? 0;
+                Canvas.SetLeft(Element, X - ParentX);
+                Canvas.SetTop(Element, Y - ParentY);
             }
         }
         catch (Exception Error) { Trace.TraceError("[LUI:WinUI] Arrange: {0}", Error); }
@@ -194,9 +277,19 @@ internal sealed class WinUIBackend
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackend(IntPtr Runtime, BackendCallbacks Callbacks);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void Lui_SetBackendName(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Name);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_RunScript(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Source, [MarshalAs(UnmanagedType.LPUTF8Str)] string ChunkName);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_Activate(IntPtr Runtime, int Id);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_TextChanged(IntPtr Runtime, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string Text);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_CheckedChanged(IntPtr Runtime, int Id, int Checked);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_ValueChanged(IntPtr Runtime, int Id, double Value);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_FocusChanged(IntPtr Runtime, int Id, int Focused);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_Pump(IntPtr Runtime);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

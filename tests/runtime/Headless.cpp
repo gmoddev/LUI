@@ -13,6 +13,7 @@ struct TestBackend {
     std::unordered_map<int, std::string> Classes;
     std::unordered_map<int, int> Parents;
     std::unordered_map<int, double> Widths;
+    std::unordered_map<int, std::string> Text;
     std::vector<std::string> Events;
     int Destroyed = 0;
 };
@@ -21,8 +22,10 @@ static void LUI_CALL OnCreate(void* Context, int Id, const char* ClassName) {
     static_cast<TestBackend*>(Context)->Classes[Id] = ClassName;
 }
 
-static void LUI_CALL OnProperty(void* Context, int Id, const char* Name, const char*) {
-    static_cast<TestBackend*>(Context)->Events.push_back(std::to_string(Id) + ":" + Name);
+static void LUI_CALL OnProperty(void* Context, int Id, const char* Name, const char* Value) {
+    auto* Backend = static_cast<TestBackend*>(Context);
+    Backend->Events.push_back(std::to_string(Id) + ":" + Name);
+    if (std::string(Name) == "Text") Backend->Text[Id] = Value;
 }
 
 static void LUI_CALL OnParent(void* Context, int Id, int ParentId) {
@@ -53,6 +56,8 @@ int main() {
         Frame = Instance.new("Frame", {Name = "Root", Size = UDim2.new(0.5, 0, 1, 0), Parent = Window})
         Button = Instance.new("TextButton", {Text = "Click", Size = UDim2.fromOffset(120, 36), Parent = Frame})
         Label = Instance.new("TextLabel", {Name = "Status", Text = "Ready", Size = UDim2.fromOffset(80, 20), Parent = Frame})
+        Label.Text = "A"
+        Label.Text = "B"
         assert(Button.Parent == Frame)
         assert(Frame:FindFirstChild("TextButton") == Button)
         assert(Frame:FindFirstChild("Status") == Label)
@@ -60,6 +65,7 @@ int main() {
         assert(Button:IsA("GuiButton"))
         assert(Window.ClassName == "Window")
         assert(UDim.new(0, 2).Offset == 2)
+        assert(not pcall(function() Button.Size.X.Scale = 1 end))
         local BadParent = pcall(function() Button.Parent = Frame.Changed end)
         assert(not BadParent)
         Count = 0
@@ -76,12 +82,24 @@ int main() {
     auto TextEvent = std::find(Backend.Events.begin(), Backend.Events.end(), "3:Text");
     auto ParentEvent = std::find(Backend.Events.begin(), Backend.Events.end(), "3:Parent");
     Failures += Check(TextEvent != Backend.Events.end() && ParentEvent != Backend.Events.end() && TextEvent < ParentEvent, "Parent was not applied last");
+    Failures += Check(std::count(Backend.Events.begin(), Backend.Events.end(), "4:Text") == 1, "text changes were not batched");
+    Failures += Check(Backend.Text[4] == "B", "batched text did not use final value");
     Failures += Check(std::abs(Backend.Widths[2] - 400.0) < 0.01, "UDim2 layout mismatch");
+    int RollbackStatus = Lui_RunScript(Runtime,
+        "local Before = #Window:GetChildren(); "
+        "assert(not pcall(function() Instance.new('TextButton', {Parent = Button}) end)); "
+        "assert(#Window:GetChildren() == Before)", "Rollback");
+    Failures += Check(RollbackStatus == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.Destroyed == 1, "failed initialization did not destroy native object");
     Failures += Check(Lui_Activate(Runtime, 3) == 1, "button activation failed");
     Failures += Check(Lui_Pump(Runtime) == 1, "deferred callback was not pumped");
-    Failures += Check(Lui_RunScript(Runtime, "assert(Count == 110); Frame:Destroy(); Frame:Destroy(); assert(#Window:GetChildren() == 0)", "Assertions") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Lui_RunScript(Runtime,
+        "assert(Count == 110); local Copy = Frame:Clone(); assert(Copy.Parent == nil); "
+        "assert(#Copy:GetDescendants() == 2); assert(Copy:GetChildren()[1] ~= Button); "
+        "Copy:Destroy(); Frame:Destroy(); Frame:Destroy(); assert(#Window:GetChildren() == 0)",
+        "Assertions") == 1, Lui_GetLastError(Runtime));
     Failures += Check(Lui_Activate(Runtime, 3) == 0, "destroyed button remained active");
-    Failures += Check(Backend.Destroyed == 3, "destroyed descendants mismatch");
+    Failures += Check(Backend.Destroyed == 7, "destroyed descendants mismatch");
     Lui_Destroy(Runtime);
     std::ifstream ExampleFile(LUI_EXAMPLE_PATH);
     Failures += Check(ExampleFile.good(), "example file was not found");
@@ -90,6 +108,15 @@ int main() {
         LuiRuntime* ExampleRuntime = Lui_Create();
         Failures += Check(Lui_RunScript(ExampleRuntime, Source.c_str(), "hello.luau") == 1, Lui_GetLastError(ExampleRuntime));
         Lui_Destroy(ExampleRuntime);
+    }
+    std::ifstream ControlsFile(LUI_CONTROLS_EXAMPLE_PATH);
+    Failures += Check(ControlsFile.good(), "controls example was not found");
+    if (ControlsFile) {
+        const std::string Source{std::istreambuf_iterator<char>{ControlsFile}, std::istreambuf_iterator<char>{}};
+        LuiRuntime* ControlsRuntime = Lui_Create();
+        int Status = Lui_RunScript(ControlsRuntime, Source.c_str(), "controls.luau");
+        Failures += Check(Status == 1, Lui_GetLastError(ControlsRuntime));
+        Lui_Destroy(ControlsRuntime);
     }
     if (!Failures) std::puts("[LUI:Test] Foundation 0 headless semantics passed");
     return Failures ? 1 : 0;

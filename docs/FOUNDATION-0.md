@@ -30,9 +30,9 @@ Window and Frame are containers. Initial layout resolves child width and height 
 ## Boundaries and limitations
 
 - The C callback interface in `native/abi/LuiRuntime.h` is **internal and unstable**. It is not the Foundation 2 extension ABI.
-- The WinUI host is an unpackaged development build. It has no installer, self-contained distribution, Linux backend, editor tooling, reflection metadata, generated typing, or hot reload.
-- `task.wait`, clone, descendant queries, automatic sizing, padding, anchors, focus semantics, and styling are not implemented yet.
-- The WinUI bridge compiles and the native semantics pass headless tests. A hidden launch from the build worker's noninteractive Session 0 exited with `0xc000027b` in `Microsoft.UI.Xaml.dll`; that session cannot qualify interactive UI behavior. GUI launch and visual behavior still need an interactive desktop check.
+- The WinUI host is an unpackaged development build. It has no installer, self-contained distribution, Linux backend, editor tooling, or hot reload. Reflection and generated typing were added in Foundation 1.
+- `task.wait`, automatic sizing, and styling are not implemented yet. Clone, descendant queries, padding, anchors, and focus began in Foundation 1.
+- The WinUI bridge compiles and the native semantics pass headless tests. The user verified interactive GUI behavior on 2026-09-29. A hidden launch from the build worker's noninteractive Session 0 exited with `0xc000027b` in `Microsoft.UI.Xaml.dll`; that result is specific to the noninteractive smoke attempt.
 - Diagnostic failures go to stderr or trace. They do not open modal dialogs.
 
 The [full specification](SPEC.md) remains the intended API design. [ROADMAP.md](../ROADMAP.md) tracks the broader foundations.
