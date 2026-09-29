@@ -99,6 +99,11 @@ export type UIListLayout = UIComponent & {
     FillDirection: string,
 }
 
+export type UIGridLayout = UIComponent & {
+    CellSize: UDim2,
+    CellPadding: UDim2,
+}
+
 export type UISizeConstraint = UIComponent & {
     MinSize: Vector2,
     MaxSize: Vector2?,
@@ -223,6 +228,13 @@ export type UIListLayoutInit = {
     FillDirection: string?,
 }
 
+export type UIGridLayoutInit = {
+    Name: string?,
+    Parent: (Window | Frame)?,
+    CellSize: UDim2?,
+    CellPadding: UDim2?,
+}
+
 export type UISizeConstraintInit = {
     Name: string?,
     Parent: (Window | GuiObject)?,
@@ -230,7 +242,7 @@ export type UISizeConstraintInit = {
     MaxSize: Vector2?,
 }
 
-declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "UIPadding" | "UIListLayout" | "UISizeConstraint", Properties: any) -> (ProgressBar | UIPadding | UIListLayout | UISizeConstraint))))) }
+declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "UIPadding" | "UIListLayout" | "UIGridLayout" | "UISizeConstraint", Properties: any) -> (ProgressBar | UIPadding | UIListLayout | UIGridLayout | UISizeConstraint))))) }
 declare Vector2: { read new: (X: number, Y: number) -> Vector2 }
 declare UDim: { read new: (Scale: number, Offset: number) -> UDim }
 declare UDim2: {

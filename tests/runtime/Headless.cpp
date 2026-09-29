@@ -131,6 +131,15 @@ int main() {
         Failures += Check(Status == 1, Lui_GetLastError(ControlsRuntime));
         Lui_Destroy(ControlsRuntime);
     }
+    std::ifstream GridFile(LUI_GRID_EXAMPLE_PATH);
+    Failures += Check(GridFile.good(), "grid example was not found");
+    if (GridFile) {
+        const std::string Source{std::istreambuf_iterator<char>{GridFile}, std::istreambuf_iterator<char>{}};
+        LuiRuntime* GridRuntime = Lui_Create();
+        int Status = Lui_RunScript(GridRuntime, Source.c_str(), "grid.luau");
+        Failures += Check(Status == 1, Lui_GetLastError(GridRuntime));
+        Lui_Destroy(GridRuntime);
+    }
     if (!Failures) std::puts("[LUI:Test] Foundation 0 headless semantics passed");
     return Failures ? 1 : 0;
 }

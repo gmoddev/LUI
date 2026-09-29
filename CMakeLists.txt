@@ -27,6 +27,7 @@ add_executable(LuiHeadlessTests tests/runtime/Headless.cpp)
 target_link_libraries(LuiHeadlessTests PRIVATE LuiRuntime)
 target_compile_definitions(LuiHeadlessTests PRIVATE LUI_EXAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.luau")
 target_compile_definitions(LuiHeadlessTests PRIVATE LUI_CONTROLS_EXAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/controls.luau")
+target_compile_definitions(LuiHeadlessTests PRIVATE LUI_GRID_EXAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/grid.luau")
 enable_testing()
 add_test(NAME LuiHeadlessTests COMMAND LuiHeadlessTests)
 

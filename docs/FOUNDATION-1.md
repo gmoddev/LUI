@@ -5,7 +5,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 ## Implemented in this increment
 
 - `Position`, `AnchorPoint`, `LayoutOrder`, and read-only derived `AbsolutePosition`/`AbsoluteSize` for GUI objects.
-- `UIPadding` and `UIListLayout` with vertical or horizontal fill. LUI computes geometry in logical units and sends resolved bounds to WinUI.
+- `UIPadding`, `UIListLayout` with vertical or horizontal fill, and row-major `UIGridLayout` with automatic column wrapping. A container may have padding and one list or grid layout. LUI computes geometry in logical units and sends resolved bounds to WinUI.
 - `UISizeConstraint` clamps a visual object's resolved width and height with nonnegative `MinSize` and optional `MaxSize`. One constraint may be attached to each `Window` or GUI object; clamping occurs before anchor placement and list spacing.
 - `Clone()` and `GetDescendants()`, plus cleanup when property initialization fails.
 - `TextBox`, `CheckBox`, `Slider`, and `ProgressBar`; `Enabled`, `Checked`, `Minimum`, `Maximum`, `Value`, text, and focus state where applicable.
@@ -24,14 +24,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Windows.ps1
 
 This runs headless runtime, layout, and control conformance tests, regenerates types and API docs, validates the generated definitions, and builds the WinUI host. Use `Lui.WinUI.exe examples/controls.luau` from the generated output folder to inspect the expanded controls on an interactive Windows desktop. The example is also copied into the output folder.
 
-The type file infers specific result types for the seven primary constructors. `ProgressBar`, `UIPadding`, `UIListLayout`, and `UISizeConstraint` share a union result type because the pinned Luau type checker rejects a larger overload intersection. Constructor property tables accept `any`; annotate a table with its generated `ClassNameInit` type when static property checking is needed:
+Run `Lui.WinUI.exe examples/grid.luau` from the same folder to inspect grid wrapping and size constraints. The grid example is also copied into the output folder.
+
+The type file infers specific result types for the seven primary constructors. `ProgressBar`, `UIPadding`, `UIListLayout`, `UIGridLayout`, and `UISizeConstraint` share a union result type because the pinned Luau type checker rejects a larger overload intersection. Constructor property tables accept `any`; annotate a table with its generated `ClassNameInit` type when static property checking is needed:
 
 ```luau
 local Props: WindowInit = {Title = "Typed", Size = UDim2.fromOffset(480, 320)}
 local Window = Instance.new("Window", Props)
 ```
 
-For the current local build, run `out\Foundation1-win-x64-debug\Lui.WinUI.exe` from `out\Foundation1-win-x64-debug`; the default launch loads the Foundation 0 hello example. To open the controls example, pass `examples\controls.luau` as the argument.
+After building on Windows, run `Lui.WinUI.exe` from `backends\winui3\bin\x64\Debug\net9.0-windows10.0.19041.0\win-x64`. The default launch loads the Foundation 0 hello example. Pass `examples\controls.luau` or `examples\grid.luau` to open a Foundation 1 example.
 
 Add `--diagnostics` before or after the script path to open a live diagnostics console. It shows WinUI create/property/layout/input traces, Luau `print()` output, runtime errors, and caught .NET or XAML exceptions. Each line is also saved under `%LOCALAPPDATA%\LUI\Logs` with a timestamp and process ID. The console closes with the app, but the log remains after a crash. Normal launches keep diagnostics off.
 
@@ -42,7 +44,7 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 ## Remaining Foundation 1 work
 
 - Qualify the expanded WinUI controls and focus behavior interactively.
-- Add richer input events, grid layout, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
+- Add richer input events, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
 

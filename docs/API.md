@@ -151,6 +151,15 @@ Base: `UIComponent`. Creatable: `true`.
 | `Padding` | `UDim` | 0 | No |
 | `FillDirection` | `string` | Vertical | No |
 
+## UIGridLayout
+
+Base: `UIComponent`. Creatable: `true`.
+
+| Property | Type | Default | Read only |
+| --- | --- | --- | --- |
+| `CellSize` | `UDim2` | 100x100 | No |
+| `CellPadding` | `UDim2` | 0x0 | No |
+
 ## UISizeConstraint
 
 Base: `UIComponent`. Creatable: `true`.

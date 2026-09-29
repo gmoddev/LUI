@@ -325,6 +325,14 @@ LUI resolves `Size` against the parent content box, then clamps each axis before
 
 ---
 
+## 9.4 Grid layout
+
+`UIGridLayout` is a nonvisual child of a `Window` or `Frame`. A container may have one `UIPadding` and either one `UIListLayout` or one `UIGridLayout`. Grid items are sorted by `LayoutOrder`, preserving insertion order for ties, and placed left to right in rows. A grid overrides each item's `Size`, `Position`, and `AnchorPoint` for arrangement; the stored properties are unchanged.
+
+`CellSize` defaults to `UDim2.fromOffset(100, 100)` and resolves against the padded content box. Negative resolved dimensions become zero. `CellPadding` defaults to zero and requires nonnegative scale and offset components on both axes. The grid starts with the resolved cell size, applies each item's `UISizeConstraint`, and uses the largest resulting width and height as a uniform slot. Each item retains its own constrained size at the slot's top-left corner. The number of columns is the largest that fit in the padded content width using the uniform slot width and horizontal gap, with at least one column. Vertical spacing uses the uniform slot height and vertical gap. Items may overflow a container that is narrower than one slot.
+
+---
+
 # 10. Signals
 
 Events use Roblox-like Signals:

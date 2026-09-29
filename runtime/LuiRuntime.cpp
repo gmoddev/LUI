@@ -58,6 +58,8 @@ struct Node {
     double Value = 0;
     SizeValue Size;
     SizeValue Position;
+    SizeValue CellSize{{0, 100}, {0, 100}};
+    SizeValue CellPadding;
     VectorValue AnchorPoint;
     VectorValue MinSize;
     VectorValue MaxSize;
@@ -324,6 +326,10 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
             const Node* Sibling = Runtime->Nodes.at(Id).get();
             if (Sibling != Value && Sibling->ClassName == Value->ClassName)
                 luaL_error(Runtime->State, "only one %s is allowed per container", Value->ClassName.c_str());
+            const bool AddingLayout = Value->ClassName == "UIListLayout" || Value->ClassName == "UIGridLayout";
+            const bool ExistingLayout = Sibling->ClassName == "UIListLayout" || Sibling->ClassName == "UIGridLayout";
+            if (Sibling != Value && AddingLayout && ExistingLayout)
+                luaL_error(Runtime->State, "only one list or grid layout is allowed per container");
         }
     }
     for (Node* Cursor = Parent; Cursor; ) {
@@ -461,6 +467,15 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         if (Parsed != "Vertical" && Parsed != "Horizontal") luaL_error(State, "FillDirection must be Vertical or Horizontal");
         Value->FillDirection = Parsed;
         Runtime->LayoutDirty = true;
+    } else if (Key == "CellSize" || Key == "CellPadding") {
+        SizeValue Parsed;
+        if (!ReadSize(State, ValueIndex, Parsed)) luaL_error(State, "%s must be UDim2 with finite values", Name);
+        if (Key == "CellPadding" && (Parsed.X.Scale < 0 || Parsed.X.Offset < 0 ||
+            Parsed.Y.Scale < 0 || Parsed.Y.Offset < 0))
+            luaL_error(State, "CellPadding must have nonnegative values");
+        if (Key == "CellSize") Value->CellSize = Parsed;
+        else Value->CellPadding = Parsed;
+        Runtime->LayoutDirty = true;
     } else if (Key == "Padding" || Key == "PaddingTop" || Key == "PaddingBottom" || Key == "PaddingLeft" || Key == "PaddingRight") {
         if ((Key == "Padding" && Value->ClassName != "UIListLayout") ||
             (Key != "Padding" && Value->ClassName != "UIPadding")) luaL_error(State, "%s is invalid for %s", Name, Value->ClassName.c_str());
@@ -532,6 +547,8 @@ static void CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->Value = Source->Value;
     Value->Size = Source->Size;
     Value->Position = Source->Position;
+    Value->CellSize = Source->CellSize;
+    Value->CellPadding = Source->CellPadding;
     Value->AnchorPoint = Source->AnchorPoint;
     Value->MinSize = Source->MinSize;
     Value->MaxSize = Source->MaxSize;
@@ -667,6 +684,8 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "Value") lua_pushnumber(State, Value->Value);
     else if (Key == "Size") PushSize(State, Value->Size);
     else if (Key == "Position") PushSize(State, Value->Position);
+    else if (Key == "CellSize" && Value->ClassName == "UIGridLayout") PushSize(State, Value->CellSize);
+    else if (Key == "CellPadding" && Value->ClassName == "UIGridLayout") PushSize(State, Value->CellPadding);
     else if (Key == "AnchorPoint") PushVector(State, Value->AnchorPoint);
     else if (Key == "MinSize" && Value->ClassName == "UISizeConstraint") PushVector(State, Value->MinSize);
     else if (Key == "MaxSize" && Value->ClassName == "UISizeConstraint") {
@@ -877,9 +896,7 @@ static double Resolve(Dimension Value, double ParentExtent) {
     return ParentExtent * Value.Scale + Value.Offset;
 }
 
-static VectorValue ResolveConstrainedSize(LuiRuntime* Runtime, const Node* Value, double ParentWidth, double ParentHeight) {
-    VectorValue Size{std::max(0.0, Resolve(Value->Size.X, ParentWidth)),
-                     std::max(0.0, Resolve(Value->Size.Y, ParentHeight))};
+static VectorValue ApplySizeConstraint(LuiRuntime* Runtime, const Node* Value, VectorValue Size) {
     for (int Id : Value->Children) {
         const Node* Child = Runtime->Nodes.at(Id).get();
         if (Child->ClassName != "UISizeConstraint") continue;
@@ -894,6 +911,12 @@ static VectorValue ResolveConstrainedSize(LuiRuntime* Runtime, const Node* Value
     return Size;
 }
 
+static VectorValue ResolveConstrainedSize(LuiRuntime* Runtime, const Node* Value, double ParentWidth, double ParentHeight) {
+    return ApplySizeConstraint(Runtime, Value,
+        {std::max(0.0, Resolve(Value->Size.X, ParentWidth)),
+         std::max(0.0, Resolve(Value->Size.Y, ParentHeight))});
+}
+
 static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
     Value->Bounds = Bounds;
     if (Runtime->Backend.Arrange) Runtime->Backend.Arrange(Runtime->Backend.Context, Value->Id,
@@ -901,11 +924,13 @@ static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
 
     Node* Padding = nullptr;
     Node* List = nullptr;
+    Node* Grid = nullptr;
     std::vector<Node*> VisualChildren;
     for (int Id : Value->Children) {
         Node* Child = Runtime->Nodes.at(Id).get();
         if (Child->ClassName == "UIPadding") Padding = Child;
         else if (Child->ClassName == "UIListLayout") List = Child;
+        else if (Child->ClassName == "UIGridLayout") Grid = Child;
         else if (Child->ClassName == "UISizeConstraint") continue;
         else VisualChildren.push_back(Child);
     }
@@ -917,8 +942,42 @@ static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
     BoundsValue Inner{Bounds.X + Left, Bounds.Y + Top,
         std::max(0.0, Bounds.Width - Left - Right), std::max(0.0, Bounds.Height - Top - Bottom)};
 
-    if (List) std::stable_sort(VisualChildren.begin(), VisualChildren.end(),
+    if (List || Grid) std::stable_sort(VisualChildren.begin(), VisualChildren.end(),
         [](const Node* LeftNode, const Node* RightNode) { return LeftNode->LayoutOrder < RightNode->LayoutOrder; });
+    if (Grid && !VisualChildren.empty()) {
+        const VectorValue Cell{
+            std::max(0.0, Resolve(Grid->CellSize.X, Inner.Width)),
+            std::max(0.0, Resolve(Grid->CellSize.Y, Inner.Height))};
+        const VectorValue Gap{
+            Resolve(Grid->CellPadding.X, Inner.Width),
+            Resolve(Grid->CellPadding.Y, Inner.Height)};
+        std::vector<VectorValue> ChildSizes;
+        ChildSizes.reserve(VisualChildren.size());
+        VectorValue Slot = Cell;
+        for (Node* Child : VisualChildren) {
+            VectorValue ChildSize = ApplySizeConstraint(Runtime, Child, Cell);
+            Slot.X = std::max(Slot.X, ChildSize.X);
+            Slot.Y = std::max(Slot.Y, ChildSize.Y);
+            ChildSizes.push_back(ChildSize);
+        }
+        size_t Columns = 1;
+        const double HorizontalPitch = Slot.X + Gap.X;
+        if (HorizontalPitch > 0 && std::isfinite(HorizontalPitch)) {
+            const double Capacity = std::floor((Inner.Width + Gap.X) / HorizontalPitch);
+            if (std::isfinite(Capacity) && Capacity >= 1)
+                Columns = static_cast<size_t>(std::min(Capacity, static_cast<double>(VisualChildren.size())));
+        }
+        for (size_t Index = 0; Index < VisualChildren.size(); ++Index) {
+            const size_t Column = Index % Columns;
+            const size_t Row = Index / Columns;
+            ArrangeNode(Runtime, VisualChildren[Index], {
+                Inner.X + Column * HorizontalPitch,
+                Inner.Y + Row * (Slot.Y + Gap.Y),
+                ChildSizes[Index].X,
+                ChildSizes[Index].Y});
+        }
+        return;
+    }
     double Cursor = 0;
     for (Node* Child : VisualChildren) {
         const VectorValue Resolved = ResolveConstrainedSize(Runtime, Child, Inner.Width, Inner.Height);

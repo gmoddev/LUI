@@ -107,6 +107,51 @@ int main() {
     Failures += Check(Near(Backend.Arranged[6].Width, 300) && Near(Backend.Arranged[6].Height, 50),
         "constrained bounds did not reach the backend");
     Failures += Check(Near(Backend.Arranged[1].Width, 900), "window constraint did not reach the backend");
+    const char* GridScript = R"(
+        GridHost = Instance.new("Frame", {Size = UDim2.fromOffset(250, 200), Parent = Window})
+        Instance.new("UIPadding", {
+            PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+            PaddingTop = UDim.new(0, 5), Parent = GridHost,
+        })
+        Grid = Instance.new("UIGridLayout", {
+            CellSize = UDim2.fromOffset(100, 30),
+            CellPadding = UDim2.fromOffset(10, 5), Parent = GridHost,
+        })
+        GridA = Instance.new("TextLabel", {
+            LayoutOrder = 2, Size = UDim2.fromOffset(5, 5),
+            Position = UDim2.fromOffset(500, 500), AnchorPoint = Vector2.new(1, 1), Parent = GridHost,
+        })
+        GridB = Instance.new("TextLabel", {LayoutOrder = 1, Parent = GridHost})
+        GridC = Instance.new("TextLabel", {LayoutOrder = 2, Parent = GridHost})
+        assert(GridB.AbsolutePosition.X == 10 and GridB.AbsolutePosition.Y == 5)
+        assert(GridA.AbsolutePosition.X == 120 and GridA.AbsolutePosition.Y == 5)
+        assert(GridC.AbsolutePosition.X == 10 and GridC.AbsolutePosition.Y == 40)
+        assert(GridA.AbsoluteSize.X == 100 and GridA.AbsoluteSize.Y == 30)
+        assert(not pcall(function() Instance.new("UIGridLayout", {Parent = GridHost}) end))
+        assert(not pcall(function() Instance.new("UIListLayout", {Parent = GridHost}) end))
+        assert(not pcall(function() Instance.new("UIGridLayout", {Parent = Frame}) end))
+        GridLimit = Instance.new("UISizeConstraint", {MinSize = Vector2.new(120, 40), Parent = GridA})
+        assert(GridB.AbsolutePosition.Y == 5 and GridA.AbsolutePosition.Y == 50)
+        assert(GridC.AbsolutePosition.Y == 95 and GridA.AbsoluteSize.X == 120)
+        GridHost.Size = UDim2.fromOffset(400, 200)
+        assert(GridB.AbsolutePosition.X == 10 and GridA.AbsolutePosition.X == 140)
+        assert(GridC.AbsolutePosition.X == 270 and GridC.AbsolutePosition.Y == 5)
+        Grid.CellPadding = UDim2.fromOffset(20, 10)
+        assert(GridA.AbsolutePosition.X == 150 and GridC.AbsolutePosition.Y == 55)
+        assert(not pcall(function() Grid.CellPadding = UDim2.fromOffset(-1, 0) end))
+        assert(Grid.CellPadding.X.Offset == 20)
+        Grid.CellSize = UDim2.fromOffset(150, 30)
+        assert(GridA.AbsolutePosition.X == 180 and GridC.AbsolutePosition.Y == 55)
+        GridC.LayoutOrder = 0
+        assert(GridC.AbsolutePosition.X == 10 and GridB.AbsolutePosition.X == 180)
+        assert(GridA.AbsolutePosition.Y == 55)
+        GridClone = Grid:Clone()
+        assert(GridClone.CellSize.X.Offset == 150 and GridClone.CellPadding.Y.Offset == 10)
+        GridClone:Destroy()
+    )";
+    Failures += Check(Lui_RunScript(Runtime, GridScript, "Grid") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.Created == 8 && Backend.Arranged.size() == 8,
+        "grid components must not create or arrange native controls");
     Lui_Destroy(Runtime);
     if (!Failures) std::puts("[LUI:LayoutTest] Foundation 1 layout semantics passed");
     return Failures ? 1 : 0;

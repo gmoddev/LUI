@@ -40,6 +40,8 @@ int main() {
         local Input = Instance.new("TextBox", {Parent = Root, Text = "Name"})
         local SizeProps: UISizeConstraintInit = {Parent = Input, MinSize = Vector2.new(100, 30)}
         Instance.new("UISizeConstraint", SizeProps)
+        local GridProps: UIGridLayoutInit = {Parent = Root, CellSize = UDim2.fromOffset(50, 40)}
+        Instance.new("UIGridLayout", GridProps)
         local Slider = Instance.new("Slider", {Parent = Root, Minimum = 0, Maximum = 10, Value = 5})
         local Windows = app:GetService("WindowService"):GetWindows()
         local BackendName: string = app:GetService("PlatformService").BackendName
@@ -69,6 +71,10 @@ int main() {
     Resolver.Scripts.emplace("invalidSizeInit", R"(
         --!strict
         local Props: UISizeConstraintInit = {MinSize = 42}
+    )");
+    Resolver.Scripts.emplace("invalidGridInit", R"(
+        --!strict
+        local Props: UIGridLayoutInit = {CellSize = Vector2.new(5, 5)}
     )");
 
     Luau::NullConfigResolver Config;
@@ -109,6 +115,7 @@ int main() {
     Failures += Check(!UnknownClass.errors.empty(), "unknown class typechecked");
     Failures += Check(!Frontend.check("invalidInit").errors.empty(), "invalid typed constructor properties typechecked");
     Failures += Check(!Frontend.check("invalidSizeInit").errors.empty(), "invalid size constraint properties typechecked");
+    Failures += Check(!Frontend.check("invalidGridInit").errors.empty(), "invalid grid layout properties typechecked");
     if (!Failures) std::puts("[LUI:Types] Generated definitions passed Luau type checks");
     return Failures ? 1 : 0;
 }

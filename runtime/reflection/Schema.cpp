@@ -19,6 +19,7 @@ static constexpr ClassDefinition Classes[] = {
     {"UIComponent", "Instance", false, false, "", ""},
     {"UIPadding", "UIComponent", true, false, "", ""},
     {"UIListLayout", "UIComponent", true, false, "", ""},
+    {"UIGridLayout", "UIComponent", true, false, "", ""},
     {"UISizeConstraint", "UIComponent", true, false, "", ""},
 };
 
@@ -56,6 +57,8 @@ static constexpr PropertyDefinition Properties[] = {
     {"ProgressBar", "Value", "number", "0", false},
     {"UIListLayout", "Padding", "UDim", "0", false},
     {"UIListLayout", "FillDirection", "string", "Vertical", false},
+    {"UIGridLayout", "CellSize", "UDim2", "100x100", false},
+    {"UIGridLayout", "CellPadding", "UDim2", "0x0", false},
     {"UIPadding", "PaddingTop", "UDim", "0", false},
     {"UIPadding", "PaddingBottom", "UDim", "0", false},
     {"UIPadding", "PaddingLeft", "UDim", "0", false},
