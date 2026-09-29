@@ -30,6 +30,7 @@ This syntax is implemented in the Foundation 0 proof. See [build and run instruc
 - [Foundation 0 build and scope](docs/FOUNDATION-0.md)
 - [Foundation 1 progress and remaining work](docs/FOUNDATION-1.md)
 - [Implemented API reference](docs/API.md)
+- [Public compatibility policy](docs/COMPATIBILITY.md)
 - [Roadmap and milestone acceptance criteria](ROADMAP.md)
 - [AI and contributor context](AIContext.md)
 - [Agent instructions](AGENTS.md)

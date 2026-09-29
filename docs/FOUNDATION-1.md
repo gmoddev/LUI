@@ -12,6 +12,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - `app:GetService("WindowService")` with `GetWindows()` and `app:GetService("PlatformService")` with `BackendName` and capability checks. Unsupported capabilities return `false`.
 - A runtime [reflection table](../runtime/reflection/Schema.cpp) that gates class creation and property access, and generates [Luau types](../types/LUI.d.luau), [JSON schema](../types/schema.json), and [implemented API reference](API.md).
 - Batched property and parent changes: one Luau dispatch sends the final value of each property to the backend before layout.
+- A [compatibility policy](COMPATIBILITY.md) for experimental API changes, metadata format versions, and future backend conformance.
 
 ## Verify
 
@@ -29,6 +30,5 @@ For the current local build, run `out\Foundation1-win-x64-debug\Lui.WinUI.exe` f
 - Add richer input events, sizing constraints, grid layout, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Tighten generated typing so application globals, constructors, service overloads, and read-only properties are represented directly in Luau tooling.
-- Define semantic compatibility rules and a versioning policy for the public API.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.
