@@ -1,0 +1,21 @@
+# Build outputs
+build/
+out/
+dist/
+bin/
+obj/
+CMakeFiles/
+CMakeCache.txt
+
+# Native and editor tooling
+.vs/
+.vscode/.rope/
+*.user
+*.suo
+*.pdb
+
+# Local runtime state
+.lui/
+*.log
+.DS_Store
+Thumbs.db
