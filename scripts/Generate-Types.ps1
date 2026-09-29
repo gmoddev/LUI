@@ -78,7 +78,8 @@ foreach ($Class in $Schema.classes) {
     foreach ($Ancestor in $Lineage) {
         foreach ($Property in $Ancestor.properties) {
             if ($Property.readOnly -or ($Class.name -eq 'Window' -and $Property.name -eq 'Parent')) { continue }
-            $PropertyType = if ($Property.name -eq 'Parent') { '(Window | Frame)?' }
+            $PropertyType = if ($Property.name -eq 'Parent' -and $Class.name -eq 'UISizeConstraint') { '(Window | GuiObject)?' }
+                elseif ($Property.name -eq 'Parent') { '(Window | Frame)?' }
                 elseif ($Property.type.EndsWith('?')) { $Property.type }
                 else { "$($Property.type)?" }
             $Types.Add("    $($Property.name): $PropertyType,")

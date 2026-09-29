@@ -59,6 +59,9 @@ struct Node {
     SizeValue Size;
     SizeValue Position;
     VectorValue AnchorPoint;
+    VectorValue MinSize;
+    VectorValue MaxSize;
+    bool HasMaxSize = false;
     BoundsValue Bounds;
     int LayoutOrder = 0;
     Dimension Padding;
@@ -312,9 +315,11 @@ static void Disconnect(LuiRuntime* Runtime, int ListenerId) {
 
 static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
     if (Value->ClassName == "Window" && Parent) luaL_error(Runtime->State, "Window cannot have a Parent");
-    if (Parent && Parent->ClassName != "Window" && Parent->ClassName != "Frame")
-        luaL_error(Runtime->State, "Parent must be Window or Frame");
-    if (Parent && (Value->ClassName == "UIListLayout" || Value->ClassName == "UIPadding")) {
+    const bool SizeConstraint = Value->ClassName == "UISizeConstraint";
+    if (Parent && Parent->ClassName != "Window" && Parent->ClassName != "Frame" &&
+        !(SizeConstraint && LuiSchema::IsA(Parent->ClassName, "GuiObject")))
+        luaL_error(Runtime->State, "Parent must be Window or Frame, or a GuiObject for UISizeConstraint");
+    if (Parent && LuiSchema::IsA(Value->ClassName, "UIComponent")) {
         for (int Id : Parent->Children) {
             const Node* Sibling = Runtime->Nodes.at(Id).get();
             if (Sibling != Value && Sibling->ClassName == Value->ClassName)
@@ -368,7 +373,7 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
     const double PreviousValue = Value->Value;
     const LuiSchema::PropertyDefinition* Definition = LuiSchema::FindProperty(Value->ClassName, Key);
     if (!Definition || Definition->ReadOnly) luaL_error(State, "unknown or read-only property '%s'", Name);
-    const bool IsComponent = Value->ClassName == "UIListLayout" || Value->ClassName == "UIPadding";
+    const bool IsComponent = LuiSchema::IsA(Value->ClassName, "UIComponent");
     if (Key == "Parent") {
         SetParent(Runtime, Value, lua_isnil(State, ValueIndex) ? nullptr : GetNode(State, ValueIndex));
         return;
@@ -425,6 +430,22 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         VectorValue Parsed;
         if (!ReadVector(State, ValueIndex, Parsed)) luaL_error(State, "AnchorPoint must be Vector2 with finite values");
         Value->AnchorPoint = Parsed;
+        Runtime->LayoutDirty = true;
+    } else if (Key == "MinSize" || Key == "MaxSize") {
+        VectorValue Parsed;
+        const bool Unbounded = Key == "MaxSize" && lua_isnil(State, ValueIndex);
+        if (!Unbounded && (!ReadVector(State, ValueIndex, Parsed) || Parsed.X < 0 || Parsed.Y < 0))
+            luaL_error(State, "%s must be a nonnegative finite Vector2", Name);
+        if (Key == "MinSize") {
+            if (Value->HasMaxSize && (Parsed.X > Value->MaxSize.X || Parsed.Y > Value->MaxSize.Y))
+                luaL_error(State, "MinSize cannot exceed MaxSize");
+            Value->MinSize = Parsed;
+        } else {
+            if (!Unbounded && (Parsed.X < Value->MinSize.X || Parsed.Y < Value->MinSize.Y))
+                luaL_error(State, "MaxSize cannot be below MinSize");
+            Value->HasMaxSize = !Unbounded;
+            if (!Unbounded) Value->MaxSize = Parsed;
+        }
         Runtime->LayoutDirty = true;
     } else if (Key == "LayoutOrder") {
         if (IsComponent || Value->ClassName == "Window") luaL_error(State, "LayoutOrder belongs to GuiObject");
@@ -512,6 +533,9 @@ static void CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->Size = Source->Size;
     Value->Position = Source->Position;
     Value->AnchorPoint = Source->AnchorPoint;
+    Value->MinSize = Source->MinSize;
+    Value->MaxSize = Source->MaxSize;
+    Value->HasMaxSize = Source->HasMaxSize;
     Value->LayoutOrder = Source->LayoutOrder;
     Value->Padding = Source->Padding;
     Value->PaddingTop = Source->PaddingTop;
@@ -644,6 +668,11 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "Size") PushSize(State, Value->Size);
     else if (Key == "Position") PushSize(State, Value->Position);
     else if (Key == "AnchorPoint") PushVector(State, Value->AnchorPoint);
+    else if (Key == "MinSize" && Value->ClassName == "UISizeConstraint") PushVector(State, Value->MinSize);
+    else if (Key == "MaxSize" && Value->ClassName == "UISizeConstraint") {
+        if (Value->HasMaxSize) PushVector(State, Value->MaxSize);
+        else lua_pushnil(State);
+    }
     else if (Key == "AbsolutePosition" || Key == "AbsoluteSize") {
         FlushLayout(GetRuntime(State));
         if (Key == "AbsolutePosition") PushVector(State, {Value->Bounds.X, Value->Bounds.Y});
@@ -682,6 +711,7 @@ static int InitializeNode(lua_State* State) {
     Node* Value = GetNode(State, 1);
     luaL_checktype(State, 2, LUA_TTABLE);
     const bool IsRange = Value->ClassName == "Slider" || Value->ClassName == "ProgressBar";
+    const bool IsSizeConstraint = Value->ClassName == "UISizeConstraint";
     if (IsRange) {
         double Minimum = Value->Minimum;
         double Maximum = Value->Maximum;
@@ -708,11 +738,36 @@ static int InitializeNode(lua_State* State) {
         if (HasMaximum) QueueProperty(GetRuntime(State), Value, "Maximum", std::to_string(Maximum));
         if (HasMinimum || HasMaximum) QueueProperty(GetRuntime(State), Value, "Value", std::to_string(Value->Value));
     }
+    if (IsSizeConstraint) {
+        VectorValue MinSize = Value->MinSize;
+        VectorValue MaxSize = Value->MaxSize;
+        bool HasMaxSize = Value->HasMaxSize;
+        lua_getfield(State, 2, "MinSize");
+        if (!lua_isnil(State, -1) &&
+            (!ReadVector(State, -1, MinSize) || MinSize.X < 0 || MinSize.Y < 0))
+            luaL_error(State, "MinSize must be a nonnegative finite Vector2");
+        lua_pop(State, 1);
+        lua_getfield(State, 2, "MaxSize");
+        if (!lua_isnil(State, -1)) {
+            if (!ReadVector(State, -1, MaxSize) || MaxSize.X < 0 || MaxSize.Y < 0)
+                luaL_error(State, "MaxSize must be a nonnegative finite Vector2");
+            HasMaxSize = true;
+        }
+        lua_pop(State, 1);
+        if (HasMaxSize && (MinSize.X > MaxSize.X || MinSize.Y > MaxSize.Y))
+            luaL_error(State, "MinSize cannot exceed MaxSize");
+        Value->MinSize = MinSize;
+        Value->MaxSize = MaxSize;
+        Value->HasMaxSize = HasMaxSize;
+        GetRuntime(State)->LayoutDirty = true;
+    }
     lua_pushnil(State);
     while (lua_next(State, 2) != 0) {
         const char* Key = luaL_checkstring(State, -2);
         const std::string Property = Key;
-        if (Property != "Parent" && (!IsRange || (Property != "Minimum" && Property != "Maximum" && Property != "Value")))
+        if (Property != "Parent" &&
+            (!IsRange || (Property != "Minimum" && Property != "Maximum" && Property != "Value")) &&
+            (!IsSizeConstraint || (Property != "MinSize" && Property != "MaxSize")))
             SetProperty(State, Value, Key, -1);
         lua_pop(State, 1);
     }
@@ -822,6 +877,23 @@ static double Resolve(Dimension Value, double ParentExtent) {
     return ParentExtent * Value.Scale + Value.Offset;
 }
 
+static VectorValue ResolveConstrainedSize(LuiRuntime* Runtime, const Node* Value, double ParentWidth, double ParentHeight) {
+    VectorValue Size{std::max(0.0, Resolve(Value->Size.X, ParentWidth)),
+                     std::max(0.0, Resolve(Value->Size.Y, ParentHeight))};
+    for (int Id : Value->Children) {
+        const Node* Child = Runtime->Nodes.at(Id).get();
+        if (Child->ClassName != "UISizeConstraint") continue;
+        Size.X = std::max(Size.X, Child->MinSize.X);
+        Size.Y = std::max(Size.Y, Child->MinSize.Y);
+        if (Child->HasMaxSize) {
+            Size.X = std::min(Size.X, Child->MaxSize.X);
+            Size.Y = std::min(Size.Y, Child->MaxSize.Y);
+        }
+        break;
+    }
+    return Size;
+}
+
 static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
     Value->Bounds = Bounds;
     if (Runtime->Backend.Arrange) Runtime->Backend.Arrange(Runtime->Backend.Context, Value->Id,
@@ -834,6 +906,7 @@ static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
         Node* Child = Runtime->Nodes.at(Id).get();
         if (Child->ClassName == "UIPadding") Padding = Child;
         else if (Child->ClassName == "UIListLayout") List = Child;
+        else if (Child->ClassName == "UISizeConstraint") continue;
         else VisualChildren.push_back(Child);
     }
 
@@ -848,8 +921,9 @@ static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
         [](const Node* LeftNode, const Node* RightNode) { return LeftNode->LayoutOrder < RightNode->LayoutOrder; });
     double Cursor = 0;
     for (Node* Child : VisualChildren) {
-        double Width = std::max(0.0, Resolve(Child->Size.X, Inner.Width));
-        double Height = std::max(0.0, Resolve(Child->Size.Y, Inner.Height));
+        const VectorValue Resolved = ResolveConstrainedSize(Runtime, Child, Inner.Width, Inner.Height);
+        double Width = Resolved.X;
+        double Height = Resolved.Y;
         double X = Inner.X + Resolve(Child->Position.X, Inner.Width) - Child->AnchorPoint.X * Width;
         double Y = Inner.Y + Resolve(Child->Position.Y, Inner.Height) - Child->AnchorPoint.Y * Height;
         if (List) {
@@ -869,8 +943,8 @@ static void FlushLayout(LuiRuntime* Runtime) {
     for (auto& Pair : Runtime->Nodes) {
         Node* Value = Pair.second.get();
         if (!Value->Destroyed && Value->ClassName == "Window") {
-            ArrangeNode(Runtime, Value, {0, 0,
-                std::max(0.0, Resolve(Value->Size.X, 0)), std::max(0.0, Resolve(Value->Size.Y, 0))});
+            const VectorValue Resolved = ResolveConstrainedSize(Runtime, Value, 0, 0);
+            ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
         }
     }
 }

@@ -72,6 +72,41 @@ int main() {
     Failures += Check(Near(Backend.Arranged[5].Y, 195), "list gap mismatch");
     Failures += Check(Lui_RunScript(Runtime, "Frame.Position = UDim2.fromOffset(300, 250); assert(Frame.AbsolutePosition.X == 100)", "Reposition") == 1, Lui_GetLastError(Runtime));
     Failures += Check(Near(Backend.Arranged[6].X, 110), "reposition did not propagate to descendants");
+    const char* Constraints = R"(
+        Limit = Instance.new("UISizeConstraint", {
+            MinSize = Vector2.new(120, 25), MaxSize = Vector2.new(180, 35), Parent = Button,
+        })
+        assert(Limit.MinSize.X == 120 and Limit.MaxSize.Y == 35)
+        assert(Button.AbsoluteSize.X == 120 and Button.AbsoluteSize.Y == 25)
+        assert(Label.AbsolutePosition.Y == 150)
+        assert(not pcall(function() Instance.new("UISizeConstraint", {Parent = Button}) end))
+        assert(not pcall(function()
+            Instance.new("UISizeConstraint", {
+                MinSize = Vector2.new(40, 40), MaxSize = Vector2.new(30, 50), Parent = Frame,
+            })
+        end))
+        assert(not pcall(function() Limit.MaxSize = Vector2.new(100, 20) end))
+        assert(not pcall(function() Limit.MinSize = Vector2.new(-1, 0) end))
+        assert(Limit.MinSize.X == 120 and Limit.MaxSize.Y == 35)
+        Button.Size = UDim2.fromOffset(300, 50)
+        assert(Button.AbsoluteSize.X == 180 and Button.AbsoluteSize.Y == 35)
+        assert(Label.AbsolutePosition.Y == 160)
+        Limit.MaxSize = nil
+        assert(Button.AbsoluteSize.X == 300 and Button.AbsoluteSize.Y == 50)
+        assert(Limit.MaxSize == nil)
+        LimitClone = Limit:Clone()
+        assert(LimitClone.MinSize.X == 120 and LimitClone.MaxSize == nil)
+        LimitClone:Destroy()
+        WindowLimit = Instance.new("UISizeConstraint", {MinSize = Vector2.new(900, 700), Parent = Window})
+        assert(Window.AbsoluteSize.X == 900 and Window.AbsoluteSize.Y == 700)
+        FrameLimit = Instance.new("UISizeConstraint", {MinSize = Vector2.new(500, 300), Parent = Frame})
+        assert(Frame.AbsoluteSize.X == 500 and Frame.AbsolutePosition.X == 50)
+    )";
+    Failures += Check(Lui_RunScript(Runtime, Constraints, "Constraints") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.Created == 4, "size constraints must not create native controls");
+    Failures += Check(Near(Backend.Arranged[6].Width, 300) && Near(Backend.Arranged[6].Height, 50),
+        "constrained bounds did not reach the backend");
+    Failures += Check(Near(Backend.Arranged[1].Width, 900), "window constraint did not reach the backend");
     Lui_Destroy(Runtime);
     if (!Failures) std::puts("[LUI:LayoutTest] Foundation 1 layout semantics passed");
     return Failures ? 1 : 0;

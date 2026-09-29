@@ -19,6 +19,7 @@ static constexpr ClassDefinition Classes[] = {
     {"UIComponent", "Instance", false, false, "", ""},
     {"UIPadding", "UIComponent", true, false, "", ""},
     {"UIListLayout", "UIComponent", true, false, "", ""},
+    {"UISizeConstraint", "UIComponent", true, false, "", ""},
 };
 
 static constexpr PropertyDefinition Properties[] = {
@@ -59,6 +60,8 @@ static constexpr PropertyDefinition Properties[] = {
     {"UIPadding", "PaddingBottom", "UDim", "0", false},
     {"UIPadding", "PaddingLeft", "UDim", "0", false},
     {"UIPadding", "PaddingRight", "UDim", "0", false},
+    {"UISizeConstraint", "MinSize", "Vector2", "0,0", false},
+    {"UISizeConstraint", "MaxSize", "Vector2?", "nil (unbounded)", false},
 };
 
 static constexpr ServiceDefinition Services[] = {

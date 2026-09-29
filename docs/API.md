@@ -151,6 +151,15 @@ Base: `UIComponent`. Creatable: `true`.
 | `Padding` | `UDim` | 0 | No |
 | `FillDirection` | `string` | Vertical | No |
 
+## UISizeConstraint
+
+Base: `UIComponent`. Creatable: `true`.
+
+| Property | Type | Default | Read only |
+| --- | --- | --- | --- |
+| `MinSize` | `Vector2` | 0,0 | No |
+| `MaxSize` | `Vector2?` | nil (unbounded) | No |
+
 ## Services
 
 - `WindowService`: GetWindows

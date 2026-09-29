@@ -99,6 +99,11 @@ export type UIListLayout = UIComponent & {
     FillDirection: string,
 }
 
+export type UISizeConstraint = UIComponent & {
+    MinSize: Vector2,
+    MaxSize: Vector2?,
+}
+
 export type WindowService = {
     read GetWindows: (Self: WindowService) -> {Window},
 }
@@ -218,7 +223,14 @@ export type UIListLayoutInit = {
     FillDirection: string?,
 }
 
-declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "UIPadding" | "UIListLayout", Properties: any) -> (ProgressBar | UIPadding | UIListLayout))))) }
+export type UISizeConstraintInit = {
+    Name: string?,
+    Parent: (Window | GuiObject)?,
+    MinSize: Vector2?,
+    MaxSize: Vector2?,
+}
+
+declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "UIPadding" | "UIListLayout" | "UISizeConstraint", Properties: any) -> (ProgressBar | UIPadding | UIListLayout | UISizeConstraint))))) }
 declare Vector2: { read new: (X: number, Y: number) -> Vector2 }
 declare UDim: { read new: (Scale: number, Offset: number) -> UDim }
 declare UDim2: {
