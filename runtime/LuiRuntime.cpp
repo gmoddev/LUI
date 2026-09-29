@@ -955,6 +955,7 @@ static void RegisterGlobals(lua_State* State) {
     lua_newtable(State);
     lua_pushcfunction(State, InstanceNew, "Instance.new");
     lua_setfield(State, -2, "new");
+    lua_setreadonly(State, -1, true);
     lua_setglobal(State, "Instance");
     lua_newtable(State);
     lua_pushcfunction(State, AppGetService, "app.GetService");
@@ -964,10 +965,12 @@ static void RegisterGlobals(lua_State* State) {
     lua_newtable(State);
     lua_pushcfunction(State, Vector2New, "Vector2.new");
     lua_setfield(State, -2, "new");
+    lua_setreadonly(State, -1, true);
     lua_setglobal(State, "Vector2");
     lua_newtable(State);
     lua_pushcfunction(State, UDimNew, "UDim.new");
     lua_setfield(State, -2, "new");
+    lua_setreadonly(State, -1, true);
     lua_setglobal(State, "UDim");
     lua_newtable(State);
     lua_pushcfunction(State, UDim2New, "UDim2.new");
@@ -976,6 +979,7 @@ static void RegisterGlobals(lua_State* State) {
     lua_setfield(State, -2, "fromOffset");
     lua_pushcfunction(State, UDim2FromScale, "UDim2.fromScale");
     lua_setfield(State, -2, "fromScale");
+    lua_setreadonly(State, -1, true);
     lua_setglobal(State, "UDim2");
     lua_newtable(State);
     lua_pushcfunction(State, TaskSchedule, "task.defer");
@@ -984,6 +988,7 @@ static void RegisterGlobals(lua_State* State) {
     lua_setfield(State, -2, "spawn");
     lua_pushcfunction(State, TaskDelay, "task.delay");
     lua_setfield(State, -2, "delay");
+    lua_setreadonly(State, -1, true);
     lua_setglobal(State, "task");
 }
 

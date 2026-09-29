@@ -34,7 +34,7 @@ if ($LuauSourceDir) {
 
 & $Cmake @Options
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CMake configure failed' }
-& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump --parallel 8
+& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests --parallel 8
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native build failed' }
 & (Join-Path $Build "$Configuration/LuiHeadlessTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Headless tests failed' }
@@ -43,8 +43,10 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Layout tests failed' }
 & (Join-Path $Build "$Configuration/LuiConformanceTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Conformance tests failed' }
 & (Join-Path $Root 'scripts/Generate-Types.ps1') -SchemaDump (Join-Path $Build "$Configuration/LuiSchemaDump.exe") -Root $Root
+& (Join-Path $Build "$Configuration/LuiTypeTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Generated type validation failed' }
 
 $Dll = Join-Path $Build "$Configuration/LuiRuntime.dll"
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] WinUI build failed' }
-Write-Host '[LUI:Build] Native and WinUI builds, headless tests, and schema generation passed'
+Write-Host '[LUI:Build] Native and WinUI builds, headless tests, schema generation, and type validation passed'

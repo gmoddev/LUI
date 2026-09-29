@@ -40,3 +40,8 @@ target_link_libraries(LuiSchemaDump PRIVATE LuiRuntime)
 add_executable(LuiConformanceTests tests/conformance/Conformance.cpp)
 target_link_libraries(LuiConformanceTests PRIVATE LuiRuntime)
 add_test(NAME LuiConformanceTests COMMAND LuiConformanceTests)
+
+add_executable(LuiTypeTests tests/types/Definitions.cpp)
+target_link_libraries(LuiTypeTests PRIVATE Luau.Analysis)
+target_compile_definitions(LuiTypeTests PRIVATE LUI_TYPES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/types/LUI.d.luau")
+add_test(NAME LuiTypeTests COMMAND LuiTypeTests)

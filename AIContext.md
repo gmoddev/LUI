@@ -26,4 +26,6 @@ Build a native desktop framework where ordinary Luau application code uses Roblo
 
 Foundation 0's internal C host callbacks are in `native/abi/LuiRuntime.h`. They are not the stable extension ABI described for Foundation 2. The runtime reflection table in `runtime/reflection/Schema.cpp` gates the implemented classes and properties and generates `types/LUI.d.luau`, `types/schema.json`, and `docs/API.md`. See [Foundation 1 progress](docs/FOUNDATION-1.md) for current scope and remaining qualification.
 
+The Windows build checks the generated definitions with the pinned Luau type checker. Direct constructor property tables currently use `any` in overloads; annotate a table with a generated `ClassNameInit` type to statically check its fields.
+
 The examples in the original spec are design illustrations. New code should follow the repository naming and diagnostic conventions in [AGENTS.md](AGENTS.md).

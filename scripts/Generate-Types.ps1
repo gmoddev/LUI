@@ -13,12 +13,15 @@ if ($Schema.schemaVersion -ne 1) { throw '[LUI:Reflection] Unsupported schema ve
 
 $Types = [System.Collections.Generic.List[string]]::new()
 $Types.Add('-- Generated from LuiRuntime reflection metadata. Do not edit by hand.')
-$Types.Add('export type Connection = { Disconnect: (Self: Connection) -> () }')
-$Types.Add('export type Signal = { Connect: (Self: Signal, Callback: (...any) -> ()) -> Connection }')
-$Types.Add('export type Vector2 = { X: number, Y: number }')
-$Types.Add('export type UDim = { Scale: number, Offset: number }')
-$Types.Add('export type UDim2 = { X: UDim, Y: UDim }')
+$Types.Add('export type Connection = { read Disconnect: (Self: Connection) -> () }')
+$Types.Add('export type Signal = { read Connect: (Self: Signal, Callback: (...any) -> ()) -> Connection }')
+$Types.Add('export type Vector2 = { read X: number, read Y: number }')
+$Types.Add('export type UDim = { read Scale: number, read Offset: number }')
+$Types.Add('export type UDim2 = { read X: UDim, read Y: UDim }')
 $Types.Add('')
+
+$ClassMap = @{}
+foreach ($Class in $Schema.classes) { $ClassMap[$Class.name] = $Class }
 
 $MethodTypes = @{
     Destroy = '(Self: Instance) -> ()'
@@ -33,14 +36,14 @@ foreach ($Class in $Schema.classes) {
     $Inheritance = if ($Class.base) { "$($Class.base) & " } else { '' }
     $Types.Add("export type $($Class.name) = $Inheritance{" )
     foreach ($Property in $Class.properties) {
-        $Suffix = if ($Property.readOnly) { ' -- read-only at runtime' } else { '' }
-        $Types.Add("    $($Property.name): $($Property.type),$Suffix")
+        $Access = if ($Property.readOnly) { 'read ' } else { '' }
+        $Types.Add("    $Access$($Property.name): $($Property.type),")
     }
     foreach ($Method in $Class.methods) {
         if (-not $MethodTypes.ContainsKey($Method)) { throw "[LUI:Reflection] Unknown method: $Method" }
-        $Types.Add("    ${Method}: $($MethodTypes[$Method]),")
+        $Types.Add("    read ${Method}: $($MethodTypes[$Method]),")
     }
-    foreach ($Signal in $Class.signals) { $Types.Add("    ${Signal}: Signal,") }
+    foreach ($Signal in $Class.signals) { $Types.Add("    read ${Signal}: Signal,") }
     $Types.Add('}')
     $Types.Add('')
 }
@@ -51,15 +54,76 @@ $ServiceMethodTypes = @{
 }
 foreach ($Service in $Schema.services) {
     $Types.Add("export type $($Service.name) = {")
-    if ($Service.name -eq 'PlatformService') { $Types.Add('    BackendName: string, -- read-only at runtime') }
+    if ($Service.name -eq 'PlatformService') { $Types.Add('    read BackendName: string,') }
     foreach ($Method in $Service.methods) {
         if (-not $ServiceMethodTypes.ContainsKey($Method)) { throw "[LUI:Reflection] Unknown service method: $Method" }
-        $Types.Add("    ${Method}: $($ServiceMethodTypes[$Method]),")
+        $Types.Add("    read ${Method}: $($ServiceMethodTypes[$Method]),")
     }
     $Types.Add('}')
     $Types.Add('')
 }
-$Types.Add('export type App = { GetService: (Self: App, Name: string) -> any }')
+$ServiceOverloads = @($Schema.services | ForEach-Object { "((Self: App, Name: `"$($_.name)`") -> $($_.name))" })
+$Types.Add("export type App = { read GetService: $($ServiceOverloads -join ' & ') }")
+$Types.Add('')
+
+foreach ($Class in $Schema.classes) {
+    if (-not $Class.creatable) { continue }
+    $Lineage = [System.Collections.Generic.List[object]]::new()
+    $Cursor = $Class
+    while ($Cursor) {
+        $Lineage.Insert(0, $Cursor)
+        $Cursor = if ($Cursor.base) { $ClassMap[$Cursor.base] } else { $null }
+    }
+    $Types.Add("export type $($Class.name)Init = {")
+    foreach ($Ancestor in $Lineage) {
+        foreach ($Property in $Ancestor.properties) {
+            if ($Property.readOnly -or ($Class.name -eq 'Window' -and $Property.name -eq 'Parent')) { continue }
+            $PropertyType = if ($Property.name -eq 'Parent') { '(Window | Frame)?' }
+                elseif ($Property.type.EndsWith('?')) { $Property.type }
+                else { "$($Property.type)?" }
+            $Types.Add("    $($Property.name): $PropertyType,")
+        }
+    }
+    $Types.Add('}')
+    $Types.Add('')
+}
+
+$CreatableClasses = @($Schema.classes | Where-Object creatable)
+$ConstructorOverloads = @($CreatableClasses | Select-Object -First 7 | ForEach-Object {
+    "((ClassName: `"$($_.name)`", Properties: any) -> $($_.name))"
+})
+$SharedClasses = @($CreatableClasses | Select-Object -Skip 7)
+if ($SharedClasses.Count) {
+    # Keep the definition below the pinned Luau solver's overload complexity limit.
+    $Names = @($SharedClasses | ForEach-Object { "`"$($_.name)`"" }) -join ' | '
+    $ResultTypes = @($SharedClasses | ForEach-Object { $_.name }) -join ' | '
+    $ConstructorOverloads += "((ClassName: $Names, Properties: any) -> ($ResultTypes))"
+}
+while ($ConstructorOverloads.Count -gt 1) {
+    $Pairs = [System.Collections.Generic.List[string]]::new()
+    for ($Index = 0; $Index -lt $ConstructorOverloads.Count; $Index += 2) {
+        if ($Index + 1 -lt $ConstructorOverloads.Count) {
+            $Pairs.Add("($($ConstructorOverloads[$Index]) & $($ConstructorOverloads[$Index + 1]))")
+        } else {
+            $Pairs.Add($ConstructorOverloads[$Index])
+        }
+    }
+    $ConstructorOverloads = @($Pairs)
+}
+$Types.Add("declare Instance: { read new: $($ConstructorOverloads[0]) }")
+$Types.Add('declare Vector2: { read new: (X: number, Y: number) -> Vector2 }')
+$Types.Add('declare UDim: { read new: (Scale: number, Offset: number) -> UDim }')
+$Types.Add('declare UDim2: {')
+$Types.Add('    read new: (XScale: number, XOffset: number, YScale: number, YOffset: number) -> UDim2,')
+$Types.Add('    read fromOffset: (X: number, Y: number) -> UDim2,')
+$Types.Add('    read fromScale: (X: number, Y: number) -> UDim2,')
+$Types.Add('}')
+$Types.Add('declare app: App')
+$Types.Add('declare task: {')
+$Types.Add('    read defer: (Callback: () -> ()) -> (),')
+$Types.Add('    read spawn: (Callback: () -> ()) -> (),')
+$Types.Add('    read delay: (Seconds: number, Callback: () -> ()) -> (),')
+$Types.Add('}')
 
 $Docs = [System.Collections.Generic.List[string]]::new()
 $Docs.Add('# LUI API: implemented classes')

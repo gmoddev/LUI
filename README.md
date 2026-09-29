@@ -25,6 +25,8 @@ This syntax is implemented in the Foundation 0 proof. See [build and run instruc
 
 The WinUI host supports `--diagnostics` for live traces and a saved crash/error log. See [Foundation 1 run instructions](docs/FOUNDATION-1.md#verify).
 
+The [generated Luau definitions](types/LUI.d.luau) describe the implemented globals, classes, and services. The Windows build validates them with the pinned Luau type checker.
+
 ## Design
 
 - [Full product and architecture specification](docs/SPEC.md)

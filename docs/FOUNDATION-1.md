@@ -11,6 +11,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - `TextChanged`, `CheckedChanged`, `ValueChanged`, `Focused`, and `FocusLost` signals from normalized backend callbacks. Disabled or hidden controls reject new input, and accepted callbacks flush backend changes before returning. Signal callbacks execute through the runtime's single UI thread.
 - `app:GetService("WindowService")` with `GetWindows()` and `app:GetService("PlatformService")` with `BackendName` and capability checks. Unsupported capabilities return `false`.
 - A runtime [reflection table](../runtime/reflection/Schema.cpp) that gates class creation and property access, and generates [Luau types](../types/LUI.d.luau), [JSON schema](../types/schema.json), and [implemented API reference](API.md).
+- Generated Luau definitions cover application globals, class constructors, services, signals, and read-only fields. The Windows build loads those definitions with the pinned Luau type checker and checks valid and invalid application snippets.
 - Batched property and parent changes: one Luau dispatch sends the final value of each property to the backend before layout.
 - A [compatibility policy](COMPATIBILITY.md) for experimental API changes, metadata format versions, and future backend conformance.
 
@@ -20,7 +21,14 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Windows.ps1
 ```
 
-This runs headless runtime, layout, and control conformance tests, regenerates types and API docs, and builds the WinUI host. Use `Lui.WinUI.exe examples/controls.luau` from the generated output folder to inspect the expanded controls on an interactive Windows desktop. The example is also copied into the output folder.
+This runs headless runtime, layout, and control conformance tests, regenerates types and API docs, validates the generated definitions, and builds the WinUI host. Use `Lui.WinUI.exe examples/controls.luau` from the generated output folder to inspect the expanded controls on an interactive Windows desktop. The example is also copied into the output folder.
+
+The type file infers specific result types for the seven primary constructors. `ProgressBar`, `UIPadding`, and `UIListLayout` share a union result type because the pinned Luau type checker rejects a larger overload intersection. Constructor property tables accept `any`; annotate a table with its generated `ClassNameInit` type when static property checking is needed:
+
+```luau
+local Props: WindowInit = {Title = "Typed", Size = UDim2.fromOffset(480, 320)}
+local Window = Instance.new("Window", Props)
+```
 
 For the current local build, run `out\Foundation1-win-x64-debug\Lui.WinUI.exe` from `out\Foundation1-win-x64-debug`; the default launch loads the Foundation 0 hello example. To open the controls example, pass `examples\controls.luau` as the argument.
 
@@ -35,6 +43,6 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 - Qualify the expanded WinUI controls and focus behavior interactively.
 - Add richer input events, sizing constraints, grid layout, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
-- Tighten generated typing so application globals, constructors, service overloads, and read-only properties are represented directly in Luau tooling.
+- Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.

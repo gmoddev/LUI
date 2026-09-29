@@ -71,6 +71,8 @@ int main() {
         assert(Button:IsA("GuiButton"))
         assert(Window.ClassName == "Window")
         assert(UDim.new(0, 2).Offset == 2)
+        assert(not pcall(function() Instance.new = nil end))
+        assert(not pcall(function() UDim2.fromOffset = nil end))
         assert(not pcall(function() Button.Size.X.Scale = 1 end))
         local BadParent = pcall(function() Button.Parent = Frame.Changed end)
         assert(not BadParent)
