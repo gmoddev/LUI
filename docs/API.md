@@ -43,7 +43,7 @@ Base: `Instance`. Creatable: `false`.
 | `AbsolutePosition` | `Vector2` | derived | Yes |
 | `AbsoluteSize` | `Vector2` | derived | Yes |
 
-Signals: Focused, FocusLost.
+Signals: Focused, FocusLost, MouseEnter, MouseLeave.
 
 ## Frame
 

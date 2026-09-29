@@ -39,6 +39,7 @@ LUI_API int LUI_CALL Lui_TextChanged(LuiRuntime* Runtime, int Id, const char* Te
 LUI_API int LUI_CALL Lui_CheckedChanged(LuiRuntime* Runtime, int Id, int Checked);
 LUI_API int LUI_CALL Lui_ValueChanged(LuiRuntime* Runtime, int Id, double Value);
 LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, int Focused);
+LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered);
 LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetLastError(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetSchemaJson(void);

@@ -49,6 +49,7 @@ struct Node {
     bool Enabled = true;
     bool Checked = false;
     bool IsFocused = false;
+    bool IsHovered = false;
     std::string ClassName;
     std::string Name;
     std::string Title;
@@ -307,6 +308,19 @@ static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal) {
     }
 }
 
+static void ClearInvalidHover(LuiRuntime* Runtime) {
+    std::vector<int> HoveredIds;
+    for (const auto& Pair : Runtime->Nodes) {
+        if (Pair.second->IsHovered && !CanReceiveInput(Runtime, Pair.second.get())) HoveredIds.push_back(Pair.first);
+    }
+    for (int Id : HoveredIds) {
+        Node* Value = Runtime->Nodes.at(Id).get();
+        if (!Value->IsHovered || CanReceiveInput(Runtime, Value)) continue;
+        Value->IsHovered = false;
+        FireSignal(Runtime, Value, "MouseLeave");
+    }
+}
+
 static void Disconnect(LuiRuntime* Runtime, int ListenerId) {
     auto Found = Runtime->Listeners.find(ListenerId);
     if (Found == Runtime->Listeners.end() || !Found->second.Active) return;
@@ -346,6 +360,7 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
     if (Parent) Parent->Children.push_back(Value->Id);
     QueueParent(Runtime, Value);
     Runtime->LayoutDirty = true;
+    ClearInvalidHover(Runtime);
     FireSignal(Runtime, Value, "Changed");
 }
 
@@ -398,10 +413,14 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         if (lua_type(State, ValueIndex) != LUA_TBOOLEAN) luaL_error(State, "Visible must be boolean");
         Value->Visible = lua_toboolean(State, ValueIndex) != 0;
         QueueProperty(Runtime, Value, Name, Value->Visible ? "true" : "false");
+        if (!Value->Visible) ClearInvalidHover(Runtime);
     } else if (Key == "Enabled" || Key == "Checked") {
         if (lua_type(State, ValueIndex) != LUA_TBOOLEAN) luaL_error(State, "%s must be boolean", Name);
         bool Parsed = lua_toboolean(State, ValueIndex) != 0;
-        if (Key == "Enabled") Value->Enabled = Parsed;
+        if (Key == "Enabled") {
+            Value->Enabled = Parsed;
+            if (!Parsed) ClearInvalidHover(Runtime);
+        }
         else Value->Checked = Parsed;
         QueueProperty(Runtime, Value, Name, Parsed ? "true" : "false");
     } else if (Key == "Minimum" || Key == "Maximum" || Key == "Value") {
@@ -656,7 +675,8 @@ static int NodeIndex(lua_State* State) {
     const bool IsMethod = Key == "Destroy" || Key == "Clone" || Key == "GetChildren" ||
         Key == "GetDescendants" || Key == "FindFirstChild" || Key == "IsA";
     const bool IsSignal = Key == "Changed" || Key == "Destroying" ||
-        ((Key == "Focused" || Key == "FocusLost") && LuiSchema::IsA(Value->ClassName, "GuiObject")) ||
+        ((Key == "Focused" || Key == "FocusLost" || Key == "MouseEnter" || Key == "MouseLeave") &&
+            LuiSchema::IsA(Value->ClassName, "GuiObject")) ||
         (Key == "Activated" && (Value->ClassName == "TextButton" || Value->ClassName == "CheckBox")) ||
         (Key == "TextChanged" && Value->ClassName == "TextBox") ||
         (Key == "CheckedChanged" && Value->ClassName == "CheckBox") ||
@@ -714,6 +734,8 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "ValueChanged" && Value->ClassName == "Slider") PushSignal(State, Value, "ValueChanged");
     else if (Key == "Focused" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "Focused");
     else if (Key == "FocusLost" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "FocusLost");
+    else if (Key == "MouseEnter" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "MouseEnter");
+    else if (Key == "MouseLeave" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "MouseLeave");
     else if (Key == "Changed") PushSignal(State, Value, "Changed");
     else if (Key == "Destroying") PushSignal(State, Value, "Destroying");
     else lua_pushnil(State);
@@ -1255,6 +1277,22 @@ extern "C" LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, in
     if (Value->IsFocused != Parsed) {
         Value->IsFocused = Parsed;
         FireSignal(Runtime, Value, Parsed ? "Focused" : "FocusLost");
+    }
+    FlushLayout(Runtime);
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered) {
+    if (!CheckOwner(Runtime)) return 0;
+    auto Found = Runtime->Nodes.find(Id);
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
+        !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
+    Node* Value = Found->second.get();
+    const bool Parsed = Hovered != 0;
+    if (Parsed && !CanReceiveInput(Runtime, Value)) return 0;
+    if (Value->IsHovered != Parsed) {
+        Value->IsHovered = Parsed;
+        FireSignal(Runtime, Value, Parsed ? "MouseEnter" : "MouseLeave");
     }
     FlushLayout(Runtime);
     return 1;

@@ -72,4 +72,12 @@ Button.Activated:Connect(function()
     print("[LUI:Controls] Submit: " .. Input.Text)
 end)
 
+Button.MouseEnter:Connect(function()
+    Button.Text = "Submit (hover)"
+end)
+
+Button.MouseLeave:Connect(function()
+    Button.Text = "Submit"
+end)
+
 Window.Visible = true

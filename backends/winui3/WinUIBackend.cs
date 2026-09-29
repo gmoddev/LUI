@@ -152,6 +152,8 @@ internal sealed class WinUIBackend
             {
                 NewView.Element.GotFocus += (_, _) => { Diagnostic($"GotFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 1); };
                 NewView.Element.LostFocus += (_, _) => { Diagnostic($"LostFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 0); };
+                NewView.Element.PointerEntered += (_, _) => { Diagnostic($"PointerEntered {Id}"); Native.Lui_HoverChanged(Runtime, Id, 1); };
+                NewView.Element.PointerExited += (_, _) => { Diagnostic($"PointerExited {Id}"); Native.Lui_HoverChanged(Runtime, Id, 0); };
             }
             Views.Add(Id, NewView);
             Diagnostic($"Create end {Id} {ClassName}");
@@ -330,6 +332,8 @@ internal sealed class WinUIBackend
         internal static extern int Lui_ValueChanged(IntPtr Runtime, int Id, double Value);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_FocusChanged(IntPtr Runtime, int Id, int Focused);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_HoverChanged(IntPtr Runtime, int Id, int Hovered);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_Pump(IntPtr Runtime);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

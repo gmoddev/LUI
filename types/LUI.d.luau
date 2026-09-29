@@ -38,6 +38,8 @@ export type GuiObject = Instance & {
     read AbsoluteSize: Vector2,
     read Focused: Signal,
     read FocusLost: Signal,
+    read MouseEnter: Signal,
+    read MouseLeave: Signal,
 }
 
 export type Frame = GuiObject & {

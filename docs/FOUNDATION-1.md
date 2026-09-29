@@ -10,6 +10,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - `Clone()` and `GetDescendants()`, plus cleanup when property initialization fails.
 - `TextBox`, `CheckBox`, `Slider`, and `ProgressBar`; `Enabled`, `Checked`, `Minimum`, `Maximum`, `Value`, text, and focus state where applicable.
 - `TextChanged`, `CheckedChanged`, `ValueChanged`, `Focused`, and `FocusLost` signals from normalized backend callbacks. Disabled or hidden controls reject new input, and accepted callbacks flush backend changes before returning. Signal callbacks execute through the runtime's single UI thread.
+- `MouseEnter` and `MouseLeave` signals for GUI objects, normalized from pointer enter/exit callbacks. Repeated enter/exit notifications are collapsed; disabling, hiding, or reparenting into a hidden container ends an active hover. The controls example changes the submit button label on hover.
 - `app:GetService("WindowService")` with `GetWindows()` and `app:GetService("PlatformService")` with `BackendName` and capability checks. Unsupported capabilities return `false`.
 - A runtime [reflection table](../runtime/reflection/Schema.cpp) that gates class creation and property access, and generates [Luau types](../types/LUI.d.luau), [JSON schema](../types/schema.json), and [implemented API reference](API.md).
 - Generated Luau definitions cover application globals, class constructors, services, signals, and read-only fields. The Windows build loads those definitions with the pinned Luau type checker and checks valid and invalid application snippets.
@@ -44,7 +45,7 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 ## Remaining Foundation 1 work
 
 - Qualify the expanded WinUI controls and focus behavior interactively.
-- Add richer input events, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
+- Add canonical press, release, and movement input events, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
 
