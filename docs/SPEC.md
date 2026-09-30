@@ -321,7 +321,7 @@ This guarantees substantially more consistent behavior between:
 
 `UISizeConstraint` is a nonvisual child of a `Window` or GUI object. At most one may be attached to each visual object. `MinSize` is a nonnegative logical `Vector2` and defaults to `(0, 0)`. `MaxSize` is an optional nonnegative logical `Vector2`; `nil` means no upper bound. A specified maximum must be at least the minimum on both axes. Invalid assignments leave the prior values intact.
 
-LUI resolves `Size` against the parent content box, then clamps each axis before applying `AnchorPoint` or advancing a list layout's cursor. Constraints may make a child larger than its parent content box. The resulting `AbsoluteSize` and backend arrangement use the same clamped geometry. A window is clamped before its children are laid out.
+LUI resolves `Size` against the parent content box, then clamps each axis before applying `AnchorPoint` or advancing a list layout's cursor. Constraints may make a child larger than its parent content box. The resulting `AbsoluteSize` and backend arrangement use the same clamped geometry. A window is clamped before its children are laid out. When a native window is resized, its current content size temporarily determines layout and `AbsoluteSize`; its requested `Size` remains unchanged. A later script `Size` assignment or window size-constraint change requests a new native size. Foundation 1 does not yet enforce window size constraints against manual native resizing.
 
 ---
 

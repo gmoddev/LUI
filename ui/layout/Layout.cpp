@@ -39,7 +39,8 @@ void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
     if (Runtime->Backend.Arrange) {
         Runtime->BackendError.clear();
         if (!Runtime->Backend.Arrange(Runtime->Backend.Context, Value->Id,
-            Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height)) {
+            Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height,
+            Value->ClassName == "Window" && !Value->HasViewportSize ? 1 : 0)) {
             FailBackend(Runtime, "Arrange", Value->Id);
             return;
         }

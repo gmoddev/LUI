@@ -181,6 +181,15 @@ internal sealed class WinUIBackend
                     new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
             }
             Views.Add(Id, NewView);
+            if (NewView.Window is not null && NewView.Container is not null)
+            {
+                NewView.Container.SizeChanged += (_, Args) =>
+                {
+                    if (!Views.ContainsKey(Id) || Args.NewSize.Width <= 0 || Args.NewSize.Height <= 0) return;
+                    Diagnostic($"WindowResized {Id} {Args.NewSize.Width} {Args.NewSize.Height}");
+                    Native.Lui_WindowResized(Runtime, Id, Args.NewSize.Width, Args.NewSize.Height);
+                };
+            }
             Diagnostic($"Create end {Id} {ClassName}");
             return 1;
         }
@@ -311,7 +320,7 @@ internal sealed class WinUIBackend
         catch (Exception Error) { return ReportBackendFailure("Parent", Error); }
     }
 
-    private int OnArrange(IntPtr Context, int Id, double X, double Y, double Width, double Height)
+    private int OnArrange(IntPtr Context, int Id, double X, double Y, double Width, double Height, int ResizeWindow)
     {
         Diagnostic($"Arrange {Id} {X} {Y} {Width} {Height}");
         try
@@ -322,8 +331,11 @@ internal sealed class WinUIBackend
             Target.BoundsY = Y;
             if (Target.Window is not null)
             {
-                Target.Window.AppWindow.Resize(new Windows.Graphics.SizeInt32(
-                    Math.Max(1, (int)Math.Round(Width)), Math.Max(1, (int)Math.Round(Height))));
+                if (ResizeWindow != 0)
+                {
+                    Target.Window.AppWindow.Resize(new Windows.Graphics.SizeInt32(
+                        Math.Max(1, (int)Math.Round(Width)), Math.Max(1, (int)Math.Round(Height))));
+                }
             }
             else if (Target.Element is FrameworkElement Element)
             {
@@ -364,7 +376,7 @@ internal sealed class WinUIBackend
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int ParentCallback(IntPtr Context, int Id, int ParentId);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate int ArrangeCallback(IntPtr Context, int Id, double X, double Y, double Width, double Height);
+        internal delegate int ArrangeCallback(IntPtr Context, int Id, double X, double Y, double Width, double Height, int ResizeWindow);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int DestroyCallback(IntPtr Context, int Id);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -401,6 +413,8 @@ internal sealed class WinUIBackend
         internal static extern int Lui_CheckedChanged(IntPtr Runtime, int Id, int Checked);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_ValueChanged(IntPtr Runtime, int Id, double Value);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_WindowResized(IntPtr Runtime, int Id, double Width, double Height);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_FocusChanged(IntPtr Runtime, int Id, int Focused);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

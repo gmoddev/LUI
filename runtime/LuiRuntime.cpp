@@ -324,6 +324,12 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
         Cursor = Found == Runtime->Nodes.end() ? nullptr : Found->second.get();
     }
     if (Value->ParentId == (Parent ? Parent->Id : 0)) return;
+    if (Value->ClassName == "UISizeConstraint") {
+        auto PreviousParent = Runtime->Nodes.find(Value->ParentId);
+        if (PreviousParent != Runtime->Nodes.end() && PreviousParent->second->ClassName == "Window")
+            PreviousParent->second->HasViewportSize = false;
+        if (Parent && Parent->ClassName == "Window") Parent->HasViewportSize = false;
+    }
     if (Value->ParentId) {
         auto& Siblings = Runtime->Nodes.at(Value->ParentId)->Children;
         Siblings.erase(std::remove(Siblings.begin(), Siblings.end(), Value->Id), Siblings.end());
@@ -340,6 +346,11 @@ static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     if (Value->Destroyed || Value->DestroyingInProgress) return;
     Value->DestroyingInProgress = true;
     if (!Runtime->BackendFailed) FireSignal(Runtime, Value, "Destroying");
+    if (Value->ClassName == "UISizeConstraint") {
+        auto Parent = Runtime->Nodes.find(Value->ParentId);
+        if (Parent != Runtime->Nodes.end() && Parent->second->ClassName == "Window")
+            Parent->second->HasViewportSize = false;
+    }
     if (Value->ParentId) {
         auto& Siblings = Runtime->Nodes.at(Value->ParentId)->Children;
         Siblings.erase(std::remove(Siblings.begin(), Siblings.end(), Value->Id), Siblings.end());
@@ -424,7 +435,10 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         if (IsComponent || (Key == "Position" && Value->ClassName == "Window")) luaL_error(State, "%s is invalid for %s", Name, Value->ClassName.c_str());
         SizeValue Parsed;
         if (!ReadSize(State, ValueIndex, Parsed)) luaL_error(State, "%s must be UDim2 with finite values", Name);
-        if (Key == "Size") Value->Size = Parsed;
+        if (Key == "Size") {
+            Value->Size = Parsed;
+            if (Value->ClassName == "Window") Value->HasViewportSize = false;
+        }
         else Value->Position = Parsed;
         const std::string Formatted = FormatSize(Parsed);
         QueueProperty(Runtime, Value, Name, Formatted);
@@ -450,6 +464,9 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
             Value->HasMaxSize = !Unbounded;
             if (!Unbounded) Value->MaxSize = Parsed;
         }
+        auto Parent = Runtime->Nodes.find(Value->ParentId);
+        if (Value->ClassName == "UISizeConstraint" && Parent != Runtime->Nodes.end() &&
+            Parent->second->ClassName == "Window") Parent->second->HasViewportSize = false;
         Runtime->LayoutDirty = true;
     } else if (Key == "LayoutOrder") {
         if (IsComponent || Value->ClassName == "Window") luaL_error(State, "LayoutOrder belongs to GuiObject");
@@ -917,7 +934,8 @@ static void FlushLayout(LuiRuntime* Runtime) {
             for (auto& Pair : Runtime->Nodes) {
                 Node* Value = Pair.second.get();
                 if (!Value->Destroyed && Value->ClassName == "Window") {
-                    const VectorValue Resolved = LuiLayout::ResolveConstrainedSize(Runtime, Value, 0, 0);
+                    const VectorValue Resolved = Value->HasViewportSize
+                        ? Value->ViewportSize : LuiLayout::ResolveConstrainedSize(Runtime, Value, 0, 0);
                     LuiLayout::ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
                 }
             }
@@ -1195,6 +1213,26 @@ extern "C" LUI_API int LUI_CALL Lui_ValueChanged(LuiRuntime* Runtime, int Id, do
     return 1;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_WindowResized(LuiRuntime* Runtime, int Id, double Width, double Height) {
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || !std::isfinite(Width) || !std::isfinite(Height) ||
+        Width <= 0 || Height <= 0) return 0;
+    BackendEvent Event{BackendEvent::Kind::WindowResized, Id};
+    Event.X = Width;
+    Event.Y = Height;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
+    auto Found = Runtime->Nodes.find(Id);
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || Found->second->ClassName != "Window") return 0;
+    Node* Value = Found->second.get();
+    if (!Value->HasViewportSize || Value->ViewportSize.X != Width || Value->ViewportSize.Y != Height) {
+        Value->ViewportSize = {Width, Height};
+        Value->HasViewportSize = true;
+        Runtime->LayoutDirty = true;
+        FlushLayout(Runtime);
+    }
+    return 1;
+}
+
 extern "C" LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, int Focused) {
     if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
     BackendEvent Event{BackendEvent::Kind::FocusChanged, Id};
@@ -1302,6 +1340,7 @@ static void DrainBackendEvents(LuiRuntime* Runtime) {
             case BackendEvent::Kind::TextChanged: Lui_TextChanged(Runtime, Event.Id, Event.Text.c_str()); break;
             case BackendEvent::Kind::CheckedChanged: Lui_CheckedChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::ValueChanged: Lui_ValueChanged(Runtime, Event.Id, Event.Number); break;
+            case BackendEvent::Kind::WindowResized: Lui_WindowResized(Runtime, Event.Id, Event.X, Event.Y); break;
             case BackendEvent::Kind::FocusChanged: Lui_FocusChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::HoverChanged: Lui_HoverChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::PointerInput:

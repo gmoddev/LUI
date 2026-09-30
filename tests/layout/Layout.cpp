@@ -14,6 +14,7 @@ struct Bounds {
 
 struct LayoutBackend {
     std::unordered_map<int, Bounds> Arranged;
+    int WindowResizeRequests = 0;
     int Created = 0;
 };
 
@@ -26,8 +27,10 @@ static int LUI_CALL OnProperty(void*, int, const char*, const char*) { return 1;
 static int LUI_CALL OnParent(void*, int, int) { return 1; }
 static int LUI_CALL OnDestroy(void*, int) { return 1; }
 
-static int LUI_CALL OnArrange(void* Context, int Id, double X, double Y, double Width, double Height) {
-    static_cast<LayoutBackend*>(Context)->Arranged[Id] = {X, Y, Width, Height};
+static int LUI_CALL OnArrange(void* Context, int Id, double X, double Y, double Width, double Height, int ResizeWindow) {
+    auto* Backend = static_cast<LayoutBackend*>(Context);
+    Backend->Arranged[Id] = {X, Y, Width, Height};
+    if (Id == 1 && ResizeWindow) ++Backend->WindowResizeRequests;
     return 1;
 }
 
@@ -154,6 +157,31 @@ int main() {
     Failures += Check(Lui_RunScript(Runtime, GridScript, "Grid") == 1, Lui_GetLastError(Runtime));
     Failures += Check(Backend.Created == 8 && Backend.Arranged.size() == 8,
         "grid components must not create or arrange native controls");
+    const char* WindowResizeScript = R"(
+        Responsive = Instance.new("Frame", {Size = UDim2.fromScale(1, 1), Parent = Window})
+        Instance.new("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = Responsive})
+        Instance.new("UIGridLayout", {CellSize = UDim2.fromOffset(300, 40), CellPadding = UDim2.fromOffset(10, 10), Parent = Responsive})
+        ResponsiveA = Instance.new("TextButton", {Parent = Responsive})
+        ResponsiveB = Instance.new("TextButton", {Parent = Responsive})
+        ResponsiveC = Instance.new("TextButton", {Parent = Responsive})
+        assert(ResponsiveC.AbsolutePosition.X == 10 and ResponsiveC.AbsolutePosition.Y == 50)
+    )";
+    Failures += Check(Lui_RunScript(Runtime, WindowResizeScript, "WindowResize") == 1, Lui_GetLastError(Runtime));
+    const int ResizeRequestsBeforeNativeEvent = Backend.WindowResizeRequests;
+    Failures += Check(Lui_WindowResized(Runtime, 1, 1200, 800) == 1, "native window resize was rejected");
+    Failures += Check(Lui_RunScript(Runtime,
+        "assert(Window.Size.X.Offset == 800 and Window.AbsoluteSize.X == 1200); "
+        "assert(ResponsiveC.AbsolutePosition.X == 630 and ResponsiveC.AbsolutePosition.Y == 0)",
+        "NativeViewport") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.WindowResizeRequests == ResizeRequestsBeforeNativeEvent,
+        "native viewport update requested a window resize");
+    Failures += Check(Lui_WindowResized(Runtime, 1, 0, 800) == 0 &&
+        Lui_WindowResized(Runtime, 2, 1200, 800) == 0, "invalid viewport update was accepted");
+    Failures += Check(Lui_RunScript(Runtime,
+        "Window.Size = UDim2.fromOffset(1000, 750); assert(Window.AbsoluteSize.X == 1000)",
+        "RequestedWindowSize") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.WindowResizeRequests > ResizeRequestsBeforeNativeEvent,
+        "script size assignment did not request a window resize");
     Lui_Destroy(Runtime);
     if (!Failures) std::puts("[LUI:LayoutTest] Foundation 1 layout semantics passed");
     return Failures ? 1 : 0;

@@ -65,7 +65,7 @@ static int LUI_CALL OnParent(void* Context, int Id, int ParentId) {
     return 1;
 }
 
-static int LUI_CALL OnArrange(void* Context, int Id, double, double, double Width, double) {
+static int LUI_CALL OnArrange(void* Context, int Id, double, double, double Width, double, int) {
     auto* Backend = static_cast<TestBackend*>(Context);
     if (Backend->FailOperation == "Arrange") {
         Lui_ReportBackendError(Backend->Runtime, "synthetic arrange failure");

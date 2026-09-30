@@ -26,7 +26,8 @@ typedef struct LuiBackendCallbacks {
     int (LUI_CALL* Create)(void* Context, int Id, const char* ClassName);
     int (LUI_CALL* Property)(void* Context, int Id, const char* Name, const char* Value);
     int (LUI_CALL* Parent)(void* Context, int Id, int ParentId);
-    int (LUI_CALL* Arrange)(void* Context, int Id, double X, double Y, double Width, double Height);
+    /* ResizeWindow is set for a script-requested window size, never for a native viewport update. */
+    int (LUI_CALL* Arrange)(void* Context, int Id, double X, double Y, double Width, double Height, int ResizeWindow);
     int (LUI_CALL* Destroy)(void* Context, int Id);
 } LuiBackendCallbacks;
 
@@ -40,6 +41,8 @@ LUI_API int LUI_CALL Lui_Activate(LuiRuntime* Runtime, int Id);
 LUI_API int LUI_CALL Lui_TextChanged(LuiRuntime* Runtime, int Id, const char* Text);
 LUI_API int LUI_CALL Lui_CheckedChanged(LuiRuntime* Runtime, int Id, int Checked);
 LUI_API int LUI_CALL Lui_ValueChanged(LuiRuntime* Runtime, int Id, double Value);
+/* Reports the native window content size in logical units. A later script Size assignment replaces this override. */
+LUI_API int LUI_CALL Lui_WindowResized(LuiRuntime* Runtime, int Id, double Width, double Height);
 LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, int Focused);
 LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered);
 /* Phase: 0 pressed, 1 moved, 2 released, 3 canceled. Device: 0 mouse, 1 pen, 2 touch, 3 touchpad. */

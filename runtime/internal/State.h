@@ -60,6 +60,8 @@ struct Node {
     double Maximum = 100;
     double Value = 0;
     SizeValue Size;
+    VectorValue ViewportSize;
+    bool HasViewportSize = false;
     SizeValue Position;
     SizeValue CellSize{{0, 100}, {0, 100}};
     SizeValue CellPadding;
@@ -101,7 +103,7 @@ struct BackendChange {
 };
 
 struct BackendEvent {
-    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, FocusChanged, HoverChanged, PointerInput } Type;
+    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, WindowResized, FocusChanged, HoverChanged, PointerInput } Type;
     int Id = 0;
     int Value = 0;
     int Phase = 0;
