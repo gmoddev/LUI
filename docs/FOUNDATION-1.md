@@ -67,3 +67,15 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 - Continue moving object, scheduler, and signals code into internal modules as the runtime grows. Input and focus now have their own internal module.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.
+
+## Exit audit
+
+| Criterion | Evidence | Status |
+| --- | --- | --- |
+| Reflection, generated types, API reference, and implemented behavior agree | Schema is the generator input; Windows CI checks generated files; type tests compile valid and reject invalid examples. | Passed |
+| Portable layout and control semantics run without a display | Windows and Linux headless, layout, and conformance jobs pass. | Passed |
+| Keyboard and pointer pairing, cancellation, focus, hide, disable, and destruction have explicit rules | [Decisions](decisions/0014-keyboard-input.md) and headless conformance tests cover the event order and rejection cases. | Passed in shared runtime |
+| WinUI controls preserve native property and accessibility mappings | Text entry, checkbox, slider, disabled state, focus, grid resize, accessible name, and help text have been observed. The [native mapping probe](../tests/winui/README.md) is compiled but still needs a desktop run. | Pending probe run |
+| Native keyboard and pointer routing matches the shared semantics | The [interactive input case](../tests/winui/InputQualification.luau) is repeatable and loads headlessly. Physical keyboard and pointer observations are still needed. | Pending desktop run |
+
+Foundation 1 should be marked complete only after the two pending native checks pass. The direct constructor table typing limit is documented above; automated GUI execution in hosted CI and assistive technology qualification belong to future tooling and production Windows work.

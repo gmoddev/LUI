@@ -49,4 +49,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Complete Foundation 1's semantic model and conformance suite, then qualify the expanded WinUI control set in an interactive desktop session.
+Finish the [Foundation 1 exit audit](docs/FOUNDATION-1.md#exit-audit): run the native mapping probe and the interactive keyboard/pointer matrix on a Windows desktop, then record the results before marking the milestone complete.
