@@ -22,6 +22,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - Backend notifications raised synchronously during Luau execution or a native callback are queued and dispatched at a safe scheduler boundary. Reentrant script, pump, and runtime destruction calls are rejected. See [VM entry decision](decisions/0007-vm-entry-and-backend-events.md).
 - Internal backend callbacks report success or failure. Failed creation is rolled back; other failures stop the runtime and surface a structured diagnostic instead of silently continuing. Headless tests inject each failure type. See [backend failure decision](decisions/0008-backend-failures.md).
 - A [compatibility policy](COMPATIBILITY.md) for experimental API changes, metadata format versions, and future backend conformance.
+- CI runs the pinned Windows build, headless and type tests, and a WinUI compile on changes to `main` and proposed changes. A Linux job compiles and runs the headless suite and checks that reflection emits the same schema.
 
 ## Verify
 
@@ -55,6 +56,5 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
 - Continue moving object, scheduler, signals, and input code into internal modules before adding more major behavior.
-- Add CI that runs the pinned Windows build and headless suite on each proposed change.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows build and tests
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        shell: pwsh
+        run: ./scripts/Build-Windows.ps1
+      - name: Check generated API files
+        shell: pwsh
+        run: git diff --exit-code -- docs/API.md types/LUI.d.luau types/schema.json
+
+  linux:
+    name: Linux headless tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build/linux-x64 -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build/linux-x64 --parallel 2 --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests
+      - name: Test
+        run: ctest --test-dir build/linux-x64 --output-on-failure
+      - name: Check generated schema
+        run: |
+          build/linux-x64/LuiSchemaDump > build/linux-x64/schema.json
+          cmp types/schema.json build/linux-x64/schema.json
