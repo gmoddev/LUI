@@ -1,5 +1,8 @@
 #include "LuiRuntime.h"
 #include "reflection/Schema.h"
+#include "internal/State.h"
+#include "internal/Diagnostics.h"
+#include "../ui/layout/Layout.h"
 
 #include "Luau/Compiler.h"
 #include "lua.h"
@@ -18,136 +21,6 @@
 #include <utility>
 #include <vector>
 
-struct Dimension {
-    double Scale = 0;
-    double Offset = 0;
-};
-
-struct SizeValue {
-    Dimension X;
-    Dimension Y;
-};
-
-struct VectorValue {
-    double X = 0;
-    double Y = 0;
-};
-
-struct BoundsValue {
-    double X = 0;
-    double Y = 0;
-    double Width = 0;
-    double Height = 0;
-};
-
-struct PointerInputValue {
-    unsigned int PointerId = 0;
-    std::string Device;
-    VectorValue Position;
-};
-
-struct Node {
-    int Id = 0;
-    int Reference = 0;
-    int ParentId = 0;
-    bool Destroyed = false;
-    bool DestroyingInProgress = false;
-    bool Visible = true;
-    bool Enabled = true;
-    bool Checked = false;
-    bool IsFocused = false;
-    bool IsHovered = false;
-    std::unordered_map<unsigned int, PointerInputValue> ActivePointers;
-    std::string ClassName;
-    std::string Name;
-    std::string Title;
-    std::string Text;
-    double Minimum = 0;
-    double Maximum = 100;
-    double Value = 0;
-    SizeValue Size;
-    SizeValue Position;
-    SizeValue CellSize{{0, 100}, {0, 100}};
-    SizeValue CellPadding;
-    VectorValue AnchorPoint;
-    VectorValue MinSize;
-    VectorValue MaxSize;
-    bool HasMaxSize = false;
-    BoundsValue Bounds;
-    int LayoutOrder = 0;
-    Dimension Padding;
-    Dimension PaddingTop;
-    Dimension PaddingBottom;
-    Dimension PaddingLeft;
-    Dimension PaddingRight;
-    std::string FillDirection = "Vertical";
-    std::vector<int> Children;
-    std::vector<int> Listeners;
-};
-
-struct Listener {
-    int Id = 0;
-    int NodeId = 0;
-    int Reference = 0;
-    std::string Signal;
-    bool Active = true;
-};
-
-struct ScheduledCall {
-    int Reference = 0;
-    std::chrono::steady_clock::time_point Due;
-};
-
-struct BackendChange {
-    enum class Kind { Property, Parent } Type;
-    int Id = 0;
-    std::string Name;
-    std::string Value;
-    int ParentId = 0;
-};
-
-struct BackendEvent {
-    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, FocusChanged, HoverChanged, PointerInput } Type;
-    int Id = 0;
-    int Value = 0;
-    int Phase = 0;
-    int Device = 0;
-    unsigned int PointerId = 0;
-    double Number = 0;
-    double X = 0;
-    double Y = 0;
-    std::string Text;
-};
-
-struct LuiRuntime {
-    lua_State* State = nullptr;
-    std::thread::id Owner;
-    LuiBackendCallbacks Backend{};
-    void* LogContext = nullptr;
-    LuiLogCallback LogCallback = nullptr;
-    std::string BackendName = "headless";
-    std::unordered_map<std::string, int> ServiceRefs;
-    std::unordered_map<int, std::unique_ptr<Node>> Nodes;
-    std::unordered_map<int, Listener> Listeners;
-    std::vector<ScheduledCall> Tasks;
-    std::vector<BackendChange> PendingChanges;
-    std::deque<BackendEvent> PendingBackendEvents;
-    std::string LastError;
-    std::string BackendError;
-    int NextNodeId = 1;
-    int NextListenerId = 1;
-    bool LayoutDirty = false;
-    int VmDepth = 0;
-    int BackendDepth = 0;
-    bool DrainingBackendEvents = false;
-    bool BackendFailed = false;
-};
-
-struct SignalValue {
-    int NodeId;
-    const char* Name;
-};
-
 static void FlushLayout(LuiRuntime* Runtime);
 static void DrainBackendEvents(LuiRuntime* Runtime);
 static LuiRuntime* GetRuntime(lua_State* State);
@@ -163,7 +36,7 @@ static void EmitLog(LuiRuntime* Runtime, const char* Level, const std::string& M
     else std::fprintf(Level[0] == 'E' ? stderr : stdout, "[LUI:%s] %s\n", Level, Message.c_str());
 }
 
-static void FailBackend(LuiRuntime* Runtime, const char* Operation, int Id) {
+void FailBackend(LuiRuntime* Runtime, const char* Operation, int Id) {
     Runtime->BackendFailed = true;
     Runtime->LastError = "[LUI:Backend] " + std::string(Operation) + " failed for Instance " + std::to_string(Id);
     if (!Runtime->BackendError.empty()) Runtime->LastError += ": " + Runtime->BackendError;
@@ -1034,116 +907,6 @@ static int TaskDelay(lua_State* State) {
     return 0;
 }
 
-static double Resolve(Dimension Value, double ParentExtent) {
-    return ParentExtent * Value.Scale + Value.Offset;
-}
-
-static VectorValue ApplySizeConstraint(LuiRuntime* Runtime, const Node* Value, VectorValue Size) {
-    for (int Id : Value->Children) {
-        const Node* Child = Runtime->Nodes.at(Id).get();
-        if (Child->ClassName != "UISizeConstraint") continue;
-        Size.X = std::max(Size.X, Child->MinSize.X);
-        Size.Y = std::max(Size.Y, Child->MinSize.Y);
-        if (Child->HasMaxSize) {
-            Size.X = std::min(Size.X, Child->MaxSize.X);
-            Size.Y = std::min(Size.Y, Child->MaxSize.Y);
-        }
-        break;
-    }
-    return Size;
-}
-
-static VectorValue ResolveConstrainedSize(LuiRuntime* Runtime, const Node* Value, double ParentWidth, double ParentHeight) {
-    return ApplySizeConstraint(Runtime, Value,
-        {std::max(0.0, Resolve(Value->Size.X, ParentWidth)),
-         std::max(0.0, Resolve(Value->Size.Y, ParentHeight))});
-}
-
-static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
-    if (Runtime->BackendFailed) return;
-    Value->Bounds = Bounds;
-    if (Runtime->Backend.Arrange) {
-        Runtime->BackendError.clear();
-        if (!Runtime->Backend.Arrange(Runtime->Backend.Context, Value->Id,
-            Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height)) {
-            FailBackend(Runtime, "Arrange", Value->Id);
-            return;
-        }
-    }
-
-    Node* Padding = nullptr;
-    Node* List = nullptr;
-    Node* Grid = nullptr;
-    std::vector<Node*> VisualChildren;
-    for (int Id : Value->Children) {
-        Node* Child = Runtime->Nodes.at(Id).get();
-        if (Child->ClassName == "UIPadding") Padding = Child;
-        else if (Child->ClassName == "UIListLayout") List = Child;
-        else if (Child->ClassName == "UIGridLayout") Grid = Child;
-        else if (Child->ClassName == "UISizeConstraint") continue;
-        else VisualChildren.push_back(Child);
-    }
-
-    double Left = Padding ? Resolve(Padding->PaddingLeft, Bounds.Width) : 0;
-    double Right = Padding ? Resolve(Padding->PaddingRight, Bounds.Width) : 0;
-    double Top = Padding ? Resolve(Padding->PaddingTop, Bounds.Height) : 0;
-    double Bottom = Padding ? Resolve(Padding->PaddingBottom, Bounds.Height) : 0;
-    BoundsValue Inner{Bounds.X + Left, Bounds.Y + Top,
-        std::max(0.0, Bounds.Width - Left - Right), std::max(0.0, Bounds.Height - Top - Bottom)};
-
-    if (List || Grid) std::stable_sort(VisualChildren.begin(), VisualChildren.end(),
-        [](const Node* LeftNode, const Node* RightNode) { return LeftNode->LayoutOrder < RightNode->LayoutOrder; });
-    if (Grid && !VisualChildren.empty()) {
-        const VectorValue Cell{
-            std::max(0.0, Resolve(Grid->CellSize.X, Inner.Width)),
-            std::max(0.0, Resolve(Grid->CellSize.Y, Inner.Height))};
-        const VectorValue Gap{
-            Resolve(Grid->CellPadding.X, Inner.Width),
-            Resolve(Grid->CellPadding.Y, Inner.Height)};
-        std::vector<VectorValue> ChildSizes;
-        ChildSizes.reserve(VisualChildren.size());
-        VectorValue Slot = Cell;
-        for (Node* Child : VisualChildren) {
-            VectorValue ChildSize = ApplySizeConstraint(Runtime, Child, Cell);
-            Slot.X = std::max(Slot.X, ChildSize.X);
-            Slot.Y = std::max(Slot.Y, ChildSize.Y);
-            ChildSizes.push_back(ChildSize);
-        }
-        size_t Columns = 1;
-        const double HorizontalPitch = Slot.X + Gap.X;
-        if (HorizontalPitch > 0 && std::isfinite(HorizontalPitch)) {
-            const double Capacity = std::floor((Inner.Width + Gap.X) / HorizontalPitch);
-            if (std::isfinite(Capacity) && Capacity >= 1)
-                Columns = static_cast<size_t>(std::min(Capacity, static_cast<double>(VisualChildren.size())));
-        }
-        for (size_t Index = 0; Index < VisualChildren.size(); ++Index) {
-            const size_t Column = Index % Columns;
-            const size_t Row = Index / Columns;
-            ArrangeNode(Runtime, VisualChildren[Index], {
-                Inner.X + Column * HorizontalPitch,
-                Inner.Y + Row * (Slot.Y + Gap.Y),
-                ChildSizes[Index].X,
-                ChildSizes[Index].Y});
-        }
-        return;
-    }
-    double Cursor = 0;
-    for (Node* Child : VisualChildren) {
-        const VectorValue Resolved = ResolveConstrainedSize(Runtime, Child, Inner.Width, Inner.Height);
-        double Width = Resolved.X;
-        double Height = Resolved.Y;
-        double X = Inner.X + Resolve(Child->Position.X, Inner.Width) - Child->AnchorPoint.X * Width;
-        double Y = Inner.Y + Resolve(Child->Position.Y, Inner.Height) - Child->AnchorPoint.Y * Height;
-        if (List) {
-            X = Inner.X + (List->FillDirection == "Horizontal" ? Cursor : 0);
-            Y = Inner.Y + (List->FillDirection == "Vertical" ? Cursor : 0);
-            Cursor += (List->FillDirection == "Vertical" ? Height : Width) +
-                Resolve(List->Padding, List->FillDirection == "Vertical" ? Inner.Height : Inner.Width);
-        }
-        ArrangeNode(Runtime, Child, {X, Y, Width, Height});
-    }
-}
-
 static void FlushLayout(LuiRuntime* Runtime) {
     if (Runtime->BackendFailed) return;
     {
@@ -1154,8 +917,8 @@ static void FlushLayout(LuiRuntime* Runtime) {
             for (auto& Pair : Runtime->Nodes) {
                 Node* Value = Pair.second.get();
                 if (!Value->Destroyed && Value->ClassName == "Window") {
-                    const VectorValue Resolved = ResolveConstrainedSize(Runtime, Value, 0, 0);
-                    ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
+                    const VectorValue Resolved = LuiLayout::ResolveConstrainedSize(Runtime, Value, 0, 0);
+                    LuiLayout::ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
                 }
             }
         }

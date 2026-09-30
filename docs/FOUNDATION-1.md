@@ -6,6 +6,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 
 - `Position`, `AnchorPoint`, `LayoutOrder`, and read-only derived `AbsolutePosition`/`AbsoluteSize` for GUI objects.
 - `UIPadding`, `UIListLayout` with vertical or horizontal fill, and row-major `UIGridLayout` with automatic column wrapping. A container may have padding and one list or grid layout. LUI computes geometry in logical units and sends resolved bounds to WinUI.
+- The layout solver now lives in [ui/layout](../ui/layout/Layout.cpp), with a narrow internal entry point. Runtime state remains private to the native implementation, and the scheduler still controls when layout and backend changes flush.
 - `UISizeConstraint` clamps a visual object's resolved width and height with nonnegative `MinSize` and optional `MaxSize`. One constraint may be attached to each `Window` or GUI object; clamping occurs before anchor placement and list spacing.
 - `Clone()` and `GetDescendants()`, plus cleanup when property initialization fails.
 - `TextBox`, `CheckBox`, `Slider`, and `ProgressBar`; `Enabled`, `Checked`, `Minimum`, `Maximum`, `Value`, text, and focus state where applicable.
@@ -53,7 +54,7 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 - Add keyboard input to the canonical event model, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
-- Split the runtime into its existing subsystem boundaries before adding more major behavior.
+- Continue moving object, scheduler, signals, and input code into internal modules before adding more major behavior.
 - Add CI that runs the pinned Windows build and headless suite on each proposed change.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.

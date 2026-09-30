@@ -18,7 +18,7 @@ else()
     FetchContent_MakeAvailable(Luau)
 endif()
 
-add_library(LuiRuntime SHARED runtime/LuiRuntime.cpp runtime/reflection/Schema.cpp)
+add_library(LuiRuntime SHARED runtime/LuiRuntime.cpp runtime/reflection/Schema.cpp ui/layout/Layout.cpp)
 target_include_directories(LuiRuntime PUBLIC native/abi)
 target_link_libraries(LuiRuntime PRIVATE Luau.Compiler Luau.VM)
 target_compile_definitions(LuiRuntime PRIVATE LUI_BUILD)
