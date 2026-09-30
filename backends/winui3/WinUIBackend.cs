@@ -78,6 +78,56 @@ internal sealed class WinUIBackend
         }
     }
 
+    public bool RunNativeQualification()
+    {
+        try
+        {
+            View Find(string Label) => Views.Values.Single(View => View.Element is not null &&
+                AutomationProperties.GetName(View.Element) == Label);
+            static void Require(bool Condition, string Message)
+            {
+                if (!Condition) throw new InvalidOperationException(Message);
+            }
+
+            View NativeWindow = Views.Values.Single(View => View.Window?.Title == "LUI Native Mapping");
+            View NativeRoot = Views.Values.Single(View => View.ParentId == Views.First(Pair =>
+                ReferenceEquals(Pair.Value, NativeWindow)).Key && View.Element is Canvas);
+            View NativeInput = Find("Qualification input");
+            View NativeCheck = Find("Qualification check");
+            View NativeSlider = Find("Qualification slider");
+            View NativeProgress = Find("Qualification progress");
+            View NativeHidden = Find("Qualification hidden frame");
+
+            Require(ReferenceEquals(NativeWindow.Window?.Content, NativeWindow.Container), "window content mismatch");
+            Require(NativeInput.Element is TextBox Input && Input.Text == "initial" &&
+                AutomationProperties.GetHelpText(Input) == "Native help text", "text or accessibility mapping mismatch");
+            Require(NativeCheck.Element is CheckBox Check && Check.IsChecked == true && !Check.IsEnabled,
+                "checked or disabled state mismatch");
+            Require(NativeSlider.Element is Slider Slider && Slider.Minimum == 10 && Slider.Maximum == 20 &&
+                Slider.Value == 15, "slider range mismatch");
+            Require(NativeProgress.Element is ProgressBar Progress && Progress.Minimum == 0 &&
+                Progress.Maximum == 100 && Progress.Value == 40, "progress range mismatch");
+            Require(NativeHidden.Element?.Visibility == Visibility.Collapsed, "hidden state mismatch");
+            Require(NativeRoot.Container is not null && NativeInput.Element is not null &&
+                NativeRoot.Container.Children.Contains(NativeInput.Element), "native parent mapping mismatch");
+            Require(NativeInput.Element is FrameworkElement Arranged && Arranged.Width == 240 && Arranged.Height == 36,
+                "resolved native bounds mismatch");
+
+            ((TextBox)NativeInput.Element!).Text = "native edit";
+            ((Slider)NativeSlider.Element!).Value = 17;
+            Require(Native.Lui_RunScript(Runtime,
+                "assert(Input.Text == 'native edit' and Slider.Value == 17 and Check.Checked and not Check.Enabled)",
+                "NativeMappingCheck") == 1, "native event did not reach Luau: " + LastError);
+            LuiDiagnostics.Log("Qualification", "Native control mapping and event round trip passed");
+            return true;
+        }
+        catch (Exception Error)
+        {
+            LuiDiagnostics.Error("Qualification", Error.ToString());
+            return false;
+        }
+    }
+
     public void Pump()
     {
         int Completed = Native.Lui_Pump(Runtime);

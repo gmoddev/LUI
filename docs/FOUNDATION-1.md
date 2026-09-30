@@ -42,6 +42,8 @@ Run `Lui.WinUI.exe tests/winui/FocusEdge.luau` from the repository root to quali
 
 Use the [WinUI desktop qualification matrix](../tests/winui/README.md) for keyboard pairing, pointer release and cancellation, accessibility metadata, focus, controls, and grid reflow. The qualification scripts also load in the headless CI test, which checks syntax and startup behavior without claiming native event verification.
 
+Run `Lui.WinUI.exe --native-qualification` from the generated output folder for the automatic native mapping probe. It records a nonmodal log, checks native controls and event round trips, and exits with a pass/fail process code. The interactive input matrix still requires a Windows desktop session.
+
 The type file infers specific result types for the seven primary constructors. `ProgressBar`, `UIPadding`, `UIListLayout`, `UIGridLayout`, and `UISizeConstraint` share a union result type because the pinned Luau type checker rejects a larger overload intersection. Constructor property tables accept `any`; annotate a table with its generated `ClassNameInit` type when static property checking is needed:
 
 ```luau
@@ -60,7 +62,7 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 ## Remaining Foundation 1 work
 
 - Complete the WinUI desktop qualification matrix for keyboard pairing and pointer cancellation, including press during disable. Native UI Automation exposed the configured accessible name and help text on 2026-09-30. Focus, disabled state, text entry, checkbox, slider, button hover, and grid resize have been observed on Windows.
-- Add an automated native backend runner for the shared conformance expectations when the Windows CI environment can host an interactive WinUI session. The current native matrix is repeatable but manually driven.
+- Run the native mapping probe and finish the interactive keyboard and pointer matrix in a Windows desktop session. Windows CI compiles the probe and checks all qualification scripts for startup errors, but it does not host a native desktop session.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
 - Continue moving object, scheduler, and signals code into internal modules as the runtime grows. Input and focus now have their own internal module.
 

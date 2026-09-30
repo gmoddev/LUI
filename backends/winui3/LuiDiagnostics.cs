@@ -12,9 +12,9 @@ internal static class LuiDiagnostics
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
 
-    public static void Initialize(bool ShowDiagnostics)
+    public static void Initialize(bool ShowDiagnostics, bool SaveLog = false)
     {
-        if (!ShowDiagnostics) return;
+        if (!ShowDiagnostics && !SaveLog) return;
         Enabled = true;
         try
         {
@@ -27,7 +27,7 @@ internal static class LuiDiagnostics
 
         try
         {
-            if (AllocConsole())
+            if (ShowDiagnostics && AllocConsole())
             {
                 Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
                 Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });

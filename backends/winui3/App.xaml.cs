@@ -10,7 +10,9 @@ public partial class App : Application
 
     public App()
     {
-        LuiDiagnostics.Initialize(Environment.GetCommandLineArgs().Skip(1).Any(Argument => Argument == "--diagnostics"));
+        string[] Arguments = Environment.GetCommandLineArgs();
+        LuiDiagnostics.Initialize(Arguments.Skip(1).Any(Argument => Argument == "--diagnostics"),
+            Arguments.Skip(1).Any(Argument => Argument == "--native-qualification"));
         UnhandledException += (_, Args) => LuiDiagnostics.Error("Xaml", Args.Exception.ToString());
         InitializeComponent();
     }
@@ -18,17 +20,29 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs Args)
     {
         string[] Arguments = Environment.GetCommandLineArgs();
+        bool Qualification = Arguments.Skip(1).Any(Argument => Argument == "--native-qualification");
         try
         {
             Backend = new WinUIBackend();
-            string? ScriptArgument = Arguments.Skip(1).FirstOrDefault(Argument => Argument != "--diagnostics");
+            string? ScriptArgument = Arguments.Skip(1).FirstOrDefault(Argument =>
+                Argument != "--diagnostics" && Argument != "--native-qualification");
             string ScriptPath = ScriptArgument is not null
                 ? Path.GetFullPath(ScriptArgument)
-                : Path.Combine(AppContext.BaseDirectory, "examples", "hello.luau");
+                : Qualification
+                    ? Path.Combine(AppContext.BaseDirectory, "tests", "winui", "NativeMapping.luau")
+                    : Path.Combine(AppContext.BaseDirectory, "examples", "hello.luau");
             LuiDiagnostics.Log("App", "Loading " + ScriptPath);
             if (!Backend.RunFile(ScriptPath))
             {
                 LuiDiagnostics.Error("App", "Script failed: " + Backend.LastError);
+                if (Qualification) Environment.ExitCode = 1;
+                Exit();
+                return;
+            }
+
+            if (Qualification)
+            {
+                Environment.ExitCode = Backend.RunNativeQualification() ? 0 : 1;
                 Exit();
                 return;
             }
@@ -41,6 +55,7 @@ public partial class App : Application
         catch (Exception Error)
         {
             LuiDiagnostics.Error("App", "Startup failed: " + Error);
+            if (Qualification) Environment.ExitCode = 1;
             Exit();
         }
     }

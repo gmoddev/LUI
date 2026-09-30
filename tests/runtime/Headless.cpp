@@ -255,7 +255,7 @@ int main() {
         Failures += Check(Status == 1, Lui_GetLastError(GridRuntime));
         Lui_Destroy(GridRuntime);
     }
-    for (const char* Path : {LUI_WINUI_FOCUS_CASE_PATH, LUI_WINUI_INPUT_CASE_PATH}) {
+    for (const char* Path : {LUI_WINUI_FOCUS_CASE_PATH, LUI_WINUI_INPUT_CASE_PATH, LUI_WINUI_NATIVE_CASE_PATH}) {
         std::ifstream CaseFile(Path);
         Failures += Check(CaseFile.good(), "WinUI qualification case was not found");
         if (!CaseFile) continue;
