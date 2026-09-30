@@ -13,7 +13,7 @@ jobs:
     name: Windows build and tests
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build and test
         shell: pwsh
         run: ./scripts/Build-Windows.ps1
@@ -25,7 +25,7 @@ jobs:
     name: Linux headless tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure
         run: cmake -S . -B build/linux-x64 -DCMAKE_BUILD_TYPE=Debug
       - name: Build
