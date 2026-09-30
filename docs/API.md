@@ -45,6 +45,8 @@ Base: `Instance`. Creatable: `false`.
 | Property | Type | Default | Read only |
 | --- | --- | --- | --- |
 | `Visible` | `boolean` | true | No |
+| `AccessibilityLabel` | `string` |  | No |
+| `AccessibilityDescription` | `string` |  | No |
 | `Size` | `UDim2` | 100% of parent | No |
 | `Position` | `UDim2` | 0,0 | No |
 | `AnchorPoint` | `Vector2` | 0,0 | No |

@@ -56,6 +56,8 @@ struct Node {
     std::string Name;
     std::string Title;
     std::string Text;
+    std::string AccessibilityLabel;
+    std::string AccessibilityDescription;
     double Minimum = 0;
     double Maximum = 100;
     double Value = 0;

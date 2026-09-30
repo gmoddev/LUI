@@ -789,7 +789,7 @@ LUI should rely on native controls wherever practical so that standard accessibi
 
 Custom LUI controls must expose meaningful semantic information to the backend.
 
-Potential properties:
+Foundation 1 implements `AccessibilityLabel` and `AccessibilityDescription` as strings on `GuiObject`. Both default to an empty string. A nonempty label supplies the native accessible name; a description supplies additional help text. Empty values let native controls use their standard platform semantics. The WinUI backend maps these properties to UI Automation name and help text:
 
 ```lua
 button.AccessibilityLabel = "Delete account"

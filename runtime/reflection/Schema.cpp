@@ -60,6 +60,8 @@ static constexpr PropertyDefinition Properties[] = {
     {"Window", "AbsolutePosition", "Vector2", "derived", true},
     {"Window", "AbsoluteSize", "Vector2", "derived", true},
     {"GuiObject", "Visible", "boolean", "true", false},
+    {"GuiObject", "AccessibilityLabel", "string", "", false},
+    {"GuiObject", "AccessibilityDescription", "string", "", false},
     {"GuiObject", "Size", "UDim2", "100% of parent", false},
     {"GuiObject", "Position", "UDim2", "0,0", false},
     {"GuiObject", "AnchorPoint", "Vector2", "0,0", false},

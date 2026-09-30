@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -35,6 +36,7 @@ internal sealed class WinUIBackend
     private readonly Native.LogCallback LogCallback;
     private readonly IntPtr Runtime;
     private string LastReportedError = string.Empty;
+    private int FocusedViewId;
 
     public string LastError => Marshal.PtrToStringUTF8(Native.Lui_GetLastError(Runtime)) ?? "unknown error";
 
@@ -161,8 +163,8 @@ internal sealed class WinUIBackend
             }
             if (NewView.Element is not null)
             {
-                NewView.Element.GotFocus += (_, _) => { Diagnostic($"GotFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 1); };
-                NewView.Element.LostFocus += (_, _) => { Diagnostic($"LostFocus {Id}"); Native.Lui_FocusChanged(Runtime, Id, 0); };
+                NewView.Element.GotFocus += (_, _) => { Diagnostic($"GotFocus {Id}"); SyncFocus(NewView.Element); };
+                NewView.Element.LostFocus += (_, _) => { Diagnostic($"LostFocus {Id}"); SyncFocus(NewView.Element); };
                 NewView.Element.PointerEntered += (_, _) => { Diagnostic($"PointerEntered {Id}"); Native.Lui_HoverChanged(Runtime, Id, 1); };
                 NewView.Element.PointerExited += (_, Args) => {
                     Diagnostic($"PointerExited {Id}");
@@ -228,6 +230,34 @@ internal sealed class WinUIBackend
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer: " + Error); }
     }
 
+    private void SyncFocus(UIElement Source)
+    {
+        try
+        {
+            if (Source.XamlRoot is null) return;
+            DependencyObject? Focused = FocusManager.GetFocusedElement(Source.XamlRoot) as DependencyObject;
+            int NewId = 0;
+            while (Focused is not null && NewId == 0)
+            {
+                foreach (KeyValuePair<int, View> Entry in Views)
+                {
+                    if (ReferenceEquals(Entry.Value.Element, Focused))
+                    {
+                        NewId = Entry.Key;
+                        break;
+                    }
+                }
+                if (NewId == 0) Focused = VisualTreeHelper.GetParent(Focused);
+            }
+            if (NewId == FocusedViewId) return;
+            int PreviousId = FocusedViewId;
+            FocusedViewId = NewId;
+            if (PreviousId != 0) Native.Lui_FocusChanged(Runtime, PreviousId, 0);
+            if (NewId != 0) Native.Lui_FocusChanged(Runtime, NewId, 1);
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Input", "Focus: " + Error); }
+    }
+
     private int OnProperty(IntPtr Context, int Id, string Name, string Value)
     {
         Diagnostic($"Property begin {Id} {Name} {Value}");
@@ -254,6 +284,12 @@ internal sealed class WinUIBackend
                         break;
                     case "Text" when Target.Element is CheckBox Check:
                         Check.Content = Value;
+                        break;
+                    case "AccessibilityLabel" when Target.Element is not null:
+                        AutomationProperties.SetName(Target.Element, Value);
+                        break;
+                    case "AccessibilityDescription" when Target.Element is not null:
+                        AutomationProperties.SetHelpText(Target.Element, Value);
                         break;
                     case "Checked" when Target.Element is CheckBox Check:
                         Check.IsChecked = Value == "true";
@@ -359,6 +395,7 @@ internal sealed class WinUIBackend
         try
         {
             if (!Views.Remove(Id, out View? Target)) return 1;
+            if (FocusedViewId == Id) FocusedViewId = 0;
             if (Target.ParentId != 0 && Target.Element is not null && Views.TryGetValue(Target.ParentId, out View? Parent))
                 Parent.Container?.Children.Remove(Target.Element);
             Target.Window?.Close();

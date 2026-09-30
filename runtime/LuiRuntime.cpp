@@ -389,10 +389,13 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         SetParent(Runtime, Value, lua_isnil(State, ValueIndex) ? nullptr : GetNode(State, ValueIndex));
         return;
     }
-    if (Key == "Name" || Key == "Title" || Key == "Text") {
+    if (Key == "Name" || Key == "Title" || Key == "Text" ||
+        Key == "AccessibilityLabel" || Key == "AccessibilityDescription") {
         if (lua_type(State, ValueIndex) != LUA_TSTRING) luaL_error(State, "%s must be string", Name);
         const char* Text = lua_tostring(State, ValueIndex);
-        std::string* Target = Key == "Name" ? &Value->Name : Key == "Title" ? &Value->Title : &Value->Text;
+        std::string* Target = Key == "Name" ? &Value->Name : Key == "Title" ? &Value->Title :
+            Key == "AccessibilityLabel" ? &Value->AccessibilityLabel :
+            Key == "AccessibilityDescription" ? &Value->AccessibilityDescription : &Value->Text;
         if (Key == "Title" && Value->ClassName != "Window") luaL_error(State, "Title belongs to Window");
         if (Key == "Text" && Value->ClassName != "TextLabel" && Value->ClassName != "TextButton" &&
             Value->ClassName != "TextBox" && Value->ClassName != "CheckBox") luaL_error(State, "Text belongs to text controls");
@@ -554,6 +557,8 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->Name = Source->Name;
     Value->Title = Source->Title;
     Value->Text = Source->Text;
+    Value->AccessibilityLabel = Source->AccessibilityLabel;
+    Value->AccessibilityDescription = Source->AccessibilityDescription;
     Value->Visible = Source->Visible;
     Value->Enabled = Source->Enabled;
     Value->Checked = Source->Checked;
@@ -599,6 +604,10 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
         if (Copy->ClassName == "TextLabel" || Copy->ClassName == "TextButton" ||
             Copy->ClassName == "TextBox" || Copy->ClassName == "CheckBox")
             QueueProperty(Runtime, Copy, "Text", Copy->Text);
+        if (!Copy->AccessibilityLabel.empty())
+            QueueProperty(Runtime, Copy, "AccessibilityLabel", Copy->AccessibilityLabel);
+        if (!Copy->AccessibilityDescription.empty())
+            QueueProperty(Runtime, Copy, "AccessibilityDescription", Copy->AccessibilityDescription);
         if (LuiSchema::FindProperty(Copy->ClassName, "Enabled"))
             QueueProperty(Runtime, Copy, "Enabled", Copy->Enabled ? "true" : "false");
         if (Copy->ClassName == "CheckBox")
@@ -705,6 +714,8 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "Name") lua_pushstring(State, Value->Name.c_str());
     else if (Key == "Title") lua_pushstring(State, Value->Title.c_str());
     else if (Key == "Text") lua_pushstring(State, Value->Text.c_str());
+    else if (Key == "AccessibilityLabel") lua_pushstring(State, Value->AccessibilityLabel.c_str());
+    else if (Key == "AccessibilityDescription") lua_pushstring(State, Value->AccessibilityDescription.c_str());
     else if (Key == "Visible") lua_pushboolean(State, Value->Visible);
     else if (Key == "Enabled") lua_pushboolean(State, Value->Enabled);
     else if (Key == "Checked") lua_pushboolean(State, Value->Checked);

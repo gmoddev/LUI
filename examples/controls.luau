@@ -28,6 +28,8 @@ local Status = Instance.new("TextLabel", {
 })
 
 local Input = Instance.new("TextBox", {
+    AccessibilityLabel = "Name",
+    AccessibilityDescription = "Enter a name to personalize the greeting",
     Size = UDim2.new(1, 0, 0, 40),
     Parent = Root,
 })
@@ -39,6 +41,7 @@ local Check = Instance.new("CheckBox", {
 })
 
 local Slider = Instance.new("Slider", {
+    AccessibilityLabel = "Level",
     Minimum = 0,
     Maximum = 100,
     Value = 25,
@@ -47,6 +50,7 @@ local Slider = Instance.new("Slider", {
 })
 
 local Progress = Instance.new("ProgressBar", {
+    AccessibilityLabel = "Level progress",
     Minimum = 0,
     Maximum = 100,
     Value = 25,

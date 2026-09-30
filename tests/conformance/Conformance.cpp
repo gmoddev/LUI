@@ -14,11 +14,16 @@ int main() {
     if (!Runtime) return Check(false, "could not create runtime");
     const char* Script = R"(
         Window = Instance.new("Window")
-        Input = Instance.new("TextBox", {Text = "hello", Parent = Window})
+        Input = Instance.new("TextBox", {
+            Text = "hello", AccessibilityLabel = "Name",
+            AccessibilityDescription = "Enter a name", Parent = Window,
+        })
         Check = Instance.new("CheckBox", {Text = "Agree", Parent = Window})
         Slider = Instance.new("Slider", {Minimum = 10, Maximum = 20, Value = 15, Parent = Window})
         Progress = Instance.new("ProgressBar", {Minimum = 0, Maximum = 10, Value = 5, Parent = Window})
         assert(Input.Text == "hello" and Check.Checked == false)
+        assert(Input.AccessibilityLabel == "Name" and Input.AccessibilityDescription == "Enter a name")
+        assert(Check.AccessibilityLabel == "" and not pcall(function() Input.AccessibilityLabel = 42 end))
         assert(Window.Destroy ~= nil and Input.Focused ~= nil)
         assert(Window.Focused == nil and Progress.Activated == nil)
         assert(not pcall(function() Window.Parent = Input end))
@@ -29,6 +34,9 @@ int main() {
         local HighRange = Instance.new("Slider", {Minimum = 200, Maximum = 300, Value = 250})
         local LowRange = Instance.new("ProgressBar", {Minimum = -100, Maximum = -50, Value = -75})
         SecondInput = Instance.new("TextBox", {Parent = Window})
+        local InputClone = Input:Clone()
+        assert(InputClone.AccessibilityLabel == "Name" and InputClone.AccessibilityDescription == "Enter a name")
+        InputClone:Destroy()
         assert(HighRange.Value == 250 and LowRange.Value == -75)
         assert(Input:IsA("GuiObject") and not Progress:IsA("GuiButton"))
         assert(not pcall(function() Slider.Minimum = 30 end))
