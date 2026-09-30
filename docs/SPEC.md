@@ -824,6 +824,8 @@ In the current Foundation 1 implementation, `InputBegan`, `InputChanged`, and `I
 
 Focus navigation must not depend on backend-specific application code.
 
+The Foundation 1 runtime permits one focused `GuiObject` at a time. A new accepted focus clears the previous object's `IsFocused` state and fires `FocusLost` before firing `Focused` on the new object. Hiding, disabling, or moving a focused object under a hidden ancestor clears focus and fires `FocusLost`. Repeated native focus notifications do not repeat signals. Destroying an object ends its focus without an additional `FocusLost` callback.
+
 Keyboard, pointer, touch, and accessibility activation should converge on common semantic events such as `Activated` whenever appropriate.
 
 ---

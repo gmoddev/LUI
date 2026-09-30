@@ -326,10 +326,16 @@ static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
     }
 }
 
+static void ClearFocus(LuiRuntime* Runtime, Node* Value) {
+    if (!Value->IsFocused) return;
+    Value->IsFocused = false;
+    FireSignal(Runtime, Value, "FocusLost");
+}
+
 static void ClearInvalidInput(LuiRuntime* Runtime) {
     std::vector<int> InvalidIds;
     for (const auto& Pair : Runtime->Nodes) {
-        if ((Pair.second->IsHovered || !Pair.second->ActivePointers.empty()) &&
+        if ((Pair.second->IsFocused || Pair.second->IsHovered || !Pair.second->ActivePointers.empty()) &&
             !CanReceiveInput(Runtime, Pair.second.get())) InvalidIds.push_back(Pair.first);
     }
     std::sort(InvalidIds.begin(), InvalidIds.end());
@@ -338,10 +344,12 @@ static void ClearInvalidInput(LuiRuntime* Runtime) {
         if (CanReceiveInput(Runtime, Value)) continue;
         auto ActivePointers = std::move(Value->ActivePointers);
         Value->ActivePointers.clear();
-        if (Value->IsHovered) {
-            Value->IsHovered = false;
-            FireSignal(Runtime, Value, "MouseLeave");
-        }
+        const bool WasFocused = Value->IsFocused;
+        const bool WasHovered = Value->IsHovered;
+        Value->IsFocused = false;
+        Value->IsHovered = false;
+        if (WasFocused) FireSignal(Runtime, Value, "FocusLost");
+        if (WasHovered) FireSignal(Runtime, Value, "MouseLeave");
         std::vector<unsigned int> PointerIds;
         for (const auto& Pair : ActivePointers) PointerIds.push_back(Pair.first);
         std::sort(PointerIds.begin(), PointerIds.end());
@@ -405,6 +413,9 @@ static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     const std::vector<int> Children = Value->Children;
     for (int Id : Children) DestroyNode(Runtime, Runtime->Nodes.at(Id).get());
     Value->Children.clear();
+    Value->IsFocused = false;
+    Value->IsHovered = false;
+    Value->ActivePointers.clear();
     Value->Destroyed = true;
     auto& Pending = Runtime->PendingChanges;
     Pending.erase(std::remove_if(Pending.begin(), Pending.end(),
@@ -1306,10 +1317,24 @@ extern "C" LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, in
     if (Found == Runtime->Nodes.end() || Found->second->Destroyed || !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
     Node* Value = Found->second.get();
     bool Parsed = Focused != 0;
-    if (Parsed && !CanReceiveInput(Runtime, Value)) return 0;
-    if (Value->IsFocused != Parsed) {
-        Value->IsFocused = Parsed;
-        FireSignal(Runtime, Value, Parsed ? "Focused" : "FocusLost");
+    if (Parsed) {
+        if (!CanReceiveInput(Runtime, Value)) return 0;
+        std::vector<int> PreviousIds;
+        for (const auto& Pair : Runtime->Nodes) {
+            if (Pair.first != Id && Pair.second->IsFocused) PreviousIds.push_back(Pair.first);
+        }
+        std::sort(PreviousIds.begin(), PreviousIds.end());
+        for (int PreviousId : PreviousIds) ClearFocus(Runtime, Runtime->Nodes.at(PreviousId).get());
+        if (!CanReceiveInput(Runtime, Value)) {
+            FlushLayout(Runtime);
+            return 0;
+        }
+        if (!Value->IsFocused) {
+            Value->IsFocused = true;
+            FireSignal(Runtime, Value, "Focused");
+        }
+    } else {
+        ClearFocus(Runtime, Value);
     }
     FlushLayout(Runtime);
     return 1;
