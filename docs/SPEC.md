@@ -1624,6 +1624,8 @@ The following invariants are architectural requirements rather than implementati
 
 8. LUI layout semantics cannot depend on whichever layout algorithm the native toolkit happens to use.
 
+9. Backend operation failures must reach the runtime. A failed creation is rolled back; other failures stop dispatch before the runtime presents divergent state as healthy.
+
 ---
 
 ## 50.3 Layout invariants
@@ -1677,6 +1679,8 @@ The following invariants are architectural requirements rather than implementati
 6. Application authors do not manually lock UI objects.
 
 7. Application authors do not manually pump OS event loops.
+
+8. Native backend notifications never synchronously reenter an already executing Luau VM. The scheduler dispatches them after the active VM and backend calls finish.
 
 ---
 

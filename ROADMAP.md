@@ -17,7 +17,7 @@ Build the embedded Luau VM, one UI scheduler, `Instance`, properties, `Signal`/`
 
 ## Foundation 1 — Canonical UI semantics
 
-**Status:** in progress. Shared reflection, generated and typechecked Luau definitions, API docs, derived geometry, padding/list/grid layout, size constraints, common controls, deterministic focus transitions, hover and pointer input signals, basic services, and headless conformance tests are implemented. Native control qualification and the remaining semantic scope are tracked in [Foundation 1 notes](docs/FOUNDATION-1.md).
+**Status:** in progress. Shared reflection, generated and typechecked Luau definitions, API docs, derived geometry, padding/list/grid layout, size constraints, common controls, deterministic focus transitions, hover and pointer input signals, basic services, backend failure reporting, VM reentrancy protection, and headless conformance tests are implemented. Native control qualification and the remaining semantic scope are tracked in [Foundation 1 notes](docs/FOUNDATION-1.md).
 
 Define and test property defaults and validation, lifecycle, layout, input, focus, common controls, basic services, reflection, generated Luau types, and a backend conformance suite. This is the semantic baseline for other backends.
 
@@ -26,6 +26,8 @@ Define and test property defaults and validation, lifecycle, layout, input, focu
 ## Foundation 2 — Native integration and production Windows
 
 Add the C++ host API, versioned C extension ABI, capability declaration, worker completion marshaling, dialogs, clipboard, assets, accessibility and DPI qualification, Windows packaging, and deliberate platform interop.
+
+Include basic system theming (light, dark, high contrast, and change notifications) and capability enforcement for trusted and sandboxed applications, including execution and memory limits and restrictions on services, filesystem access, and native extensions.
 
 **Exit criteria:** a standalone Windows application can bind a native service, ship with only declared capabilities, handle extension load failure safely, and pass the Windows conformance suite.
 

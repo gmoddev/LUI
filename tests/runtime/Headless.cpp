@@ -10,6 +10,7 @@
 #include <vector>
 
 struct TestBackend {
+    LuiRuntime* Runtime = nullptr;
     std::unordered_map<int, std::string> Classes;
     std::unordered_map<int, int> Parents;
     std::unordered_map<int, double> Widths;
@@ -17,33 +18,84 @@ struct TestBackend {
     std::vector<std::string> Events;
     std::vector<std::string> Logs;
     int Destroyed = 0;
+    bool TriggerPropertyEvent = false;
+    bool TriggerArrangeEvent = false;
+    bool InBackendCallback = false;
+    bool ReenteredVm = false;
+    int DeferredEventStatus = 0;
+    std::string FailOperation;
+    int FailCreateId = 0;
 };
 
-static void LUI_CALL OnCreate(void* Context, int Id, const char* ClassName) {
-    static_cast<TestBackend*>(Context)->Classes[Id] = ClassName;
+static int LUI_CALL OnCreate(void* Context, int Id, const char* ClassName) {
+    auto* Backend = static_cast<TestBackend*>(Context);
+    if (Backend->FailOperation == "Create" || Backend->FailCreateId == Id) {
+        Lui_ReportBackendError(Backend->Runtime, "synthetic create failure");
+        return 0;
+    }
+    Backend->Classes[Id] = ClassName;
+    return 1;
 }
 
-static void LUI_CALL OnProperty(void* Context, int Id, const char* Name, const char* Value) {
+static int LUI_CALL OnProperty(void* Context, int Id, const char* Name, const char* Value) {
     auto* Backend = static_cast<TestBackend*>(Context);
+    if (Backend->FailOperation == "Property") {
+        Lui_ReportBackendError(Backend->Runtime, "synthetic property failure");
+        return 0;
+    }
     Backend->Events.push_back(std::to_string(Id) + ":" + Name);
     if (std::string(Name) == "Text") Backend->Text[Id] = Value;
+    if (Backend->TriggerPropertyEvent && Id == 3 && std::string(Name) == "Text" && std::string(Value) == "Reentrant") {
+        Backend->TriggerPropertyEvent = false;
+        Backend->InBackendCallback = true;
+        Backend->DeferredEventStatus = Lui_Activate(Backend->Runtime, Id);
+        Backend->InBackendCallback = false;
+    }
+    return 1;
 }
 
-static void LUI_CALL OnParent(void* Context, int Id, int ParentId) {
-    static_cast<TestBackend*>(Context)->Parents[Id] = ParentId;
-    static_cast<TestBackend*>(Context)->Events.push_back(std::to_string(Id) + ":Parent");
+static int LUI_CALL OnParent(void* Context, int Id, int ParentId) {
+    auto* Backend = static_cast<TestBackend*>(Context);
+    if (Backend->FailOperation == "Parent") {
+        Lui_ReportBackendError(Backend->Runtime, "synthetic parent failure");
+        return 0;
+    }
+    Backend->Parents[Id] = ParentId;
+    Backend->Events.push_back(std::to_string(Id) + ":Parent");
+    return 1;
 }
 
-static void LUI_CALL OnArrange(void* Context, int Id, double, double, double Width, double) {
-    static_cast<TestBackend*>(Context)->Widths[Id] = Width;
+static int LUI_CALL OnArrange(void* Context, int Id, double, double, double Width, double) {
+    auto* Backend = static_cast<TestBackend*>(Context);
+    if (Backend->FailOperation == "Arrange") {
+        Lui_ReportBackendError(Backend->Runtime, "synthetic arrange failure");
+        return 0;
+    }
+    Backend->Widths[Id] = Width;
+    if (Backend->TriggerArrangeEvent && Id == 3) {
+        Backend->TriggerArrangeEvent = false;
+        Backend->InBackendCallback = true;
+        Backend->DeferredEventStatus = Lui_Activate(Backend->Runtime, Id);
+        Backend->InBackendCallback = false;
+    }
+    return 1;
 }
 
-static void LUI_CALL OnDestroy(void* Context, int) {
-    ++static_cast<TestBackend*>(Context)->Destroyed;
+static int LUI_CALL OnDestroy(void* Context, int) {
+    auto* Backend = static_cast<TestBackend*>(Context);
+    ++Backend->Destroyed;
+    if (Backend->FailOperation == "Destroy") {
+        Lui_ReportBackendError(Backend->Runtime, "synthetic destroy failure");
+        return 0;
+    }
+    return 1;
 }
 
 static void LUI_CALL OnLog(void* Context, const char* Level, const char* Message) {
-    static_cast<TestBackend*>(Context)->Logs.push_back(std::string(Level) + ":" + Message);
+    auto* Backend = static_cast<TestBackend*>(Context);
+    Backend->Logs.push_back(std::string(Level) + ":" + Message);
+    if (Backend->InBackendCallback && std::string(Message) == "[LUI:Reentrancy] activation")
+        Backend->ReenteredVm = true;
 }
 
 static int Check(bool Condition, const char* Message) {
@@ -51,10 +103,49 @@ static int Check(bool Condition, const char* Message) {
     return Condition ? 0 : 1;
 }
 
+static int CheckBackendFailure(const char* Operation, const char* Source) {
+    LuiRuntime* Runtime = Lui_Create();
+    TestBackend Backend;
+    Backend.Runtime = Runtime;
+    Backend.FailOperation = Operation;
+    Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
+    Lui_SetLogCallback(Runtime, &Backend, OnLog);
+    const int Status = Lui_RunScript(Runtime, Source, Operation);
+    const std::string Error = Lui_GetLastError(Runtime);
+    int Failures = Check(Status == 0 && Error.find(std::string(Operation) + " failed") != std::string::npos &&
+        Error.find("synthetic") != std::string::npos, "backend failure was not reported to the runtime");
+    Failures += Check(Lui_RunScript(Runtime, "print('must not run')", "AfterBackendFailure") == 0,
+        "runtime continued after a backend failure");
+    if (std::string(Operation) == "Create")
+        Failures += Check(Backend.Destroyed == 1, "failed backend creation was not rolled back");
+    Backend.FailOperation.clear();
+    Lui_Destroy(Runtime);
+    return Failures;
+}
+
+static int CheckCloneFailure() {
+    LuiRuntime* Runtime = Lui_Create();
+    TestBackend Backend;
+    Backend.Runtime = Runtime;
+    Backend.FailCreateId = 3;
+    Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
+    Lui_SetLogCallback(Runtime, &Backend, OnLog);
+    const int Status = Lui_RunScript(Runtime,
+        "local W = Instance.new('Window'); local F = Instance.new('Frame', {Parent = W}); F:Clone()",
+        "CloneCreateFailure");
+    int Failures = Check(Status == 0 && std::string(Lui_GetLastError(Runtime)).find("Create failed") != std::string::npos,
+        "clone creation failure was not propagated");
+    Failures += Check(Backend.Destroyed == 1, "failed clone was not rolled back");
+    Backend.FailCreateId = 0;
+    Lui_Destroy(Runtime);
+    return Failures;
+}
+
 int main() {
     LuiRuntime* Runtime = Lui_Create();
     if (!Runtime) return Check(false, "could not create runtime");
     TestBackend Backend;
+    Backend.Runtime = Runtime;
     Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
     Lui_SetLogCallback(Runtime, &Backend, OnLog);
     const char* Script = R"(
@@ -99,10 +190,28 @@ int main() {
         "assert(#Window:GetChildren() == Before)", "Rollback");
     Failures += Check(RollbackStatus == 1, Lui_GetLastError(Runtime));
     Failures += Check(Backend.Destroyed == 1, "failed initialization did not destroy native object");
+    Backend.TriggerPropertyEvent = true;
+    Failures += Check(Lui_RunScript(Runtime,
+        "ReentrantCount = 0; "
+        "Button.Activated:Connect(function() ReentrantCount += 1; print('[LUI:Reentrancy] activation') end); "
+        "Button.Text = 'Reentrant'; local Width = Button.AbsoluteSize.X; assert(Width >= 0 and ReentrantCount == 0)",
+        "ReentrantProperty") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.DeferredEventStatus == 1 && !Backend.ReenteredVm,
+        "property callback reentered the active VM");
+    Failures += Check(Lui_RunScript(Runtime, "assert(ReentrantCount == 1)", "DeferredPropertyEvent") == 1,
+        Lui_GetLastError(Runtime));
+    Backend.TriggerArrangeEvent = true;
+    Failures += Check(Lui_RunScript(Runtime,
+        "Button.Size = UDim2.fromOffset(130, 36); assert(ReentrantCount == 1)",
+        "ReentrantArrange") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(Backend.DeferredEventStatus == 1 && !Backend.ReenteredVm,
+        "arrange callback reentered the active VM");
+    Failures += Check(Lui_RunScript(Runtime, "assert(ReentrantCount == 2)", "DeferredArrangeEvent") == 1,
+        Lui_GetLastError(Runtime));
     Failures += Check(Lui_Activate(Runtime, 3) == 1, "button activation failed");
     Failures += Check(Lui_Pump(Runtime) == 1, "deferred callback was not pumped");
     Failures += Check(Lui_RunScript(Runtime,
-        "assert(Count == 110); local Copy = Frame:Clone(); assert(Copy.Parent == nil); "
+        "assert(Count == 130); local Copy = Frame:Clone(); assert(Copy.Parent == nil); "
         "assert(#Copy:GetDescendants() == 2); assert(Copy:GetChildren()[1] ~= Button); "
         "Copy:Destroy(); Frame:Destroy(); Frame:Destroy(); assert(#Window:GetChildren() == 0)",
         "Assertions") == 1, Lui_GetLastError(Runtime));
@@ -114,6 +223,12 @@ int main() {
     Failures += Check(std::any_of(Backend.Logs.begin(), Backend.Logs.end(),
         [](const std::string& Entry) { return Entry.find("Error:Runtime: ") == 0; }), "Luau error was not logged");
     Lui_Destroy(Runtime);
+    Failures += CheckBackendFailure("Create", "Instance.new('Window')");
+    Failures += CheckBackendFailure("Property", "Instance.new('Window', {Title = 'Failure'})");
+    Failures += CheckBackendFailure("Parent", "local W = Instance.new('Window'); Instance.new('Frame', {Parent = W})");
+    Failures += CheckBackendFailure("Arrange", "Instance.new('Window')");
+    Failures += CheckBackendFailure("Destroy", "local W = Instance.new('Window'); W:Destroy()");
+    Failures += CheckCloneFailure();
     std::ifstream ExampleFile(LUI_EXAMPLE_PATH);
     Failures += Check(ExampleFile.good(), "example file was not found");
     if (ExampleFile) {

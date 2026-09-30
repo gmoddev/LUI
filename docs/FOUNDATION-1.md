@@ -17,6 +17,8 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - A runtime [reflection table](../runtime/reflection/Schema.cpp) that gates class creation and property access, and generates [Luau types](../types/LUI.d.luau), [JSON schema](../types/schema.json), and [implemented API reference](API.md).
 - Generated Luau definitions cover application globals, class constructors, services, signals, and read-only fields. The Windows build loads those definitions with the pinned Luau type checker and checks valid and invalid application snippets.
 - Batched property and parent changes: one Luau dispatch sends the final value of each property to the backend before layout.
+- Backend notifications raised synchronously during Luau execution or a native callback are queued and dispatched at a safe scheduler boundary. Reentrant script, pump, and runtime destruction calls are rejected. See [VM entry decision](decisions/0007-vm-entry-and-backend-events.md).
+- Internal backend callbacks report success or failure. Failed creation is rolled back; other failures stop the runtime and surface a structured diagnostic instead of silently continuing. Headless tests inject each failure type. See [backend failure decision](decisions/0008-backend-failures.md).
 - A [compatibility policy](COMPATIBILITY.md) for experimental API changes, metadata format versions, and future backend conformance.
 
 ## Verify
@@ -50,5 +52,7 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 - Add keyboard input to the canonical event model, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
+- Consolidate method signatures, signals, and container/parent rules into structured reflection metadata; split the runtime into its existing subsystem boundaries before adding more major behavior.
+- Add CI that runs the pinned Windows build and headless suite on each proposed change.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.

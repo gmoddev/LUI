@@ -19,18 +19,20 @@ extern "C" {
 typedef struct LuiRuntime LuiRuntime;
 typedef void (LUI_CALL* LuiLogCallback)(void* Context, const char* Level, const char* Message);
 
-/* Internal Foundation 0 host contract. This is not the stable extension ABI. */
+/* Internal host contract. This is not the stable extension ABI. */
 typedef struct LuiBackendCallbacks {
     void* Context;
-    void (LUI_CALL* Create)(void* Context, int Id, const char* ClassName);
-    void (LUI_CALL* Property)(void* Context, int Id, const char* Name, const char* Value);
-    void (LUI_CALL* Parent)(void* Context, int Id, int ParentId);
-    void (LUI_CALL* Arrange)(void* Context, int Id, double X, double Y, double Width, double Height);
-    void (LUI_CALL* Destroy)(void* Context, int Id);
+    /* Return 1 on success, 0 on failure. Failures may supply detail through Lui_ReportBackendError. */
+    int (LUI_CALL* Create)(void* Context, int Id, const char* ClassName);
+    int (LUI_CALL* Property)(void* Context, int Id, const char* Name, const char* Value);
+    int (LUI_CALL* Parent)(void* Context, int Id, int ParentId);
+    int (LUI_CALL* Arrange)(void* Context, int Id, double X, double Y, double Width, double Height);
+    int (LUI_CALL* Destroy)(void* Context, int Id);
 } LuiBackendCallbacks;
 
 LUI_API LuiRuntime* LUI_CALL Lui_Create(void);
 LUI_API void LUI_CALL Lui_SetBackend(LuiRuntime* Runtime, LuiBackendCallbacks Callbacks);
+LUI_API void LUI_CALL Lui_ReportBackendError(LuiRuntime* Runtime, const char* Message);
 LUI_API void LUI_CALL Lui_SetBackendName(LuiRuntime* Runtime, const char* Name);
 LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* Context, LuiLogCallback Callback);
 LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName);

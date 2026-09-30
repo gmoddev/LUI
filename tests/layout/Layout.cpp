@@ -17,16 +17,18 @@ struct LayoutBackend {
     int Created = 0;
 };
 
-static void LUI_CALL OnCreate(void* Context, int, const char*) {
+static int LUI_CALL OnCreate(void* Context, int, const char*) {
     ++static_cast<LayoutBackend*>(Context)->Created;
+    return 1;
 }
 
-static void LUI_CALL OnProperty(void*, int, const char*, const char*) {}
-static void LUI_CALL OnParent(void*, int, int) {}
-static void LUI_CALL OnDestroy(void*, int) {}
+static int LUI_CALL OnProperty(void*, int, const char*, const char*) { return 1; }
+static int LUI_CALL OnParent(void*, int, int) { return 1; }
+static int LUI_CALL OnDestroy(void*, int) { return 1; }
 
-static void LUI_CALL OnArrange(void* Context, int Id, double X, double Y, double Width, double Height) {
+static int LUI_CALL OnArrange(void* Context, int Id, double X, double Y, double Width, double Height) {
     static_cast<LayoutBackend*>(Context)->Arranged[Id] = {X, Y, Width, Height};
+    return 1;
 }
 
 static bool Near(double Actual, double Expected) {

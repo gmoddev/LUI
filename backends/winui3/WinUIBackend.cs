@@ -95,12 +95,20 @@ internal sealed class WinUIBackend
         }
     }
 
-    private void OnCreate(IntPtr Context, int Id, string ClassName)
+    private int ReportBackendFailure(string Operation, Exception Error)
+    {
+        string Message = Operation + ": " + Error;
+        LuiDiagnostics.Error("WinUI", Message);
+        Native.Lui_ReportBackendError(Runtime, Message);
+        return 0;
+    }
+
+    private int OnCreate(IntPtr Context, int Id, string ClassName)
     {
         Diagnostic($"Create begin {Id} {ClassName}");
+        View NewView = new();
         try
         {
-            View NewView = new();
             switch (ClassName)
             {
                 case "Window":
@@ -148,6 +156,8 @@ internal sealed class WinUIBackend
                 case "ProgressBar":
                     NewView.Element = new ProgressBar();
                     break;
+                default:
+                    throw new NotSupportedException($"No native control for {ClassName}");
             }
             if (NewView.Element is not null)
             {
@@ -172,8 +182,14 @@ internal sealed class WinUIBackend
             }
             Views.Add(Id, NewView);
             Diagnostic($"Create end {Id} {ClassName}");
+            return 1;
         }
-        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Create: " + Error); }
+        catch (Exception Error)
+        {
+            try { NewView.Window?.Close(); }
+            catch (Exception CleanupError) { LuiDiagnostics.Error("WinUI", "Create cleanup: " + CleanupError); }
+            return ReportBackendFailure("Create", Error);
+        }
     }
 
     private void OnPointerInput(int Id, View Target, int Phase, PointerRoutedEventArgs Args)
@@ -203,12 +219,13 @@ internal sealed class WinUIBackend
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer: " + Error); }
     }
 
-    private void OnProperty(IntPtr Context, int Id, string Name, string Value)
+    private int OnProperty(IntPtr Context, int Id, string Name, string Value)
     {
         Diagnostic($"Property begin {Id} {Name} {Value}");
         try
         {
-            if (!Views.TryGetValue(Id, out View? Target)) return;
+            if (!Views.TryGetValue(Id, out View? Target))
+                return ReportBackendFailure("Property", new InvalidOperationException($"Missing view {Id}"));
             Target.ApplyingProperty = true;
             try
             {
@@ -252,8 +269,9 @@ internal sealed class WinUIBackend
             }
             finally { Target.ApplyingProperty = false; }
             Diagnostic($"Property end {Id} {Name}");
+            return 1;
         }
-        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Property: " + Error); }
+        catch (Exception Error) { return ReportBackendFailure("Property", Error); }
     }
 
     private static void SetRange(Slider Target, string Name, string Value)
@@ -272,27 +290,34 @@ internal sealed class WinUIBackend
         else Target.Value = Parsed;
     }
 
-    private void OnParent(IntPtr Context, int Id, int ParentId)
+    private int OnParent(IntPtr Context, int Id, int ParentId)
     {
         Diagnostic($"Parent {Id} {ParentId}");
         try
         {
             View Child = Views[Id];
-            if (Child.Element is null) return;
+            if (Child.Element is null) return 1;
             if (Child.ParentId != 0 && Views.TryGetValue(Child.ParentId, out View? OldParent))
                 OldParent.Container?.Children.Remove(Child.Element);
             Child.ParentId = ParentId;
-            if (ParentId != 0) Views[ParentId].Container?.Children.Add(Child.Element);
+            if (ParentId != 0)
+            {
+                Canvas Container = Views[ParentId].Container
+                    ?? throw new InvalidOperationException($"Parent {ParentId} has no native container");
+                Container.Children.Add(Child.Element);
+            }
+            return 1;
         }
-        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Parent: " + Error); }
+        catch (Exception Error) { return ReportBackendFailure("Parent", Error); }
     }
 
-    private void OnArrange(IntPtr Context, int Id, double X, double Y, double Width, double Height)
+    private int OnArrange(IntPtr Context, int Id, double X, double Y, double Width, double Height)
     {
         Diagnostic($"Arrange {Id} {X} {Y} {Width} {Height}");
         try
         {
-            if (!Views.TryGetValue(Id, out View? Target)) return;
+            if (!Views.TryGetValue(Id, out View? Target))
+                return ReportBackendFailure("Arrange", new InvalidOperationException($"Missing view {Id}"));
             Target.BoundsX = X;
             Target.BoundsY = Y;
             if (Target.Window is not null)
@@ -311,35 +336,37 @@ internal sealed class WinUIBackend
                 Canvas.SetLeft(Element, X - ParentX);
                 Canvas.SetTop(Element, Y - ParentY);
             }
+            return 1;
         }
-        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Arrange: " + Error); }
+        catch (Exception Error) { return ReportBackendFailure("Arrange", Error); }
     }
 
-    private void OnDestroy(IntPtr Context, int Id)
+    private int OnDestroy(IntPtr Context, int Id)
     {
         Diagnostic($"Destroy {Id}");
         try
         {
-            if (!Views.Remove(Id, out View? Target)) return;
+            if (!Views.Remove(Id, out View? Target)) return 1;
             if (Target.ParentId != 0 && Target.Element is not null && Views.TryGetValue(Target.ParentId, out View? Parent))
                 Parent.Container?.Children.Remove(Target.Element);
             Target.Window?.Close();
+            return 1;
         }
-        catch (Exception Error) { LuiDiagnostics.Error("WinUI", "Destroy: " + Error); }
+        catch (Exception Error) { return ReportBackendFailure("Destroy", Error); }
     }
 
     private static class Native
     {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate void CreateCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string ClassName);
+        internal delegate int CreateCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string ClassName);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate void PropertyCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string Name, [MarshalAs(UnmanagedType.LPUTF8Str)] string Value);
+        internal delegate int PropertyCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string Name, [MarshalAs(UnmanagedType.LPUTF8Str)] string Value);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate void ParentCallback(IntPtr Context, int Id, int ParentId);
+        internal delegate int ParentCallback(IntPtr Context, int Id, int ParentId);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate void ArrangeCallback(IntPtr Context, int Id, double X, double Y, double Width, double Height);
+        internal delegate int ArrangeCallback(IntPtr Context, int Id, double X, double Y, double Width, double Height);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate void DestroyCallback(IntPtr Context, int Id);
+        internal delegate int DestroyCallback(IntPtr Context, int Id);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void LogCallback(IntPtr Context, [MarshalAs(UnmanagedType.LPUTF8Str)] string Level, [MarshalAs(UnmanagedType.LPUTF8Str)] string Message);
 
@@ -358,6 +385,8 @@ internal sealed class WinUIBackend
         internal static extern IntPtr Lui_Create();
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackend(IntPtr Runtime, BackendCallbacks Callbacks);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void Lui_ReportBackendError(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Message);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackendName(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Name);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

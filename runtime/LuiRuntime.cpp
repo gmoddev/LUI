@@ -10,6 +10,7 @@
 #include <climits>
 #include <cmath>
 #include <cstdio>
+#include <deque>
 #include <memory>
 #include <string>
 #include <thread>
@@ -105,6 +106,19 @@ struct BackendChange {
     int ParentId = 0;
 };
 
+struct BackendEvent {
+    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, FocusChanged, HoverChanged, PointerInput } Type;
+    int Id = 0;
+    int Value = 0;
+    int Phase = 0;
+    int Device = 0;
+    unsigned int PointerId = 0;
+    double Number = 0;
+    double X = 0;
+    double Y = 0;
+    std::string Text;
+};
+
 struct LuiRuntime {
     lua_State* State = nullptr;
     std::thread::id Owner;
@@ -117,10 +131,16 @@ struct LuiRuntime {
     std::unordered_map<int, Listener> Listeners;
     std::vector<ScheduledCall> Tasks;
     std::vector<BackendChange> PendingChanges;
+    std::deque<BackendEvent> PendingBackendEvents;
     std::string LastError;
+    std::string BackendError;
     int NextNodeId = 1;
     int NextListenerId = 1;
     bool LayoutDirty = false;
+    int VmDepth = 0;
+    int BackendDepth = 0;
+    bool DrainingBackendEvents = false;
+    bool BackendFailed = false;
 };
 
 struct SignalValue {
@@ -129,11 +149,39 @@ struct SignalValue {
 };
 
 static void FlushLayout(LuiRuntime* Runtime);
+static void DrainBackendEvents(LuiRuntime* Runtime);
 static LuiRuntime* GetRuntime(lua_State* State);
+
+struct DepthGuard {
+    int& Depth;
+    explicit DepthGuard(int& Value) : Depth(Value) { ++Depth; }
+    ~DepthGuard() { --Depth; }
+};
 
 static void EmitLog(LuiRuntime* Runtime, const char* Level, const std::string& Message) {
     if (Runtime->LogCallback) Runtime->LogCallback(Runtime->LogContext, Level, Message.c_str());
     else std::fprintf(Level[0] == 'E' ? stderr : stdout, "[LUI:%s] %s\n", Level, Message.c_str());
+}
+
+static void FailBackend(LuiRuntime* Runtime, const char* Operation, int Id) {
+    Runtime->BackendFailed = true;
+    Runtime->LastError = "[LUI:Backend] " + std::string(Operation) + " failed for Instance " + std::to_string(Id);
+    if (!Runtime->BackendError.empty()) Runtime->LastError += ": " + Runtime->BackendError;
+    Runtime->BackendError.clear();
+    Runtime->PendingChanges.clear();
+    Runtime->PendingBackendEvents.clear();
+    EmitLog(Runtime, "Error", Runtime->LastError);
+}
+
+static int QueueBackendEventIfBusy(LuiRuntime* Runtime, BackendEvent Event) {
+    if (!Runtime->VmDepth && !Runtime->BackendDepth) return -1;
+    if (Runtime->PendingBackendEvents.size() >= 4096) {
+        Runtime->LastError = "[LUI:Scheduler] Backend event queue limit exceeded";
+        EmitLog(Runtime, "Error", Runtime->LastError);
+        return 0;
+    }
+    Runtime->PendingBackendEvents.push_back(std::move(Event));
+    return 1;
 }
 
 static int LuiPrint(lua_State* State) {
@@ -223,10 +271,18 @@ static void FlushChanges(LuiRuntime* Runtime) {
     for (const BackendChange& Change : Changes) {
         auto Found = Runtime->Nodes.find(Change.Id);
         if (Found == Runtime->Nodes.end() || Found->second->Destroyed) continue;
-        if (Change.Type == BackendChange::Kind::Property && Runtime->Backend.Property)
-            Runtime->Backend.Property(Runtime->Backend.Context, Change.Id, Change.Name.c_str(), Change.Value.c_str());
-        else if (Change.Type == BackendChange::Kind::Parent && Runtime->Backend.Parent)
-            Runtime->Backend.Parent(Runtime->Backend.Context, Change.Id, Change.ParentId);
+        Runtime->BackendError.clear();
+        if (Change.Type == BackendChange::Kind::Property && Runtime->Backend.Property) {
+            if (!Runtime->Backend.Property(Runtime->Backend.Context, Change.Id, Change.Name.c_str(), Change.Value.c_str())) {
+                FailBackend(Runtime, "Property", Change.Id);
+                return;
+            }
+        } else if (Change.Type == BackendChange::Kind::Parent && Runtime->Backend.Parent) {
+            if (!Runtime->Backend.Parent(Runtime->Backend.Context, Change.Id, Change.ParentId)) {
+                FailBackend(Runtime, "Parent", Change.Id);
+                return;
+            }
+        }
     }
 }
 
@@ -304,6 +360,7 @@ static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
     const PointerInputValue* Input = nullptr) {
     const std::vector<int> Snapshot = Value->Listeners;
     for (int Id : Snapshot) {
+        if (Runtime->BackendFailed) break;
         auto Found = Runtime->Listeners.find(Id);
         if (Found == Runtime->Listeners.end() || !Found->second.Active || Found->second.Signal != Signal || Value->Destroyed) continue;
         lua_getref(Runtime->State, Found->second.Reference);
@@ -317,6 +374,7 @@ static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
             lua_setfield(Runtime->State, -2, "Position");
             lua_setreadonly(Runtime->State, -1, true);
         }
+        DepthGuard Guard(Runtime->VmDepth);
         if (lua_pcall(Runtime->State, Input ? 1 : 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau callback failed";
@@ -404,7 +462,7 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
 static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     if (Value->Destroyed || Value->DestroyingInProgress) return;
     Value->DestroyingInProgress = true;
-    FireSignal(Runtime, Value, "Destroying");
+    if (!Runtime->BackendFailed) FireSignal(Runtime, Value, "Destroying");
     if (Value->ParentId) {
         auto& Siblings = Runtime->Nodes.at(Value->ParentId)->Children;
         Siblings.erase(std::remove(Siblings.begin(), Siblings.end(), Value->Id), Siblings.end());
@@ -421,8 +479,12 @@ static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     Pending.erase(std::remove_if(Pending.begin(), Pending.end(),
         [Value](const BackendChange& Change) { return Change.Id == Value->Id; }), Pending.end());
     for (int Id : Value->Listeners) Disconnect(Runtime, Id);
-    if (LuiSchema::IsNative(Value->ClassName) && Runtime->Backend.Destroy)
-        Runtime->Backend.Destroy(Runtime->Backend.Context, Value->Id);
+    if (LuiSchema::IsNative(Value->ClassName) && Runtime->Backend.Destroy) {
+        DepthGuard Guard(Runtime->BackendDepth);
+        Runtime->BackendError.clear();
+        if (!Runtime->Backend.Destroy(Runtime->Backend.Context, Value->Id))
+            FailBackend(Runtime, "Destroy", Value->Id);
+    }
     lua_unref(Runtime->State, Value->Reference);
     Value->Reference = 0;
     Runtime->LayoutDirty = true;
@@ -591,7 +653,7 @@ static int NodeGetDescendants(lua_State* State) {
     return 1;
 }
 
-static void CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source, Node* Parent) {
+static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source, Node* Parent) {
     auto Value = std::make_unique<Node>();
     Value->Id = Runtime->NextNodeId++;
     Value->ClassName = Source->ClassName;
@@ -626,8 +688,17 @@ static void CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->Reference = lua_ref(State, -1);
     Runtime->Nodes.emplace(Id, std::move(Value));
     Node* Copy = Runtime->Nodes.at(Id).get();
-    if (LuiSchema::IsNative(Copy->ClassName) && Runtime->Backend.Create)
-        Runtime->Backend.Create(Runtime->Backend.Context, Id, Copy->ClassName.c_str());
+    if (LuiSchema::IsNative(Copy->ClassName) && Runtime->Backend.Create) {
+        DepthGuard Guard(Runtime->BackendDepth);
+        Runtime->BackendError.clear();
+        if (!Runtime->Backend.Create(Runtime->Backend.Context, Id, Copy->ClassName.c_str())) {
+            FailBackend(Runtime, "Create", Id);
+            DestroyNode(Runtime, Copy);
+            Runtime->Nodes.erase(Id);
+            lua_pop(State, 1);
+            return false;
+        }
+    }
     if (Parent) SetParent(Runtime, Copy, Parent);
     if (LuiSchema::IsNative(Copy->ClassName)) {
         if (Copy->ClassName == "Window") QueueProperty(Runtime, Copy, "Title", Copy->Title);
@@ -649,15 +720,21 @@ static void CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
         QueueProperty(Runtime, Copy, "Visible", Copy->Visible ? "true" : "false");
     }
     for (int ChildId : Source->Children) {
-        CloneTree(State, Runtime, Runtime->Nodes.at(ChildId).get(), Copy);
+        if (!CloneTree(State, Runtime, Runtime->Nodes.at(ChildId).get(), Copy)) {
+            DestroyNode(Runtime, Copy);
+            lua_pop(State, 1);
+            return false;
+        }
         lua_pop(State, 1);
     }
     Runtime->LayoutDirty = true;
+    return true;
 }
 
 static int NodeClone(lua_State* State) {
     Node* Value = GetNode(State, 1);
-    CloneTree(State, GetRuntime(State), Value, nullptr);
+    if (!CloneTree(State, GetRuntime(State), Value, nullptr))
+        luaL_error(State, "%s", GetRuntime(State)->LastError.c_str());
     return 1;
 }
 
@@ -887,8 +964,18 @@ static int InstanceNew(lua_State* State) {
     lua_setmetatable(State, -2);
     Value->Reference = lua_ref(State, -1);
     Runtime->Nodes.emplace(Id, std::move(Value));
-    if (Definition->Native && Runtime->Backend.Create)
-        Runtime->Backend.Create(Runtime->Backend.Context, Id, ClassName.c_str());
+    int Created = 1;
+    if (Definition->Native && Runtime->Backend.Create) {
+        DepthGuard Guard(Runtime->BackendDepth);
+        Runtime->BackendError.clear();
+        Created = Runtime->Backend.Create(Runtime->Backend.Context, Id, ClassName.c_str());
+    }
+    if (!Created) {
+        FailBackend(Runtime, "Create", Id);
+        DestroyNode(Runtime, Runtime->Nodes.at(Id).get());
+        Runtime->Nodes.erase(Id);
+        luaL_error(State, "%s", Runtime->LastError.c_str());
+    }
     Runtime->LayoutDirty = true;
 
     if (ArgumentCount >= 2 && !lua_isnil(State, 2)) {
@@ -984,9 +1071,16 @@ static VectorValue ResolveConstrainedSize(LuiRuntime* Runtime, const Node* Value
 }
 
 static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
+    if (Runtime->BackendFailed) return;
     Value->Bounds = Bounds;
-    if (Runtime->Backend.Arrange) Runtime->Backend.Arrange(Runtime->Backend.Context, Value->Id,
-        Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height);
+    if (Runtime->Backend.Arrange) {
+        Runtime->BackendError.clear();
+        if (!Runtime->Backend.Arrange(Runtime->Backend.Context, Value->Id,
+            Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height)) {
+            FailBackend(Runtime, "Arrange", Value->Id);
+            return;
+        }
+    }
 
     Node* Padding = nullptr;
     Node* List = nullptr;
@@ -1062,16 +1156,22 @@ static void ArrangeNode(LuiRuntime* Runtime, Node* Value, BoundsValue Bounds) {
 }
 
 static void FlushLayout(LuiRuntime* Runtime) {
-    FlushChanges(Runtime);
-    if (!Runtime->LayoutDirty) return;
-    Runtime->LayoutDirty = false;
-    for (auto& Pair : Runtime->Nodes) {
-        Node* Value = Pair.second.get();
-        if (!Value->Destroyed && Value->ClassName == "Window") {
-            const VectorValue Resolved = ResolveConstrainedSize(Runtime, Value, 0, 0);
-            ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
+    if (Runtime->BackendFailed) return;
+    {
+        DepthGuard Guard(Runtime->BackendDepth);
+        FlushChanges(Runtime);
+        if (!Runtime->BackendFailed && Runtime->LayoutDirty) {
+            Runtime->LayoutDirty = false;
+            for (auto& Pair : Runtime->Nodes) {
+                Node* Value = Pair.second.get();
+                if (!Value->Destroyed && Value->ClassName == "Window") {
+                    const VectorValue Resolved = ResolveConstrainedSize(Runtime, Value, 0, 0);
+                    ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
+                }
+            }
         }
     }
+    if (!Runtime->BackendFailed) DrainBackendEvents(Runtime);
 }
 
 static void RegisterMeta(lua_State* State, const char* Name, lua_CFunction Index, lua_CFunction NewIndex = nullptr) {
@@ -1214,6 +1314,10 @@ extern "C" LUI_API void LUI_CALL Lui_SetBackend(LuiRuntime* Runtime, LuiBackendC
     if (CheckOwner(Runtime)) Runtime->Backend = Callbacks;
 }
 
+extern "C" LUI_API void LUI_CALL Lui_ReportBackendError(LuiRuntime* Runtime, const char* Message) {
+    if (CheckOwner(Runtime) && Message) Runtime->BackendError = Message;
+}
+
 extern "C" LUI_API void LUI_CALL Lui_SetBackendName(LuiRuntime* Runtime, const char* Name) {
     if (!CheckOwner(Runtime) || !Name) return;
     if (!Runtime->ServiceRefs.empty()) {
@@ -1231,10 +1335,23 @@ extern "C" LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* C
 
 extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName) {
     if (!CheckOwner(Runtime) || !Source) return 0;
+    if (Runtime->BackendFailed) return 0;
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) {
+        Runtime->LastError = "[LUI:Scheduler] Cannot run a script during an active dispatch";
+        EmitLog(Runtime, "Error", Runtime->LastError);
+        return 0;
+    }
     try {
         const std::string Bytecode = Luau::compile(Source);
         int Status = luau_load(Runtime->State, ChunkName ? ChunkName : "LUI", Bytecode.data(), Bytecode.size(), 0);
-        if (Status == LUA_OK) Status = lua_pcall(Runtime->State, 0, 0, 0);
+        if (Status == LUA_OK) {
+            DepthGuard Guard(Runtime->VmDepth);
+            Status = lua_pcall(Runtime->State, 0, 0, 0);
+        }
+        if (Runtime->BackendFailed) {
+            if (Status != LUA_OK) lua_pop(Runtime->State, 1);
+            return 0;
+        }
         if (Status != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau script failed";
@@ -1243,8 +1360,9 @@ extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* S
             FlushLayout(Runtime);
             return 0;
         }
-        Runtime->LastError.clear();
         FlushLayout(Runtime);
+        if (Runtime->BackendFailed) return 0;
+        Runtime->LastError.clear();
         return 1;
     } catch (const std::exception& Error) {
         Runtime->LastError = Error.what();
@@ -1255,7 +1373,9 @@ extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* S
 }
 
 extern "C" LUI_API int LUI_CALL Lui_Activate(LuiRuntime* Runtime, int Id) {
-    if (!CheckOwner(Runtime)) return 0;
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, {BackendEvent::Kind::Activate, Id});
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || !CanReceiveInput(Runtime, Found->second.get()) ||
         (Found->second->ClassName != "TextButton" && Found->second->ClassName != "CheckBox")) return 0;
@@ -1265,7 +1385,11 @@ extern "C" LUI_API int LUI_CALL Lui_Activate(LuiRuntime* Runtime, int Id) {
 }
 
 extern "C" LUI_API int LUI_CALL Lui_TextChanged(LuiRuntime* Runtime, int Id, const char* Text) {
-    if (!CheckOwner(Runtime) || !Text) return 0;
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || !Text) return 0;
+    BackendEvent Event{BackendEvent::Kind::TextChanged, Id};
+    Event.Text = Text;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || Found->second->ClassName != "TextBox" ||
         !CanReceiveInput(Runtime, Found->second.get())) return 0;
@@ -1280,7 +1404,11 @@ extern "C" LUI_API int LUI_CALL Lui_TextChanged(LuiRuntime* Runtime, int Id, con
 }
 
 extern "C" LUI_API int LUI_CALL Lui_CheckedChanged(LuiRuntime* Runtime, int Id, int Checked) {
-    if (!CheckOwner(Runtime)) return 0;
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
+    BackendEvent Event{BackendEvent::Kind::CheckedChanged, Id};
+    Event.Value = Checked;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || Found->second->ClassName != "CheckBox" ||
         !CanReceiveInput(Runtime, Found->second.get())) return 0;
@@ -1296,7 +1424,11 @@ extern "C" LUI_API int LUI_CALL Lui_CheckedChanged(LuiRuntime* Runtime, int Id, 
 }
 
 extern "C" LUI_API int LUI_CALL Lui_ValueChanged(LuiRuntime* Runtime, int Id, double NewValue) {
-    if (!CheckOwner(Runtime) || !std::isfinite(NewValue)) return 0;
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || !std::isfinite(NewValue)) return 0;
+    BackendEvent Event{BackendEvent::Kind::ValueChanged, Id};
+    Event.Number = NewValue;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || Found->second->ClassName != "Slider" ||
         !CanReceiveInput(Runtime, Found->second.get())) return 0;
@@ -1312,7 +1444,11 @@ extern "C" LUI_API int LUI_CALL Lui_ValueChanged(LuiRuntime* Runtime, int Id, do
 }
 
 extern "C" LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, int Focused) {
-    if (!CheckOwner(Runtime)) return 0;
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
+    BackendEvent Event{BackendEvent::Kind::FocusChanged, Id};
+    Event.Value = Focused;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || Found->second->Destroyed || !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
     Node* Value = Found->second.get();
@@ -1341,7 +1477,11 @@ extern "C" LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, in
 }
 
 extern "C" LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered) {
-    if (!CheckOwner(Runtime)) return 0;
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
+    BackendEvent Event{BackendEvent::Kind::HoverChanged, Id};
+    Event.Value = Hovered;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
         !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
@@ -1358,8 +1498,16 @@ extern "C" LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, in
 
 extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
     unsigned int PointerId, double X, double Y) {
-    if (!CheckOwner(Runtime) || Phase < 0 || Phase > 3 || Device < 0 || Device > 3 ||
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || Phase < 0 || Phase > 3 || Device < 0 || Device > 3 ||
         (Phase != 3 && (!std::isfinite(X) || !std::isfinite(Y)))) return 0;
+    BackendEvent Event{BackendEvent::Kind::PointerInput, Id};
+    Event.Phase = Phase;
+    Event.Device = Device;
+    Event.PointerId = PointerId;
+    Event.X = X;
+    Event.Y = Y;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
     if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
         !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
@@ -1389,15 +1537,53 @@ extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, in
     return 1;
 }
 
+static void DrainBackendEvents(LuiRuntime* Runtime) {
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) return;
+    Runtime->DrainingBackendEvents = true;
+    try {
+        size_t Count = 0;
+        while (!Runtime->PendingBackendEvents.empty() && Count < 4096) {
+            BackendEvent Event = std::move(Runtime->PendingBackendEvents.front());
+            Runtime->PendingBackendEvents.pop_front();
+            switch (Event.Type) {
+            case BackendEvent::Kind::Activate: Lui_Activate(Runtime, Event.Id); break;
+            case BackendEvent::Kind::TextChanged: Lui_TextChanged(Runtime, Event.Id, Event.Text.c_str()); break;
+            case BackendEvent::Kind::CheckedChanged: Lui_CheckedChanged(Runtime, Event.Id, Event.Value); break;
+            case BackendEvent::Kind::ValueChanged: Lui_ValueChanged(Runtime, Event.Id, Event.Number); break;
+            case BackendEvent::Kind::FocusChanged: Lui_FocusChanged(Runtime, Event.Id, Event.Value); break;
+            case BackendEvent::Kind::HoverChanged: Lui_HoverChanged(Runtime, Event.Id, Event.Value); break;
+            case BackendEvent::Kind::PointerInput:
+                Lui_PointerInput(Runtime, Event.Id, Event.Phase, Event.Device, Event.PointerId, Event.X, Event.Y);
+                break;
+            }
+            ++Count;
+        }
+        if (!Runtime->PendingBackendEvents.empty())
+            EmitLog(Runtime, "Warning", "Scheduler: backend event drain yielded after 4096 events");
+    } catch (...) {
+        Runtime->DrainingBackendEvents = false;
+        throw;
+    }
+    Runtime->DrainingBackendEvents = false;
+}
+
 extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return 0;
+    if (Runtime->BackendFailed) return 0;
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) {
+        Runtime->LastError = "[LUI:Scheduler] Cannot pump during an active dispatch";
+        EmitLog(Runtime, "Error", Runtime->LastError);
+        return 0;
+    }
     int Count = 0;
     const auto Now = std::chrono::steady_clock::now();
     std::vector<ScheduledCall> Pending;
     Pending.swap(Runtime->Tasks);
     for (const auto& Call : Pending) {
+        if (Runtime->BackendFailed) break;
         if (Call.Due > Now) { Runtime->Tasks.push_back(Call); continue; }
         lua_getref(Runtime->State, Call.Reference);
+        DepthGuard Guard(Runtime->VmDepth);
         if (lua_pcall(Runtime->State, 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "scheduled callback failed";
@@ -1408,7 +1594,7 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         ++Count;
     }
     FlushLayout(Runtime);
-    return Count;
+    return Runtime->BackendFailed ? 0 : Count;
 }
 
 extern "C" LUI_API const char* LUI_CALL Lui_GetLastError(LuiRuntime* Runtime) {
@@ -1421,6 +1607,11 @@ extern "C" LUI_API const char* LUI_CALL Lui_GetSchemaJson(void) {
 
 extern "C" LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return;
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) {
+        Runtime->LastError = "[LUI:Scheduler] Cannot destroy the runtime during an active dispatch";
+        EmitLog(Runtime, "Error", Runtime->LastError);
+        return;
+    }
     for (auto& Pair : Runtime->Nodes) {
         if (!Pair.second->Destroyed && Pair.second->ClassName == "Window") DestroyNode(Runtime, Pair.second.get());
     }
