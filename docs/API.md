@@ -61,9 +61,9 @@ Base: `Instance`. Creatable: `false`.
 | `FocusLost` | `Signal` |
 | `MouseEnter` | `Signal` |
 | `MouseLeave` | `Signal` |
-| `InputBegan` | `PointerInputSignal` |
-| `InputChanged` | `PointerInputSignal` |
-| `InputEnded` | `PointerInputSignal` |
+| `InputBegan` | `InputSignal` |
+| `InputChanged` | `InputSignal` |
+| `InputEnded` | `InputSignal` |
 
 ## Frame
 

@@ -820,11 +820,13 @@ FocusLost
 
 The backend converts platform events into canonical LUI events.
 
-In the current Foundation 1 implementation, `InputBegan`, `InputChanged`, and `InputEnded` report pointer press, movement, and release or cancellation on `GuiObject`. The callback receives a read-only `PointerInput` value with a portable device name (`Mouse`, `Pen`, `Touch`, or `Touchpad`), a pointer ID, and a position in the target object's logical coordinates. Movement may occur without a press. The runtime pairs accepted presses with one end event; hiding, disabling, or reparenting an active target under a hidden ancestor ends its presses. Keyboard input remains planned.
+In the current Foundation 1 implementation, `InputBegan`, `InputChanged`, and `InputEnded` carry a read-only `InputEvent` union. Pointer events provide a portable device name (`Mouse`, `Pen`, `Touch`, or `Touchpad`), a pointer ID, a position in the target object's logical coordinates, and `IsCanceled`. Movement may occur without a press. The runtime pairs accepted presses with one end event; cancellation, hiding, disabling, or reparenting an active target under a hidden ancestor ends its presses with `IsCanceled = true`.
+
+Keyboard events have `Device = "Keyboard"`, a portable `Key`, and `IsRepeat`. First press, repeat, and paired release map to `InputBegan`, `InputChanged`, and `InputEnded`. Only the focused eligible object accepts key beginnings and repeats. Focus loss ends active keys before a new object's focus gain. The initial portable key set covers letters, digits, F1–F12, navigation keys, editing keys, and common modifiers; see [keyboard input decision](decisions/0014-keyboard-input.md). Native controls continue to own text composition and system shortcuts; `TextBox.TextChanged` reports edited text.
 
 Focus navigation must not depend on backend-specific application code.
 
-The Foundation 1 runtime permits one focused `GuiObject` at a time. A new accepted focus clears the previous object's `IsFocused` state and fires `FocusLost` before firing `Focused` on the new object. Hiding, disabling, or moving a focused object under a hidden ancestor clears focus and fires `FocusLost`. Repeated native focus notifications do not repeat signals. Destroying an object ends its focus without an additional `FocusLost` callback.
+The Foundation 1 runtime permits one focused `GuiObject` at a time. A new accepted focus clears the previous object's `IsFocused` state and fires `FocusLost`, then ends active keys, before firing `Focused` on the new object. Hiding, disabling, or moving a focused object under a hidden ancestor clears focus, hover, and active input in that order. Repeated native focus notifications do not repeat signals. Destroying an object ends its focus without an additional `FocusLost` callback.
 
 Keyboard, pointer, touch, and accessibility activation should converge on common semantic events such as `Activated` whenever appropriate.
 

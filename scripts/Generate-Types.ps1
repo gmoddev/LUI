@@ -18,8 +18,10 @@ $Types.Add('export type Signal = { read Connect: (Self: Signal, Callback: (...an
 $Types.Add('export type Vector2 = { read X: number, read Y: number }')
 $Types.Add('export type UDim = { read Scale: number, read Offset: number }')
 $Types.Add('export type UDim2 = { read X: UDim, read Y: UDim }')
-$Types.Add('export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2 }')
-$Types.Add('export type PointerInputSignal = { read Connect: (Self: PointerInputSignal, Callback: (Input: PointerInput) -> ()) -> Connection }')
+$Types.Add('export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2, read IsCanceled: boolean }')
+$Types.Add('export type KeyboardInput = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean }')
+$Types.Add('export type InputEvent = PointerInput | KeyboardInput')
+$Types.Add('export type InputSignal = { read Connect: (Self: InputSignal, Callback: (Input: InputEvent) -> ()) -> Connection }')
 $Types.Add('')
 
 $ClassMap = @{}

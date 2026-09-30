@@ -38,6 +38,12 @@ struct PointerInputValue {
     unsigned int PointerId = 0;
     std::string Device;
     VectorValue Position;
+    bool IsCanceled = false;
+};
+
+struct KeyboardInputValue {
+    std::string Key;
+    bool IsRepeat = false;
 };
 
 struct Node {
@@ -52,6 +58,7 @@ struct Node {
     bool IsFocused = false;
     bool IsHovered = false;
     std::unordered_map<unsigned int, PointerInputValue> ActivePointers;
+    std::unordered_map<std::string, KeyboardInputValue> ActiveKeys;
     std::string ClassName;
     std::string Name;
     std::string Title;
@@ -105,7 +112,7 @@ struct BackendChange {
 };
 
 struct BackendEvent {
-    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, WindowResized, FocusChanged, HoverChanged, PointerInput } Type;
+    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, WindowResized, FocusChanged, HoverChanged, PointerInput, KeyInput } Type;
     int Id = 0;
     int Value = 0;
     int Phase = 0;

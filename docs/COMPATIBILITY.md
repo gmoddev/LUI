@@ -7,6 +7,7 @@ LUI is currently experimental at version `0.0.1`. The implemented API is listed 
 - Runtime reflection is the source of truth for implemented classes, properties, methods, and signals. Generated Luau types and API docs come from that table.
 - A backend must preserve property defaults, validation, lifecycle, signal order, and resolved layout behavior. A backend change that alters those semantics requires a shared runtime decision and conformance tests.
 - An API change updates reflection, generated files, tests, and the public docs in one change. Public property removal or a changed meaning requires a documented migration path before a stable release.
+- `InputBegan`, `InputChanged`, and `InputEnded` now accept keyboard as well as pointer events. Applications that read pointer-only fields must narrow on `Event.Device ~= "Keyboard"`. Pointer `InputEnded` adds `IsCanceled` so release and cancellation are distinguishable.
 - Platform capabilities are queried through `PlatformService:Supports()`. A missing capability returns `false`; portable APIs may not silently depend on a platform-specific feature.
 
 ## Versions

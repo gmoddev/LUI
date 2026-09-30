@@ -25,6 +25,7 @@ internal sealed class WinUIBackend
         public double BoundsX;
         public double BoundsY;
         public bool ApplyingProperty;
+        public bool IsAlive = true;
         public bool Visible = true;
         public bool Enabled = true;
     }
@@ -130,31 +131,45 @@ internal sealed class WinUIBackend
                     break;
                 case "TextButton":
                     Button Button = new();
-                    Button.Click += (_, _) => { Diagnostic($"Click {Id}"); Native.Lui_Activate(Runtime, Id); };
+                    Button.Click += (_, _) => {
+                        if (!NewView.IsAlive) return;
+                        Diagnostic($"Click {Id}"); Native.Lui_Activate(Runtime, Id);
+                    };
                     NewView.Element = Button;
                     break;
                 case "TextBox":
                     TextBox Input = new();
                     Input.TextChanged += (_, _) => {
-                        if (!NewView.ApplyingProperty) { Diagnostic($"TextChanged {Id}"); Native.Lui_TextChanged(Runtime, Id, Input.Text); }
+                        if (NewView.IsAlive && !NewView.ApplyingProperty) {
+                            Diagnostic($"TextChanged {Id}"); Native.Lui_TextChanged(Runtime, Id, Input.Text);
+                        }
                     };
                     NewView.Element = Input;
                     break;
                 case "CheckBox":
                     CheckBox Check = new();
                     Check.Checked += (_, _) => {
-                        if (!NewView.ApplyingProperty) { Diagnostic($"Checked {Id}"); Native.Lui_CheckedChanged(Runtime, Id, 1); }
+                        if (NewView.IsAlive && !NewView.ApplyingProperty) {
+                            Diagnostic($"Checked {Id}"); Native.Lui_CheckedChanged(Runtime, Id, 1);
+                        }
                     };
                     Check.Unchecked += (_, _) => {
-                        if (!NewView.ApplyingProperty) { Diagnostic($"Unchecked {Id}"); Native.Lui_CheckedChanged(Runtime, Id, 0); }
+                        if (NewView.IsAlive && !NewView.ApplyingProperty) {
+                            Diagnostic($"Unchecked {Id}"); Native.Lui_CheckedChanged(Runtime, Id, 0);
+                        }
                     };
-                    Check.Click += (_, _) => { Diagnostic($"Click {Id}"); Native.Lui_Activate(Runtime, Id); };
+                    Check.Click += (_, _) => {
+                        if (!NewView.IsAlive) return;
+                        Diagnostic($"Click {Id}"); Native.Lui_Activate(Runtime, Id);
+                    };
                     NewView.Element = Check;
                     break;
                 case "Slider":
                     Slider Slider = new();
                     Slider.ValueChanged += (_, Args) => {
-                        if (!NewView.ApplyingProperty) { Diagnostic($"ValueChanged {Id} {Args.NewValue}"); Native.Lui_ValueChanged(Runtime, Id, Args.NewValue); }
+                        if (NewView.IsAlive && !NewView.ApplyingProperty) {
+                            Diagnostic($"ValueChanged {Id} {Args.NewValue}"); Native.Lui_ValueChanged(Runtime, Id, Args.NewValue);
+                        }
                     };
                     NewView.Element = Slider;
                     break;
@@ -166,10 +181,20 @@ internal sealed class WinUIBackend
             }
             if (NewView.Element is not null)
             {
-                NewView.Element.GotFocus += (_, _) => { Diagnostic($"GotFocus {Id}"); SyncFocus(NewView.Element); };
-                NewView.Element.LostFocus += (_, _) => { Diagnostic($"LostFocus {Id}"); SyncFocus(NewView.Element); };
-                NewView.Element.PointerEntered += (_, _) => { Diagnostic($"PointerEntered {Id}"); Native.Lui_HoverChanged(Runtime, Id, 1); };
+                NewView.Element.GotFocus += (_, _) => {
+                    if (!NewView.IsAlive) return;
+                    Diagnostic($"GotFocus {Id}"); SyncFocus(NewView.Element);
+                };
+                NewView.Element.LostFocus += (_, _) => {
+                    if (!NewView.IsAlive) return;
+                    Diagnostic($"LostFocus {Id}"); SyncFocus(NewView.Element);
+                };
+                NewView.Element.PointerEntered += (_, _) => {
+                    if (!NewView.IsAlive) return;
+                    Diagnostic($"PointerEntered {Id}"); Native.Lui_HoverChanged(Runtime, Id, 1);
+                };
                 NewView.Element.PointerExited += (_, Args) => {
+                    if (!NewView.IsAlive) return;
                     Diagnostic($"PointerExited {Id}");
                     Native.Lui_HoverChanged(Runtime, Id, 0);
                     OnPointerInput(Id, NewView, 3, Args);
@@ -184,13 +209,17 @@ internal sealed class WinUIBackend
                     new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
                 NewView.Element.AddHandler(UIElement.PointerCaptureLostEvent,
                     new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
+                NewView.Element.AddHandler(UIElement.KeyDownEvent,
+                    new KeyEventHandler((_, Args) => OnKeyInput(Id, NewView, false, Args)), true);
+                NewView.Element.AddHandler(UIElement.KeyUpEvent,
+                    new KeyEventHandler((_, Args) => OnKeyInput(Id, NewView, true, Args)), true);
             }
             Views.Add(Id, NewView);
             if (NewView.Window is not null && NewView.Container is not null)
             {
                 NewView.Container.SizeChanged += (_, Args) =>
                 {
-                    if (!Views.ContainsKey(Id) || Args.NewSize.Width <= 0 || Args.NewSize.Height <= 0) return;
+                    if (!NewView.IsAlive || Args.NewSize.Width <= 0 || Args.NewSize.Height <= 0) return;
                     Diagnostic($"WindowResized {Id} {Args.NewSize.Width} {Args.NewSize.Height}");
                     Native.Lui_WindowResized(Runtime, Id, Args.NewSize.Width, Args.NewSize.Height);
                 };
@@ -200,6 +229,7 @@ internal sealed class WinUIBackend
         }
         catch (Exception Error)
         {
+            NewView.IsAlive = false;
             try { NewView.Window?.Close(); }
             catch (Exception CleanupError) { LuiDiagnostics.Error("WinUI", "Create cleanup: " + CleanupError); }
             return ReportBackendFailure("Create", Error);
@@ -210,7 +240,7 @@ internal sealed class WinUIBackend
     {
         try
         {
-            if (Target.Element is null) return;
+            if (!Target.IsAlive || Target.Element is null) return;
             int Device = Args.Pointer.PointerDeviceType switch
             {
                 Microsoft.UI.Input.PointerDeviceType.Mouse => 0,
@@ -239,19 +269,7 @@ internal sealed class WinUIBackend
         {
             if (Source.XamlRoot is null) return;
             DependencyObject? Focused = FocusManager.GetFocusedElement(Source.XamlRoot) as DependencyObject;
-            int NewId = 0;
-            while (Focused is not null && NewId == 0)
-            {
-                foreach (KeyValuePair<int, View> Entry in Views)
-                {
-                    if (ReferenceEquals(Entry.Value.Element, Focused))
-                    {
-                        NewId = Entry.Key;
-                        break;
-                    }
-                }
-                if (NewId == 0) Focused = VisualTreeHelper.GetParent(Focused);
-            }
+            int NewId = GetViewId(Focused);
             if (NewId != 0 && !CanReceiveFocus(NewId)) NewId = 0;
             if (NewId == FocusedViewId) return;
             int PreviousId = FocusedViewId;
@@ -260,6 +278,63 @@ internal sealed class WinUIBackend
             if (NewId != 0) Native.Lui_FocusChanged(Runtime, NewId, 1);
         }
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Focus: " + Error); }
+    }
+
+    private int GetViewId(DependencyObject? Source)
+    {
+        while (Source is not null)
+        {
+            foreach (KeyValuePair<int, View> Entry in Views)
+                if (ReferenceEquals(Entry.Value.Element, Source)) return Entry.Key;
+            Source = VisualTreeHelper.GetParent(Source);
+        }
+        return 0;
+    }
+
+    private void OnKeyInput(int Id, View Target, bool Released, KeyRoutedEventArgs Args)
+    {
+        try
+        {
+            if (!Target.IsAlive || Target.Element is null || !Views.TryGetValue(Id, out View? Current) || !ReferenceEquals(Target, Current) ||
+                GetViewId(Args.OriginalSource as DependencyObject) != Id) return;
+            string? Key = GetPortableKey(Args.Key);
+            if (Key is null) return;
+            int Phase = Released ? 2 : Args.KeyStatus.WasKeyDown ? 1 : 0;
+            Diagnostic($"KeyInput {Id} {Phase} {Key}");
+            Native.Lui_KeyInput(Runtime, Id, Phase, Key);
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Input", "Keyboard: " + Error); }
+    }
+
+    private static string? GetPortableKey(Windows.System.VirtualKey Key)
+    {
+        int Code = (int)Key;
+        if (Code >= 65 && Code <= 90) return ((char)Code).ToString();
+        if (Code >= 48 && Code <= 57) return ((char)Code).ToString();
+        if (Code >= 112 && Code <= 123) return $"F{Code - 111}";
+        return Key switch
+        {
+            Windows.System.VirtualKey.Enter => "Enter",
+            Windows.System.VirtualKey.Escape => "Escape",
+            Windows.System.VirtualKey.Tab => "Tab",
+            Windows.System.VirtualKey.Space => "Space",
+            Windows.System.VirtualKey.Back => "Backspace",
+            Windows.System.VirtualKey.Delete => "Delete",
+            Windows.System.VirtualKey.Insert => "Insert",
+            Windows.System.VirtualKey.Home => "Home",
+            Windows.System.VirtualKey.End => "End",
+            Windows.System.VirtualKey.PageUp => "PageUp",
+            Windows.System.VirtualKey.PageDown => "PageDown",
+            Windows.System.VirtualKey.Left => "ArrowLeft",
+            Windows.System.VirtualKey.Right => "ArrowRight",
+            Windows.System.VirtualKey.Up => "ArrowUp",
+            Windows.System.VirtualKey.Down => "ArrowDown",
+            Windows.System.VirtualKey.Shift => "Shift",
+            Windows.System.VirtualKey.Control => "Control",
+            Windows.System.VirtualKey.Menu => "Alt",
+            Windows.System.VirtualKey.CapitalLock => "CapsLock",
+            _ => null,
+        };
     }
 
     private bool CanReceiveFocus(int Id)
@@ -424,6 +499,7 @@ internal sealed class WinUIBackend
         try
         {
             if (!Views.Remove(Id, out View? Target)) return 1;
+            Target.IsAlive = false;
             if (FocusedViewId == Id) FocusedViewId = 0;
             if (Target.ParentId != 0 && Target.Element is not null && Views.TryGetValue(Target.ParentId, out View? Parent))
                 Parent.Container?.Children.Remove(Target.Element);
@@ -483,6 +559,9 @@ internal sealed class WinUIBackend
         internal static extern int Lui_WindowResized(IntPtr Runtime, int Id, double Width, double Height);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_FocusChanged(IntPtr Runtime, int Id, int Focused);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_KeyInput(IntPtr Runtime, int Id, int Phase,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string Key);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_HoverChanged(IntPtr Runtime, int Id, int Hovered);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

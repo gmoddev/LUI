@@ -24,6 +24,8 @@ Backend contract
 5. **Platform features are queried.** Portable APIs have defined behavior; optional platform effects expose support checks and documented fallbacks.
 6. **Reflection is authoritative.** Runtime metadata drives generated types, editor inspection, documentation checks, and conformance data.
 
+The canonical input and focus state machine is in [runtime/input/Input.cpp](../runtime/input/Input.cpp). It validates backend notifications and fires signals through the runtime's scheduler boundary. Backends only map native events into the internal host callback contract.
+
 ## Testing contract
 
 The shared conformance suite should cover parenting, destruction, properties, signals, layout, visibility, focus, activation, disabled state, lifecycle, scheduler behavior, and testable accessibility mappings. Native backend qualification supplements headless tests.

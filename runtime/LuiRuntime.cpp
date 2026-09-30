@@ -1,6 +1,8 @@
 #include "LuiRuntime.h"
 #include "reflection/Schema.h"
 #include "internal/State.h"
+#include "internal/Dispatch.h"
+#include "internal/Input.h"
 #include "internal/Diagnostics.h"
 #include "../ui/layout/Layout.h"
 
@@ -21,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-static void FlushLayout(LuiRuntime* Runtime);
+void FlushLayout(LuiRuntime* Runtime);
 static void DrainBackendEvents(LuiRuntime* Runtime);
 static LuiRuntime* GetRuntime(lua_State* State);
 
@@ -46,7 +48,7 @@ void FailBackend(LuiRuntime* Runtime, const char* Operation, int Id) {
     EmitLog(Runtime, "Error", Runtime->LastError);
 }
 
-static int QueueBackendEventIfBusy(LuiRuntime* Runtime, BackendEvent Event) {
+int QueueBackendEventIfBusy(LuiRuntime* Runtime, BackendEvent Event) {
     if (!Runtime->VmDepth && !Runtime->BackendDepth) return -1;
     if (Runtime->PendingBackendEvents.size() >= 4096) {
         Runtime->LastError = "[LUI:Scheduler] Backend event queue limit exceeded";
@@ -69,15 +71,6 @@ static int LuiPrint(lua_State* State) {
     }
     EmitLog(GetRuntime(State), "Print", Message);
     return 0;
-}
-
-static bool CanReceiveInput(const LuiRuntime* Runtime, const Node* Value) {
-    if (Value->Destroyed || !Value->Visible || !Value->Enabled) return false;
-    for (const Node* Parent = Value; Parent->ParentId; ) {
-        Parent = Runtime->Nodes.at(Parent->ParentId).get();
-        if (!Parent->Visible) return false;
-    }
-    return true;
 }
 
 static LuiRuntime* GetRuntime(lua_State* State) {
@@ -229,63 +222,42 @@ static std::string FormatSize(const SizeValue& Value) {
     return Buffer;
 }
 
-static void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
-    const PointerInputValue* Input = nullptr) {
+void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
+    const PointerInputValue* Pointer, const KeyboardInputValue* Keyboard) {
     const std::vector<int> Snapshot = Value->Listeners;
     for (int Id : Snapshot) {
         if (Runtime->BackendFailed) break;
         auto Found = Runtime->Listeners.find(Id);
         if (Found == Runtime->Listeners.end() || !Found->second.Active || Found->second.Signal != Signal || Value->Destroyed) continue;
         lua_getref(Runtime->State, Found->second.Reference);
-        if (Input) {
-            lua_createtable(Runtime->State, 0, 3);
-            lua_pushstring(Runtime->State, Input->Device.c_str());
+        if (Pointer) {
+            lua_createtable(Runtime->State, 0, 4);
+            lua_pushstring(Runtime->State, Pointer->Device.c_str());
             lua_setfield(Runtime->State, -2, "Device");
-            lua_pushnumber(Runtime->State, Input->PointerId);
+            lua_pushnumber(Runtime->State, Pointer->PointerId);
             lua_setfield(Runtime->State, -2, "PointerId");
-            PushVector(Runtime->State, Input->Position);
+            PushVector(Runtime->State, Pointer->Position);
             lua_setfield(Runtime->State, -2, "Position");
+            lua_pushboolean(Runtime->State, Pointer->IsCanceled);
+            lua_setfield(Runtime->State, -2, "IsCanceled");
+            lua_setreadonly(Runtime->State, -1, true);
+        } else if (Keyboard) {
+            lua_createtable(Runtime->State, 0, 3);
+            lua_pushstring(Runtime->State, "Keyboard");
+            lua_setfield(Runtime->State, -2, "Device");
+            lua_pushstring(Runtime->State, Keyboard->Key.c_str());
+            lua_setfield(Runtime->State, -2, "Key");
+            lua_pushboolean(Runtime->State, Keyboard->IsRepeat);
+            lua_setfield(Runtime->State, -2, "IsRepeat");
             lua_setreadonly(Runtime->State, -1, true);
         }
         DepthGuard Guard(Runtime->VmDepth);
-        if (lua_pcall(Runtime->State, Input ? 1 : 0, 0, 0) != LUA_OK) {
+        if (lua_pcall(Runtime->State, Pointer || Keyboard ? 1 : 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau callback failed";
             EmitLog(Runtime, "Error", "Signal: " + Runtime->LastError);
             lua_pop(Runtime->State, 1);
         }
-    }
-}
-
-static void ClearFocus(LuiRuntime* Runtime, Node* Value) {
-    if (!Value->IsFocused) return;
-    Value->IsFocused = false;
-    FireSignal(Runtime, Value, "FocusLost");
-}
-
-static void ClearInvalidInput(LuiRuntime* Runtime) {
-    std::vector<int> InvalidIds;
-    for (const auto& Pair : Runtime->Nodes) {
-        if ((Pair.second->IsFocused || Pair.second->IsHovered || !Pair.second->ActivePointers.empty()) &&
-            !CanReceiveInput(Runtime, Pair.second.get())) InvalidIds.push_back(Pair.first);
-    }
-    std::sort(InvalidIds.begin(), InvalidIds.end());
-    for (int Id : InvalidIds) {
-        Node* Value = Runtime->Nodes.at(Id).get();
-        if (CanReceiveInput(Runtime, Value)) continue;
-        auto ActivePointers = std::move(Value->ActivePointers);
-        Value->ActivePointers.clear();
-        const bool WasFocused = Value->IsFocused;
-        const bool WasHovered = Value->IsHovered;
-        Value->IsFocused = false;
-        Value->IsHovered = false;
-        if (WasFocused) FireSignal(Runtime, Value, "FocusLost");
-        if (WasHovered) FireSignal(Runtime, Value, "MouseLeave");
-        std::vector<unsigned int> PointerIds;
-        for (const auto& Pair : ActivePointers) PointerIds.push_back(Pair.first);
-        std::sort(PointerIds.begin(), PointerIds.end());
-        for (unsigned int PointerId : PointerIds)
-            FireSignal(Runtime, Value, "InputEnded", &ActivePointers.at(PointerId));
     }
 }
 
@@ -362,6 +334,7 @@ static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     Value->IsFocused = false;
     Value->IsHovered = false;
     Value->ActivePointers.clear();
+    Value->ActiveKeys.clear();
     Value->Destroyed = true;
     auto& Pending = Runtime->PendingChanges;
     Pending.erase(std::remove_if(Pending.begin(), Pending.end(),
@@ -935,7 +908,7 @@ static int TaskDelay(lua_State* State) {
     return 0;
 }
 
-static void FlushLayout(LuiRuntime* Runtime) {
+void FlushLayout(LuiRuntime* Runtime) {
     if (Runtime->BackendFailed) return;
     {
         DepthGuard Guard(Runtime->BackendDepth);
@@ -1072,7 +1045,7 @@ static void RegisterGlobals(lua_State* State) {
     lua_setglobal(State, "task");
 }
 
-static bool CheckOwner(LuiRuntime* Runtime) {
+bool CheckOwner(LuiRuntime* Runtime) {
     if (!Runtime) return false;
     if (Runtime->Owner == std::this_thread::get_id()) return true;
     Runtime->LastError = "[LUI:Scheduler] Runtime called from the wrong thread";
@@ -1244,100 +1217,6 @@ extern "C" LUI_API int LUI_CALL Lui_WindowResized(LuiRuntime* Runtime, int Id, d
     return 1;
 }
 
-extern "C" LUI_API int LUI_CALL Lui_FocusChanged(LuiRuntime* Runtime, int Id, int Focused) {
-    if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
-    BackendEvent Event{BackendEvent::Kind::FocusChanged, Id};
-    Event.Value = Focused;
-    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
-    if (Deferred >= 0) return Deferred;
-    auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
-    Node* Value = Found->second.get();
-    bool Parsed = Focused != 0;
-    if (Parsed) {
-        if (!CanReceiveInput(Runtime, Value)) return 0;
-        std::vector<int> PreviousIds;
-        for (const auto& Pair : Runtime->Nodes) {
-            if (Pair.first != Id && Pair.second->IsFocused) PreviousIds.push_back(Pair.first);
-        }
-        std::sort(PreviousIds.begin(), PreviousIds.end());
-        for (int PreviousId : PreviousIds) ClearFocus(Runtime, Runtime->Nodes.at(PreviousId).get());
-        if (!CanReceiveInput(Runtime, Value)) {
-            FlushLayout(Runtime);
-            return 0;
-        }
-        if (!Value->IsFocused) {
-            Value->IsFocused = true;
-            FireSignal(Runtime, Value, "Focused");
-        }
-    } else {
-        ClearFocus(Runtime, Value);
-    }
-    FlushLayout(Runtime);
-    return 1;
-}
-
-extern "C" LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered) {
-    if (!CheckOwner(Runtime) || Runtime->BackendFailed) return 0;
-    BackendEvent Event{BackendEvent::Kind::HoverChanged, Id};
-    Event.Value = Hovered;
-    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
-    if (Deferred >= 0) return Deferred;
-    auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
-        !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
-    Node* Value = Found->second.get();
-    const bool Parsed = Hovered != 0;
-    if (Parsed && !CanReceiveInput(Runtime, Value)) return 0;
-    if (Value->IsHovered != Parsed) {
-        Value->IsHovered = Parsed;
-        FireSignal(Runtime, Value, Parsed ? "MouseEnter" : "MouseLeave");
-    }
-    FlushLayout(Runtime);
-    return 1;
-}
-
-extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
-    unsigned int PointerId, double X, double Y) {
-    if (!CheckOwner(Runtime) || Runtime->BackendFailed || Phase < 0 || Phase > 3 || Device < 0 || Device > 3 ||
-        (Phase != 3 && (!std::isfinite(X) || !std::isfinite(Y)))) return 0;
-    BackendEvent Event{BackendEvent::Kind::PointerInput, Id};
-    Event.Phase = Phase;
-    Event.Device = Device;
-    Event.PointerId = PointerId;
-    Event.X = X;
-    Event.Y = Y;
-    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
-    if (Deferred >= 0) return Deferred;
-    auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
-        !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
-    Node* Value = Found->second.get();
-    auto Active = Value->ActivePointers.find(PointerId);
-    static const char* Devices[] = {"Mouse", "Pen", "Touch", "Touchpad"};
-    if (Phase == 0) {
-        if (!CanReceiveInput(Runtime, Value)) return 0;
-        if (Active == Value->ActivePointers.end()) {
-            PointerInputValue Input{PointerId, Devices[Device], {X, Y}};
-            Value->ActivePointers.emplace(PointerId, Input);
-            FireSignal(Runtime, Value, "InputBegan", &Input);
-        }
-    } else if (Phase == 1) {
-        if (!CanReceiveInput(Runtime, Value)) return 0;
-        PointerInputValue Input{PointerId, Devices[Device], {X, Y}};
-        if (Active != Value->ActivePointers.end()) Active->second = Input;
-        FireSignal(Runtime, Value, "InputChanged", &Input);
-    } else {
-        if (Active == Value->ActivePointers.end()) return 0;
-        PointerInputValue Input = Active->second;
-        if (Phase == 2) Input.Position = {X, Y};
-        Value->ActivePointers.erase(Active);
-        FireSignal(Runtime, Value, "InputEnded", &Input);
-    }
-    FlushLayout(Runtime);
-    return 1;
-}
-
 static void DrainBackendEvents(LuiRuntime* Runtime) {
     if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) return;
     Runtime->DrainingBackendEvents = true;
@@ -1356,6 +1235,9 @@ static void DrainBackendEvents(LuiRuntime* Runtime) {
             case BackendEvent::Kind::HoverChanged: Lui_HoverChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::PointerInput:
                 Lui_PointerInput(Runtime, Event.Id, Event.Phase, Event.Device, Event.PointerId, Event.X, Event.Y);
+                break;
+            case BackendEvent::Kind::KeyInput:
+                Lui_KeyInput(Runtime, Event.Id, Event.Phase, Event.Text.c_str());
                 break;
             }
             ++Count;

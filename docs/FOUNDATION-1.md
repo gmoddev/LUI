@@ -1,12 +1,12 @@
 # Foundation 1: canonical UI semantics
 
-Foundation 1 is in progress. The current implementation extends the Foundation 0 proof with shared layout, controls, services, runtime reflection, generated API files, and headless conformance tests. The expanded WinUI controls compile and the controls example launches on Windows; interactive event behavior still needs desktop qualification.
+Foundation 1 is in progress. The current implementation extends the Foundation 0 proof with shared layout, controls, services, runtime reflection, generated API files, and headless conformance tests. The expanded WinUI controls compile and have interactive desktop qualification cases in [tests/winui](../tests/winui/README.md).
 
 ## Implemented in this increment
 
 - `Position`, `AnchorPoint`, `LayoutOrder`, and read-only derived `AbsolutePosition`/`AbsoluteSize` for GUI objects.
 - `UIPadding`, `UIListLayout` with vertical or horizontal fill, and row-major `UIGridLayout` with automatic column wrapping. A container may have padding and one list or grid layout. LUI computes geometry in logical units and sends resolved bounds to WinUI.
-- The layout solver now lives in [ui/layout](../ui/layout/Layout.cpp), with a narrow internal entry point. Runtime state remains private to the native implementation, and the scheduler still controls when layout and backend changes flush.
+- The layout solver lives in [ui/layout](../ui/layout/Layout.cpp), and input/focus state and event entry points live in [runtime/input](../runtime/input/Input.cpp). Narrow internal interfaces keep runtime state private to the native implementation; the scheduler still controls when layout and backend changes flush.
 - Native window content-size changes now update LUI layout bounds. The grid example reflows when the WinUI window is maximized and restored; the requested `Window.Size` remains stable while `AbsoluteSize` follows the viewport. See [window viewport decision](decisions/0010-native-window-viewport.md).
 - `UISizeConstraint` clamps a visual object's resolved width and height with nonnegative `MinSize` and optional `MaxSize`. One constraint may be attached to each `Window` or GUI object; clamping occurs before anchor placement and list spacing.
 - `Clone()` and `GetDescendants()`, plus cleanup when property initialization fails.
@@ -17,7 +17,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - WinUI samples the focused element for its XAML root and deduplicates asynchronous focus notifications before forwarding transitions. A Windows qualification window confirmed one loss/gain pair between text boxes, Tab navigation past a disabled button, and keyboard activation of the enabled button. See [WinUI focus decision](decisions/0012-winui-focus-notifications.md).
 - The WinUI focus bridge tracks effective visibility and enabled state through each view's ancestors. When a focused view becomes ineligible during a property or parent update, it clears its native focus cache so a later restored focus is delivered. The [interactive focus case](../tests/winui/FocusEdge.luau) confirmed disable, hide, restore, and refocus transitions on Windows. See [focus invalidation decision](decisions/0013-winui-focus-invalidation.md).
 - `MouseEnter` and `MouseLeave` signals for GUI objects, normalized from pointer enter/exit callbacks. Repeated enter/exit notifications are collapsed; disabling, hiding, or reparenting into a hidden container ends an active hover. The controls example changes the submit button label on hover.
-- `InputBegan`, `InputChanged`, and `InputEnded` for pointer presses, moves, releases, and cancellations. Each callback receives a read-only event with `Device`, `PointerId`, and local `Position`. Active presses end if the object becomes hidden, disabled, or moves into a hidden container. The controls example logs button presses and releases.
+- `InputBegan`, `InputChanged`, and `InputEnded` for pointer and keyboard input. Pointer payloads have `Device`, `PointerId`, local `Position`, and `IsCanceled`; canceled presses are distinct from releases. Keyboard payloads have `Device = "Keyboard"`, canonical `Key`, and `IsRepeat`. Focus loss, hiding, and disabling end active keys and pointers in defined order. See [keyboard input decision](decisions/0014-keyboard-input.md) and [pointer input decision](decisions/0005-pointer-input.md).
 - `app:GetService("WindowService")` with `GetWindows()` and `app:GetService("PlatformService")` with `BackendName` and capability checks. Unsupported capabilities return `false`.
 - A runtime [reflection table](../runtime/reflection/Schema.cpp) that gates class creation and property access, and generates [Luau types](../types/LUI.d.luau), [JSON schema](../types/schema.json), and [implemented API reference](API.md).
 - Structured reflection also defines method signatures, signal types, service members, parent rules, and container capability. Runtime member lookup and parenting use it, and the generated schema is version 2. See [reflection decision](decisions/0009-structured-reflection.md).
@@ -40,6 +40,8 @@ Run `Lui.WinUI.exe examples/grid.luau` from the same folder to inspect grid wrap
 
 Run `Lui.WinUI.exe tests/winui/FocusEdge.luau` from the repository root to qualify focus invalidation. Focus the target field, type `disable`, click Reset target, refocus it, type `hide`, click Reset target, then refocus it. The status line should gain one `A-` and one `B+` for each invalidation, and one `A+` for each refocus.
 
+Use the [WinUI desktop qualification matrix](../tests/winui/README.md) for keyboard pairing, pointer release and cancellation, accessibility metadata, focus, controls, and grid reflow. The qualification scripts also load in the headless CI test, which checks syntax and startup behavior without claiming native event verification.
+
 The type file infers specific result types for the seven primary constructors. `ProgressBar`, `UIPadding`, `UIListLayout`, `UIGridLayout`, and `UISizeConstraint` share a union result type because the pinned Luau type checker rejects a larger overload intersection. Constructor property tables accept `any`; annotate a table with its generated `ClassNameInit` type when static property checking is needed:
 
 ```luau
@@ -57,10 +59,9 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 
 ## Remaining Foundation 1 work
 
-- Complete interactive WinUI qualification of pointer cancellation, hover and pointer state during hide/disable, accessible help text, and screen reader behavior. Text entry, checkbox changes, slider-to-progress updates, button hover, grid resize, focus transitions through disable/hide and restore, disabled button behavior, and accessible names were observed on Windows on 2026-09-30.
-- Add keyboard input to the canonical event model, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
-- Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
+- Complete the WinUI desktop qualification matrix for keyboard pairing and pointer cancellation, including press during disable. Native UI Automation exposed the configured accessible name and help text on 2026-09-30. Focus, disabled state, text entry, checkbox, slider, button hover, and grid resize have been observed on Windows.
+- Add an automated native backend runner for the shared conformance expectations when the Windows CI environment can host an interactive WinUI session. The current native matrix is repeatable but manually driven.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
-- Continue moving object, scheduler, signals, and input code into internal modules before adding more major behavior.
+- Continue moving object, scheduler, and signals code into internal modules as the runtime grows. Input and focus now have their own internal module.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.

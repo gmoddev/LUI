@@ -23,7 +23,7 @@ Window.Visible = true
 
 This syntax is implemented in the Foundation 0 proof. See [build and run instructions](docs/FOUNDATION-0.md) and the [working example](examples/hello.luau).
 
-The WinUI host supports `--diagnostics` for live traces and a saved crash/error log. See [Foundation 1 run instructions](docs/FOUNDATION-1.md#verify).
+The WinUI host supports `--diagnostics` for live traces and a saved crash/error log. Foundation 1 adds native controls, canonical layout, focus, pointer and keyboard input, accessibility metadata, and reflection. See [Foundation 1 run instructions](docs/FOUNDATION-1.md#verify) and the [WinUI desktop qualification cases](tests/winui/README.md).
 
 The [generated Luau definitions](types/LUI.d.luau) describe the implemented globals, classes, and services. The Windows build validates them with the pinned Luau type checker.
 
@@ -55,7 +55,7 @@ LUI's public semantics are backend independent. The first backend is WinUI 3 on 
 | `tests/` | Runtime, layout, conformance, integration tests |
 | `docs/` | Specification and architecture records |
 
-Implementation currently lives in `runtime/`, `native/abi/`, `backends/winui3/`, `tests/runtime/`, and `examples/`. Other directories mark planned module boundaries.
+Implementation currently lives in `runtime/` (including reflection and input), `ui/layout/`, `native/abi/`, `backends/winui3/`, `tests/`, and `examples/`. Other directories mark planned module boundaries.
 
 ## Contributing
 

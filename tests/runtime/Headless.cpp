@@ -255,6 +255,16 @@ int main() {
         Failures += Check(Status == 1, Lui_GetLastError(GridRuntime));
         Lui_Destroy(GridRuntime);
     }
+    for (const char* Path : {LUI_WINUI_FOCUS_CASE_PATH, LUI_WINUI_INPUT_CASE_PATH}) {
+        std::ifstream CaseFile(Path);
+        Failures += Check(CaseFile.good(), "WinUI qualification case was not found");
+        if (!CaseFile) continue;
+        const std::string Source{std::istreambuf_iterator<char>{CaseFile}, std::istreambuf_iterator<char>{}};
+        LuiRuntime* CaseRuntime = Lui_Create();
+        int Status = Lui_RunScript(CaseRuntime, Source.c_str(), Path);
+        Failures += Check(Status == 1, Lui_GetLastError(CaseRuntime));
+        Lui_Destroy(CaseRuntime);
+    }
     if (!Failures) std::puts("[LUI:Test] Foundation 0 headless semantics passed");
     return Failures ? 1 : 0;
 }

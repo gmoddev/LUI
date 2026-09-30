@@ -47,9 +47,15 @@ int main() {
         local BackendName: string = app:GetService("PlatformService").BackendName
         Input.TextChanged:Connect(function() Slider.Value = 6 end)
         Input.InputBegan:Connect(function(Event)
-            local Position: Vector2 = Event.Position
-            local PointerId: number = Event.PointerId
-            assert(Position.X >= 0 and PointerId >= 0)
+            if Event.Device == "Keyboard" then
+                local Key: string = Event.Key
+                assert(not Event.IsRepeat and #Key > 0)
+            else
+                local Position: Vector2 = Event.Position
+                local PointerId: number = Event.PointerId
+                local Canceled: boolean = Event.IsCanceled
+                assert(Position.X >= 0 and PointerId >= 0 and not Canceled)
+            end
         end)
         Window.Visible = #Windows > 0 and BackendName ~= ""
         local Width: number = Root.AbsoluteSize.X
@@ -65,7 +71,14 @@ int main() {
         --!strict
         local Input = Instance.new("TextBox", {})
         Input.InputBegan:Connect(function(Event)
-            Event.PointerId = 5
+            if Event.Device ~= "Keyboard" then Event.PointerId = 5 end
+        end)
+    )");
+    Resolver.Scripts.emplace("keyboardReadOnly", R"(
+        --!strict
+        local Input = Instance.new("TextBox", {})
+        Input.InputBegan:Connect(function(Event)
+            if Event.Device == "Keyboard" then Event.Key = "A" end
         end)
     )");
     Resolver.Scripts.emplace("unknownClass", R"(
@@ -124,6 +137,7 @@ int main() {
         FoundReadOnlyError |= Luau::toString(Error).find("read-only") != std::string::npos;
     Failures += Check(FoundReadOnlyError, "read-only property assignment was not rejected as read-only");
     Failures += Check(!Frontend.check("inputReadOnly").errors.empty(), "read-only input payload assignment typechecked");
+    Failures += Check(!Frontend.check("keyboardReadOnly").errors.empty(), "read-only keyboard payload assignment typechecked");
     Luau::CheckResult UnknownClass = Frontend.check("unknownClass");
     Failures += Check(!UnknownClass.errors.empty(), "unknown class typechecked");
     Failures += Check(!Frontend.check("invalidInit").errors.empty(), "invalid typed constructor properties typechecked");

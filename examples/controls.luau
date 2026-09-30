@@ -85,11 +85,19 @@ Button.MouseLeave:Connect(function()
 end)
 
 Button.InputBegan:Connect(function(Event)
-    print("[LUI:Input] Press " .. Event.Device .. " #" .. Event.PointerId)
+    if Event.Device == "Keyboard" then
+        print("[LUI:Input] Key down " .. Event.Key)
+    else
+        print("[LUI:Input] Press " .. Event.Device .. " #" .. Event.PointerId)
+    end
 end)
 
 Button.InputEnded:Connect(function(Event)
-    print("[LUI:Input] Release " .. Event.Device .. " #" .. Event.PointerId)
+    if Event.Device == "Keyboard" then
+        print("[LUI:Input] Key up " .. Event.Key)
+    else
+        print("[LUI:Input] Release " .. Event.Device .. " #" .. Event.PointerId)
+    end
 end)
 
 Window.Visible = true
