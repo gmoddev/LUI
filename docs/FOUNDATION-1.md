@@ -15,6 +15,7 @@ Foundation 1 is in progress. The current implementation extends the Foundation 0
 - `TextChanged`, `CheckedChanged`, `ValueChanged`, `Focused`, and `FocusLost` signals from normalized backend callbacks. Disabled or hidden controls reject new input, and accepted callbacks flush backend changes before returning. Signal callbacks execute through the runtime's single UI thread.
 - Focus transitions are owned by the runtime: only one GUI object is focused at a time, previous focus is lost before new focus is announced, and hiding, disabling, or reparenting into a hidden container clears focus.
 - WinUI samples the focused element for its XAML root and deduplicates asynchronous focus notifications before forwarding transitions. A Windows qualification window confirmed one loss/gain pair between text boxes, Tab navigation past a disabled button, and keyboard activation of the enabled button. See [WinUI focus decision](decisions/0012-winui-focus-notifications.md).
+- The WinUI focus bridge tracks effective visibility and enabled state through each view's ancestors. When a focused view becomes ineligible during a property or parent update, it clears its native focus cache so a later restored focus is delivered. The [interactive focus case](../tests/winui/FocusEdge.luau) confirmed disable, hide, restore, and refocus transitions on Windows. See [focus invalidation decision](decisions/0013-winui-focus-invalidation.md).
 - `MouseEnter` and `MouseLeave` signals for GUI objects, normalized from pointer enter/exit callbacks. Repeated enter/exit notifications are collapsed; disabling, hiding, or reparenting into a hidden container ends an active hover. The controls example changes the submit button label on hover.
 - `InputBegan`, `InputChanged`, and `InputEnded` for pointer presses, moves, releases, and cancellations. Each callback receives a read-only event with `Device`, `PointerId`, and local `Position`. Active presses end if the object becomes hidden, disabled, or moves into a hidden container. The controls example logs button presses and releases.
 - `app:GetService("WindowService")` with `GetWindows()` and `app:GetService("PlatformService")` with `BackendName` and capability checks. Unsupported capabilities return `false`.
@@ -37,6 +38,8 @@ This runs headless runtime, layout, and control conformance tests, regenerates t
 
 Run `Lui.WinUI.exe examples/grid.luau` from the same folder to inspect grid wrapping and size constraints. The grid example is also copied into the output folder.
 
+Run `Lui.WinUI.exe tests/winui/FocusEdge.luau` from the repository root to qualify focus invalidation. Focus the target field, type `disable`, click Reset target, refocus it, type `hide`, click Reset target, then refocus it. The status line should gain one `A-` and one `B+` for each invalidation, and one `A+` for each refocus.
+
 The type file infers specific result types for the seven primary constructors. `ProgressBar`, `UIPadding`, `UIListLayout`, `UIGridLayout`, and `UISizeConstraint` share a union result type because the pinned Luau type checker rejects a larger overload intersection. Constructor property tables accept `any`; annotate a table with its generated `ClassNameInit` type when static property checking is needed:
 
 ```luau
@@ -54,7 +57,7 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 
 ## Remaining Foundation 1 work
 
-- Complete interactive WinUI qualification of pointer cancellation, hide/disable edge cases, accessible help text, and screen reader behavior. Text entry, checkbox changes, slider-to-progress updates, button hover, grid resize, basic focus transitions, disabled button behavior, and accessible names were observed on Windows on 2026-09-30.
+- Complete interactive WinUI qualification of pointer cancellation, hover and pointer state during hide/disable, accessible help text, and screen reader behavior. Text entry, checkbox changes, slider-to-progress updates, button hover, grid resize, focus transitions through disable/hide and restore, disabled button behavior, and accessible names were observed on Windows on 2026-09-30.
 - Add keyboard input to the canonical event model, accessibility mappings for any custom controls, and additional portable controls where their semantics are clear.
 - Expand the shared conformance suite to run against native backends, including focus, disabled state, and accessibility behavior.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.

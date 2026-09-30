@@ -25,6 +25,8 @@ internal sealed class WinUIBackend
         public double BoundsX;
         public double BoundsY;
         public bool ApplyingProperty;
+        public bool Visible = true;
+        public bool Enabled = true;
     }
 
     private readonly Dictionary<int, View> Views = new();
@@ -114,6 +116,7 @@ internal sealed class WinUIBackend
             switch (ClassName)
             {
                 case "Window":
+                    NewView.Visible = false;
                     NewView.Window = new Microsoft.UI.Xaml.Window();
                     NewView.Container = new Canvas();
                     NewView.Window.Content = NewView.Container;
@@ -249,6 +252,7 @@ internal sealed class WinUIBackend
                 }
                 if (NewId == 0) Focused = VisualTreeHelper.GetParent(Focused);
             }
+            if (NewId != 0 && !CanReceiveFocus(NewId)) NewId = 0;
             if (NewId == FocusedViewId) return;
             int PreviousId = FocusedViewId;
             FocusedViewId = NewId;
@@ -256,6 +260,26 @@ internal sealed class WinUIBackend
             if (NewId != 0) Native.Lui_FocusChanged(Runtime, NewId, 1);
         }
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Focus: " + Error); }
+    }
+
+    private bool CanReceiveFocus(int Id)
+    {
+        HashSet<int> Visited = new();
+        while (Id != 0)
+        {
+            if (!Visited.Add(Id) || !Views.TryGetValue(Id, out View? Current) || !Current.Visible || !Current.Enabled)
+                return false;
+            Id = Current.ParentId;
+        }
+        return true;
+    }
+
+    private void ClearInvalidFocus()
+    {
+        if (FocusedViewId == 0 || CanReceiveFocus(FocusedViewId)) return;
+        int PreviousId = FocusedViewId;
+        FocusedViewId = 0;
+        Native.Lui_FocusChanged(Runtime, PreviousId, 0);
     }
 
     private int OnProperty(IntPtr Context, int Id, string Name, string Value)
@@ -295,6 +319,7 @@ internal sealed class WinUIBackend
                         Check.IsChecked = Value == "true";
                         break;
                     case "Enabled" when Target.Element is Control Control:
+                        Target.Enabled = Value == "true";
                         Control.IsEnabled = Value == "true";
                         break;
                     case "Minimum" or "Maximum" or "Value" when Target.Element is Slider Slider:
@@ -304,13 +329,16 @@ internal sealed class WinUIBackend
                         SetRange(Progress, Name, Value);
                         break;
                     case "Visible" when Target.Window is not null:
+                        Target.Visible = Value == "true";
                         if (Value == "true") Target.Window.Activate();
                         else Target.Window.AppWindow.Hide();
                         break;
                     case "Visible" when Target.Element is not null:
+                        Target.Visible = Value == "true";
                         Target.Element.Visibility = Value == "true" ? Visibility.Visible : Visibility.Collapsed;
                         break;
                 }
+                if (Name is "Enabled" or "Visible") ClearInvalidFocus();
             }
             finally { Target.ApplyingProperty = false; }
             Diagnostic($"Property end {Id} {Name}");
@@ -351,6 +379,7 @@ internal sealed class WinUIBackend
                     ?? throw new InvalidOperationException($"Parent {ParentId} has no native container");
                 Container.Children.Add(Child.Element);
             }
+            ClearInvalidFocus();
             return 1;
         }
         catch (Exception Error) { return ReportBackendFailure("Parent", Error); }
