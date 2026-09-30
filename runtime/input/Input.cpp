@@ -217,4 +217,3 @@ extern "C" LUI_API int LUI_CALL Lui_KeyInput(LuiRuntime* Runtime, int Id, int Ph
     FlushLayout(Runtime);
     return 1;
 }
-

@@ -266,6 +266,38 @@ int main() {
         Failures += Check(Lui_KeyInput(FocusRuntime, 2, 2, "Space") == 0, "late second key release was accepted");
         Lui_Destroy(FocusRuntime);
     }
+
+    LuiRuntime* DisableRuntime = Lui_Create();
+    Failures += Check(DisableRuntime != nullptr, "could not create input invalidation runtime");
+    if (DisableRuntime) {
+        ScriptStatus = Lui_RunScript(DisableRuntime, R"(
+            Window = Instance.new("Window")
+            Button = Instance.new("TextButton", {Parent = Window})
+            Sequence = ""
+            Button.InputBegan:Connect(function(Event)
+                if Event.Device ~= "Keyboard" then
+                    Sequence ..= "pressed "
+                    Button.Enabled = false
+                end
+            end)
+            Button.InputEnded:Connect(function(Event)
+                if Event.Device ~= "Keyboard" then
+                    assert(Event.IsCanceled)
+                    Sequence ..= "canceled "
+                end
+            end)
+            Window.Visible = true
+        )", "InputInvalidation");
+        Failures += Check(ScriptStatus == 1, Lui_GetLastError(DisableRuntime));
+        Failures += Check(Lui_PointerInput(DisableRuntime, 2, 0, 0, 9, 1, 1) == 1,
+            "self-disabling pointer press was rejected");
+        ScriptStatus = Lui_RunScript(DisableRuntime,
+            "assert(Sequence == 'pressed canceled ' and not Button.Enabled)", "InputInvalidationCheck");
+        Failures += Check(ScriptStatus == 1, Lui_GetLastError(DisableRuntime));
+        Failures += Check(Lui_PointerInput(DisableRuntime, 2, 3, 0, 9, 0, 0) == 0,
+            "late native pointer cancellation was accepted twice");
+        Lui_Destroy(DisableRuntime);
+    }
     if (!Failures) std::puts("[LUI:Conformance] Foundation 1 control semantics passed");
     return Failures ? 1 : 0;
 }
