@@ -244,7 +244,7 @@ export type UIGridLayoutInit = {
 
 export type UISizeConstraintInit = {
     Name: string?,
-    Parent: (Window | GuiObject)?,
+    Parent: (Window | Frame | GuiObject)?,
     MinSize: Vector2?,
     MaxSize: Vector2?,
 }

@@ -12,9 +12,19 @@ Base: `none`. Creatable: `false`.
 | `Parent` | `Instance?` | nil | No |
 | `ClassName` | `string` | class name | Yes |
 
-Methods: Destroy, Clone, GetChildren, GetDescendants, FindFirstChild, IsA.
+| Method | Type |
+| --- | --- |
+| `Destroy` | `(Self: Instance) -> ()` |
+| `Clone` | `(Self: Instance) -> Instance` |
+| `GetChildren` | `(Self: Instance) -> {Instance}` |
+| `GetDescendants` | `(Self: Instance) -> {Instance}` |
+| `FindFirstChild` | `(Self: Instance, Name: string) -> Instance?` |
+| `IsA` | `(Self: Instance, ClassName: string) -> boolean` |
 
-Signals: Changed, Destroying.
+| Signal | Type |
+| --- | --- |
+| `Changed` | `Signal` |
+| `Destroying` | `Signal` |
 
 ## Window
 
@@ -43,7 +53,15 @@ Base: `Instance`. Creatable: `false`.
 | `AbsolutePosition` | `Vector2` | derived | Yes |
 | `AbsoluteSize` | `Vector2` | derived | Yes |
 
-Signals: Focused, FocusLost, MouseEnter, MouseLeave, InputBegan, InputChanged, InputEnded.
+| Signal | Type |
+| --- | --- |
+| `Focused` | `Signal` |
+| `FocusLost` | `Signal` |
+| `MouseEnter` | `Signal` |
+| `MouseLeave` | `Signal` |
+| `InputBegan` | `PointerInputSignal` |
+| `InputChanged` | `PointerInputSignal` |
+| `InputEnded` | `PointerInputSignal` |
 
 ## Frame
 
@@ -76,7 +94,9 @@ Base: `GuiButton`. Creatable: `true`.
 | `Text` | `string` |  | No |
 | `Enabled` | `boolean` | true | No |
 
-Signals: Activated.
+| Signal | Type |
+| --- | --- |
+| `Activated` | `Signal` |
 
 ## TextBox
 
@@ -87,7 +107,9 @@ Base: `GuiObject`. Creatable: `true`.
 | `Text` | `string` |  | No |
 | `Enabled` | `boolean` | true | No |
 
-Signals: TextChanged.
+| Signal | Type |
+| --- | --- |
+| `TextChanged` | `Signal` |
 
 ## CheckBox
 
@@ -99,7 +121,10 @@ Base: `GuiObject`. Creatable: `true`.
 | `Checked` | `boolean` | false | No |
 | `Enabled` | `boolean` | true | No |
 
-Signals: Activated, CheckedChanged.
+| Signal | Type |
+| --- | --- |
+| `Activated` | `Signal` |
+| `CheckedChanged` | `Signal` |
 
 ## Slider
 
@@ -112,7 +137,9 @@ Base: `GuiObject`. Creatable: `true`.
 | `Value` | `number` | 0 | No |
 | `Enabled` | `boolean` | true | No |
 
-Signals: ValueChanged.
+| Signal | Type |
+| --- | --- |
+| `ValueChanged` | `Signal` |
 
 ## ProgressBar
 

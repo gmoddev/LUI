@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $Json = (& $SchemaDump) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Reflection] Schema dump failed' }
 $Schema = $Json | ConvertFrom-Json
-if ($Schema.schemaVersion -ne 1) { throw '[LUI:Reflection] Unsupported schema version' }
+if ($Schema.schemaVersion -ne 2) { throw '[LUI:Reflection] Unsupported schema version' }
 
 $Types = [System.Collections.Generic.List[string]]::new()
 $Types.Add('-- Generated from LuiRuntime reflection metadata. Do not edit by hand.')
@@ -25,15 +25,6 @@ $Types.Add('')
 $ClassMap = @{}
 foreach ($Class in $Schema.classes) { $ClassMap[$Class.name] = $Class }
 
-$MethodTypes = @{
-    Destroy = '(Self: Instance) -> ()'
-    Clone = '(Self: Instance) -> Instance'
-    GetChildren = '(Self: Instance) -> {Instance}'
-    GetDescendants = '(Self: Instance) -> {Instance}'
-    FindFirstChild = '(Self: Instance, Name: string) -> Instance?'
-    IsA = '(Self: Instance, ClassName: string) -> boolean'
-}
-
 foreach ($Class in $Schema.classes) {
     $Inheritance = if ($Class.base) { "$($Class.base) & " } else { '' }
     $Types.Add("export type $($Class.name) = $Inheritance{" )
@@ -42,27 +33,22 @@ foreach ($Class in $Schema.classes) {
         $Types.Add("    $Access$($Property.name): $($Property.type),")
     }
     foreach ($Method in $Class.methods) {
-        if (-not $MethodTypes.ContainsKey($Method)) { throw "[LUI:Reflection] Unknown method: $Method" }
-        $Types.Add("    read ${Method}: $($MethodTypes[$Method]),")
+        $Types.Add("    read $($Method.name): $($Method.type),")
     }
     foreach ($Signal in $Class.signals) {
-        $SignalType = if ($Signal -in @('InputBegan', 'InputChanged', 'InputEnded')) { 'PointerInputSignal' } else { 'Signal' }
-        $Types.Add("    read ${Signal}: $SignalType,")
+        $Types.Add("    read $($Signal.name): $($Signal.type),")
     }
     $Types.Add('}')
     $Types.Add('')
 }
 
-$ServiceMethodTypes = @{
-    GetWindows = '(Self: WindowService) -> {Window}'
-    Supports = '(Self: PlatformService, Capability: string) -> boolean'
-}
 foreach ($Service in $Schema.services) {
     $Types.Add("export type $($Service.name) = {")
-    if ($Service.name -eq 'PlatformService') { $Types.Add('    read BackendName: string,') }
+    foreach ($Property in $Service.properties) {
+        $Types.Add("    read $($Property.name): $($Property.type),")
+    }
     foreach ($Method in $Service.methods) {
-        if (-not $ServiceMethodTypes.ContainsKey($Method)) { throw "[LUI:Reflection] Unknown service method: $Method" }
-        $Types.Add("    read ${Method}: $($ServiceMethodTypes[$Method]),")
+        $Types.Add("    read $($Method.name): $($Method.type),")
     }
     $Types.Add('}')
     $Types.Add('')
@@ -71,6 +57,7 @@ $ServiceOverloads = @($Schema.services | ForEach-Object { "((Self: App, Name: `"
 $Types.Add("export type App = { read GetService: $($ServiceOverloads -join ' & ') }")
 $Types.Add('')
 
+$ContainerTypes = @($Schema.classes | Where-Object acceptsChildren | ForEach-Object name) -join ' | '
 foreach ($Class in $Schema.classes) {
     if (-not $Class.creatable) { continue }
     $Lineage = [System.Collections.Generic.List[object]]::new()
@@ -82,9 +69,9 @@ foreach ($Class in $Schema.classes) {
     $Types.Add("export type $($Class.name)Init = {")
     foreach ($Ancestor in $Lineage) {
         foreach ($Property in $Ancestor.properties) {
-            if ($Property.readOnly -or ($Class.name -eq 'Window' -and $Property.name -eq 'Parent')) { continue }
-            $PropertyType = if ($Property.name -eq 'Parent' -and $Class.name -eq 'UISizeConstraint') { '(Window | GuiObject)?' }
-                elseif ($Property.name -eq 'Parent') { '(Window | Frame)?' }
+            if ($Property.readOnly -or ($Class.parentRule -eq 'none' -and $Property.name -eq 'Parent')) { continue }
+            $PropertyType = if ($Property.name -eq 'Parent' -and $Class.parentRule -eq 'visual') { "($ContainerTypes | GuiObject)?" }
+                elseif ($Property.name -eq 'Parent') { "($ContainerTypes)?" }
                 elseif ($Property.type.EndsWith('?')) { $Property.type }
                 else { "$($Property.type)?" }
             $Types.Add("    $($Property.name): $PropertyType,")
@@ -149,13 +136,24 @@ foreach ($Class in $Schema.classes) {
         $Docs.Add("| ``$($Property.name)`` | ``$($Property.type)`` | $($Property.default) | $ReadOnly |")
     }
     $Docs.Add('')
-    if ($Class.methods.Count) { $Docs.Add("Methods: $($Class.methods -join ', ').") ; $Docs.Add('') }
-    if ($Class.signals.Count) { $Docs.Add("Signals: $($Class.signals -join ', ').") ; $Docs.Add('') }
+    if ($Class.methods.Count) {
+        $Docs.Add('| Method | Type |')
+        $Docs.Add('| --- | --- |')
+        foreach ($Method in $Class.methods) { $Docs.Add("| ``$($Method.name)`` | ``$($Method.type)`` |") }
+        $Docs.Add('')
+    }
+    if ($Class.signals.Count) {
+        $Docs.Add('| Signal | Type |')
+        $Docs.Add('| --- | --- |')
+        foreach ($Signal in $Class.signals) { $Docs.Add("| ``$($Signal.name)`` | ``$($Signal.type)`` |") }
+        $Docs.Add('')
+    }
 }
 $Docs.Add('## Services')
 $Docs.Add('')
 foreach ($Service in $Schema.services) {
-    $Docs.Add("- ``$($Service.name)``: $($Service.methods -join ', ')")
+    $Names = @($Service.methods | ForEach-Object name) -join ', '
+    $Docs.Add("- ``$($Service.name)``: $Names")
 }
 
 $Encoding = [System.Text.UTF8Encoding]::new($false)

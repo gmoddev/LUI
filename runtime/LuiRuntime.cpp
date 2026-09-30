@@ -425,11 +425,15 @@ static void Disconnect(LuiRuntime* Runtime, int ListenerId) {
 }
 
 static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
-    if (Value->ClassName == "Window" && Parent) luaL_error(Runtime->State, "Window cannot have a Parent");
-    const bool SizeConstraint = Value->ClassName == "UISizeConstraint";
-    if (Parent && Parent->ClassName != "Window" && Parent->ClassName != "Frame" &&
-        !(SizeConstraint && LuiSchema::IsA(Parent->ClassName, "GuiObject")))
-        luaL_error(Runtime->State, "Parent must be Window or Frame, or a GuiObject for UISizeConstraint");
+    const std::string ParentRule = LuiSchema::GetParentRule(Value->ClassName);
+    if (Parent && ParentRule == "none") luaL_error(Runtime->State, "%s cannot have a Parent", Value->ClassName.c_str());
+    if (Parent) {
+        const LuiSchema::ClassDefinition* ParentClass = LuiSchema::FindClass(Parent->ClassName);
+        const bool Container = ParentClass && ParentClass->AcceptsChildren;
+        if ((ParentRule == "container" && !Container) ||
+            (ParentRule == "visual" && !Container && !LuiSchema::IsA(Parent->ClassName, "GuiObject")))
+            luaL_error(Runtime->State, "invalid Parent for %s", Value->ClassName.c_str());
+    }
     if (Parent && LuiSchema::IsA(Value->ClassName, "UIComponent")) {
         for (int Id : Parent->Children) {
             const Node* Sibling = Runtime->Nodes.at(Id).get();
@@ -789,27 +793,25 @@ static void PushSignal(lua_State* State, Node* Value, const char* Name) {
 static int NodeIndex(lua_State* State) {
     Node* Value = GetNode(State, 1, true);
     const std::string Key = luaL_checkstring(State, 2);
-    const bool IsMethod = Key == "Destroy" || Key == "Clone" || Key == "GetChildren" ||
-        Key == "GetDescendants" || Key == "FindFirstChild" || Key == "IsA";
-    const bool IsSignal = Key == "Changed" || Key == "Destroying" ||
-        ((Key == "Focused" || Key == "FocusLost" || Key == "MouseEnter" || Key == "MouseLeave" ||
-            Key == "InputBegan" || Key == "InputChanged" || Key == "InputEnded") &&
-            LuiSchema::IsA(Value->ClassName, "GuiObject")) ||
-        (Key == "Activated" && (Value->ClassName == "TextButton" || Value->ClassName == "CheckBox")) ||
-        (Key == "TextChanged" && Value->ClassName == "TextBox") ||
-        (Key == "CheckedChanged" && Value->ClassName == "CheckBox") ||
-        (Key == "ValueChanged" && Value->ClassName == "Slider");
-    if (!IsMethod && !IsSignal && !LuiSchema::FindProperty(Value->ClassName, Key)) {
+    if (const LuiSchema::MethodDefinition* Method = LuiSchema::FindMethod(Value->ClassName, Key)) {
+        if (Key == "Destroy") lua_pushcfunction(State, NodeDestroy, Method->Name);
+        else if (Key == "Clone") lua_pushcfunction(State, NodeClone, Method->Name);
+        else if (Key == "GetChildren") lua_pushcfunction(State, NodeGetChildren, Method->Name);
+        else if (Key == "GetDescendants") lua_pushcfunction(State, NodeGetDescendants, Method->Name);
+        else if (Key == "FindFirstChild") lua_pushcfunction(State, NodeFindFirstChild, Method->Name);
+        else if (Key == "IsA") lua_pushcfunction(State, NodeIsA, Method->Name);
+        else lua_pushnil(State);
+        return 1;
+    }
+    if (const LuiSchema::SignalDefinition* Signal = LuiSchema::FindSignal(Value->ClassName, Key)) {
+        PushSignal(State, Value, Signal->Name);
+        return 1;
+    }
+    if (!LuiSchema::FindProperty(Value->ClassName, Key)) {
         lua_pushnil(State);
         return 1;
     }
-    if (Key == "Destroy") lua_pushcfunction(State, NodeDestroy, "Destroy");
-    else if (Key == "Clone") lua_pushcfunction(State, NodeClone, "Clone");
-    else if (Key == "GetChildren") lua_pushcfunction(State, NodeGetChildren, "GetChildren");
-    else if (Key == "GetDescendants") lua_pushcfunction(State, NodeGetDescendants, "GetDescendants");
-    else if (Key == "FindFirstChild") lua_pushcfunction(State, NodeFindFirstChild, "FindFirstChild");
-    else if (Key == "IsA") lua_pushcfunction(State, NodeIsA, "IsA");
-    else if (Key == "ClassName") lua_pushstring(State, Value->ClassName.c_str());
+    if (Key == "ClassName") lua_pushstring(State, Value->ClassName.c_str());
     else if (Key == "Name") lua_pushstring(State, Value->Name.c_str());
     else if (Key == "Title") lua_pushstring(State, Value->Title.c_str());
     else if (Key == "Text") lua_pushstring(State, Value->Text.c_str());
@@ -846,20 +848,7 @@ static int NodeIndex(lua_State* State) {
         auto* Runtime = GetRuntime(State);
         auto Found = Runtime->Nodes.find(Value->ParentId);
         PushNode(State, Found == Runtime->Nodes.end() ? nullptr : Found->second.get());
-    } else if (Key == "Activated" && (Value->ClassName == "TextButton" || Value->ClassName == "CheckBox")) PushSignal(State, Value, "Activated");
-    else if (Key == "TextChanged" && Value->ClassName == "TextBox") PushSignal(State, Value, "TextChanged");
-    else if (Key == "CheckedChanged" && Value->ClassName == "CheckBox") PushSignal(State, Value, "CheckedChanged");
-    else if (Key == "ValueChanged" && Value->ClassName == "Slider") PushSignal(State, Value, "ValueChanged");
-    else if (Key == "Focused" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "Focused");
-    else if (Key == "FocusLost" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "FocusLost");
-    else if (Key == "MouseEnter" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "MouseEnter");
-    else if (Key == "MouseLeave" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "MouseLeave");
-    else if (Key == "InputBegan" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "InputBegan");
-    else if (Key == "InputChanged" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "InputChanged");
-    else if (Key == "InputEnded" && LuiSchema::IsA(Value->ClassName, "GuiObject")) PushSignal(State, Value, "InputEnded");
-    else if (Key == "Changed") PushSignal(State, Value, "Changed");
-    else if (Key == "Destroying") PushSignal(State, Value, "Destroying");
-    else lua_pushnil(State);
+    } else lua_pushnil(State);
     return 1;
 }
 

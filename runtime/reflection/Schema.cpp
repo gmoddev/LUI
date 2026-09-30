@@ -1,26 +1,53 @@
 #include "Schema.h"
 
+#include <cstddef>
 #include <sstream>
 
 namespace LuiSchema {
 
 static constexpr ClassDefinition Classes[] = {
-    {"Instance", "", false, false, "Destroy,Clone,GetChildren,GetDescendants,FindFirstChild,IsA", "Changed,Destroying"},
-    {"Window", "Instance", true, true, "", ""},
-    {"GuiObject", "Instance", false, false, "", "Focused,FocusLost,MouseEnter,MouseLeave,InputBegan,InputChanged,InputEnded"},
-    {"Frame", "GuiObject", true, true, "", ""},
-    {"TextLabel", "GuiObject", true, true, "", ""},
-    {"GuiButton", "GuiObject", false, false, "", ""},
-    {"TextButton", "GuiButton", true, true, "", "Activated"},
-    {"TextBox", "GuiObject", true, true, "", "TextChanged"},
-    {"CheckBox", "GuiObject", true, true, "", "Activated,CheckedChanged"},
-    {"Slider", "GuiObject", true, true, "", "ValueChanged"},
-    {"ProgressBar", "GuiObject", true, true, "", ""},
-    {"UIComponent", "Instance", false, false, "", ""},
-    {"UIPadding", "UIComponent", true, false, "", ""},
-    {"UIListLayout", "UIComponent", true, false, "", ""},
-    {"UIGridLayout", "UIComponent", true, false, "", ""},
-    {"UISizeConstraint", "UIComponent", true, false, "", ""},
+    {"Instance", "", false, false, false, "container"},
+    {"Window", "Instance", true, true, true, "none"},
+    {"GuiObject", "Instance", false, false, false, ""},
+    {"Frame", "GuiObject", true, true, true, ""},
+    {"TextLabel", "GuiObject", true, true, false, ""},
+    {"GuiButton", "GuiObject", false, false, false, ""},
+    {"TextButton", "GuiButton", true, true, false, ""},
+    {"TextBox", "GuiObject", true, true, false, ""},
+    {"CheckBox", "GuiObject", true, true, false, ""},
+    {"Slider", "GuiObject", true, true, false, ""},
+    {"ProgressBar", "GuiObject", true, true, false, ""},
+    {"UIComponent", "Instance", false, false, false, ""},
+    {"UIPadding", "UIComponent", true, false, false, ""},
+    {"UIListLayout", "UIComponent", true, false, false, ""},
+    {"UIGridLayout", "UIComponent", true, false, false, ""},
+    {"UISizeConstraint", "UIComponent", true, false, false, "visual"},
+};
+
+static constexpr MethodDefinition Methods[] = {
+    {"Instance", "Destroy", "(Self: Instance) -> ()"},
+    {"Instance", "Clone", "(Self: Instance) -> Instance"},
+    {"Instance", "GetChildren", "(Self: Instance) -> {Instance}"},
+    {"Instance", "GetDescendants", "(Self: Instance) -> {Instance}"},
+    {"Instance", "FindFirstChild", "(Self: Instance, Name: string) -> Instance?"},
+    {"Instance", "IsA", "(Self: Instance, ClassName: string) -> boolean"},
+};
+
+static constexpr SignalDefinition Signals[] = {
+    {"Instance", "Changed", "Signal"},
+    {"Instance", "Destroying", "Signal"},
+    {"GuiObject", "Focused", "Signal"},
+    {"GuiObject", "FocusLost", "Signal"},
+    {"GuiObject", "MouseEnter", "Signal"},
+    {"GuiObject", "MouseLeave", "Signal"},
+    {"GuiObject", "InputBegan", "PointerInputSignal"},
+    {"GuiObject", "InputChanged", "PointerInputSignal"},
+    {"GuiObject", "InputEnded", "PointerInputSignal"},
+    {"TextButton", "Activated", "Signal"},
+    {"TextBox", "TextChanged", "Signal"},
+    {"CheckBox", "Activated", "Signal"},
+    {"CheckBox", "CheckedChanged", "Signal"},
+    {"Slider", "ValueChanged", "Signal"},
 };
 
 static constexpr PropertyDefinition Properties[] = {
@@ -68,8 +95,17 @@ static constexpr PropertyDefinition Properties[] = {
 };
 
 static constexpr ServiceDefinition Services[] = {
-    {"WindowService", "GetWindows"},
-    {"PlatformService", "Supports"},
+    {"WindowService"},
+    {"PlatformService"},
+};
+
+static constexpr ServiceMethodDefinition ServiceMethods[] = {
+    {"WindowService", "GetWindows", "(Self: WindowService) -> {Window}"},
+    {"PlatformService", "Supports", "(Self: PlatformService, Capability: string) -> boolean"},
+};
+
+static constexpr ServicePropertyDefinition ServiceProperties[] = {
+    {"PlatformService", "BackendName", "string"},
 };
 
 const ClassDefinition* FindClass(const std::string& Name) {
@@ -97,6 +133,35 @@ const PropertyDefinition* FindProperty(const std::string& ClassName, const std::
     return nullptr;
 }
 
+const MethodDefinition* FindMethod(const std::string& ClassName, const std::string& Name) {
+    const ClassDefinition* Class = FindClass(ClassName);
+    while (Class) {
+        for (const auto& Method : Methods)
+            if (Name == Method.Name && std::string(Class->Name) == Method.Owner) return &Method;
+        Class = *Class->Base ? FindClass(Class->Base) : nullptr;
+    }
+    return nullptr;
+}
+
+const SignalDefinition* FindSignal(const std::string& ClassName, const std::string& Name) {
+    const ClassDefinition* Class = FindClass(ClassName);
+    while (Class) {
+        for (const auto& Signal : Signals)
+            if (Name == Signal.Name && std::string(Class->Name) == Signal.Owner) return &Signal;
+        Class = *Class->Base ? FindClass(Class->Base) : nullptr;
+    }
+    return nullptr;
+}
+
+const char* GetParentRule(const std::string& ClassName) {
+    const ClassDefinition* Class = FindClass(ClassName);
+    while (Class) {
+        if (*Class->ParentRule) return Class->ParentRule;
+        Class = *Class->Base ? FindClass(Class->Base) : nullptr;
+    }
+    return "none";
+}
+
 bool IsNative(const std::string& ClassName) {
     const ClassDefinition* Class = FindClass(ClassName);
     return Class && Class->Native;
@@ -117,21 +182,17 @@ static void AppendQuoted(std::ostringstream& Output, const char* Text) {
     Output << '"';
 }
 
-static void AppendList(std::ostringstream& Output, const char* Text) {
+template<typename Definition, std::size_t Count>
+static void AppendDefinitions(std::ostringstream& Output, const Definition (&Entries)[Count], const char* Owner) {
     Output << '[';
     bool First = true;
-    const char* Start = Text;
-    for (const char* Cursor = Text; ; ++Cursor) {
-        if (*Cursor == ',' || *Cursor == '\0') {
-            if (Cursor != Start) {
-                if (!First) Output << ',';
-                const std::string Value(Start, Cursor);
-                AppendQuoted(Output, Value.c_str());
-                First = false;
-            }
-            if (*Cursor == '\0') break;
-            Start = Cursor + 1;
-        }
+    for (const auto& Entry : Entries) {
+        if (std::string(Entry.Owner) != Owner) continue;
+        if (!First) Output << ',';
+        First = false;
+        Output << "{\"name\":"; AppendQuoted(Output, Entry.Name);
+        Output << ",\"type\":"; AppendQuoted(Output, Entry.Type);
+        Output << '}';
     }
     Output << ']';
 }
@@ -139,7 +200,7 @@ static void AppendList(std::ostringstream& Output, const char* Text) {
 const std::string& GetJson() {
     static const std::string Json = [] {
         std::ostringstream Output;
-        Output << "{\"schemaVersion\":1,\"classes\":[";
+        Output << "{\"schemaVersion\":2,\"classes\":[";
         bool FirstClass = true;
         for (const auto& Class : Classes) {
             if (!FirstClass) Output << ',';
@@ -148,8 +209,10 @@ const std::string& GetJson() {
             Output << ",\"base\":"; AppendQuoted(Output, Class.Base);
             Output << ",\"creatable\":" << (Class.Creatable ? "true" : "false");
             Output << ",\"native\":" << (Class.Native ? "true" : "false");
-            Output << ",\"methods\":"; AppendList(Output, Class.Methods);
-            Output << ",\"signals\":"; AppendList(Output, Class.Signals);
+            Output << ",\"acceptsChildren\":" << (Class.AcceptsChildren ? "true" : "false");
+            Output << ",\"parentRule\":"; AppendQuoted(Output, GetParentRule(Class.Name));
+            Output << ",\"methods\":"; AppendDefinitions(Output, Methods, Class.Name);
+            Output << ",\"signals\":"; AppendDefinitions(Output, Signals, Class.Name);
             Output << ",\"properties\":[";
             bool FirstProperty = true;
             for (const auto& Property : Properties) {
@@ -169,7 +232,8 @@ const std::string& GetJson() {
             if (!FirstService) Output << ',';
             FirstService = false;
             Output << "{\"name\":"; AppendQuoted(Output, Service.Name);
-            Output << ",\"methods\":"; AppendList(Output, Service.Methods);
+            Output << ",\"methods\":"; AppendDefinitions(Output, ServiceMethods, Service.Name);
+            Output << ",\"properties\":"; AppendDefinitions(Output, ServiceProperties, Service.Name);
             Output << '}';
         }
         Output << "]}";

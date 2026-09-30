@@ -19,6 +19,11 @@ int main() {
         Slider = Instance.new("Slider", {Minimum = 10, Maximum = 20, Value = 15, Parent = Window})
         Progress = Instance.new("ProgressBar", {Minimum = 0, Maximum = 10, Value = 5, Parent = Window})
         assert(Input.Text == "hello" and Check.Checked == false)
+        assert(Window.Destroy ~= nil and Input.Focused ~= nil)
+        assert(Window.Focused == nil and Progress.Activated == nil)
+        assert(not pcall(function() Window.Parent = Input end))
+        assert(not pcall(function() Input.Parent = Check end))
+        assert(Input.Parent == Window)
         assert(Slider.Value == 15 and Progress.Value == 5)
         assert(not pcall(function() Input.Text = 42 end))
         local HighRange = Instance.new("Slider", {Minimum = 200, Maximum = 300, Value = 250})
@@ -80,6 +85,10 @@ int main() {
     int ScriptStatus = Lui_RunScript(Runtime, Script, "Conformance");
     int Failures = Check(ScriptStatus == 1, Lui_GetLastError(Runtime));
     Failures += Check(std::strstr(Lui_GetSchemaJson(), "\"name\":\"TextBox\"") != nullptr, "reflection omitted TextBox");
+    Failures += Check(std::strstr(Lui_GetSchemaJson(), "\"schemaVersion\":2") != nullptr &&
+        std::strstr(Lui_GetSchemaJson(), "\"parentRule\":\"visual\"") != nullptr &&
+        std::strstr(Lui_GetSchemaJson(), "\"acceptsChildren\":true") != nullptr,
+        "structured reflection metadata is incomplete");
     Failures += Check(Lui_TextChanged(Runtime, 2, "typed") == 1, "TextBox input was rejected");
     Failures += Check(Lui_CheckedChanged(Runtime, 3, 1) == 1, "CheckBox input was rejected");
     Failures += Check(Lui_ValueChanged(Runtime, 4, 17.5) == 1, "Slider input was rejected");
