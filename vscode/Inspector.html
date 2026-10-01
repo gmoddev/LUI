@@ -31,6 +31,8 @@
     #properties td:first-child { width: 40%; opacity: .75; }
     .type { display: block; font-size: 10px; opacity: .55; margin-top: 2px; }
     #hint { opacity: .65; line-height: 1.4; }
+    .location { display: flex; gap: 7px; align-items: center; padding: 4px 0; }
+    .location span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -47,6 +49,9 @@
     </div>
     <div id="mapScroll"><div id="map" aria-label="Resolved LUI layout"></div></div>
     <p id="hint">Diagram of logical bounds. Select a control to inspect it; double-click a button to activate it.</p>
+    <h2>Source</h2>
+    <div class="location"><button id="openCreated" type="button" disabled>Open creation</button><span id="createdAt">Unavailable</span></div>
+    <div class="location"><button id="openChanged" type="button" disabled>Open last change</button><span id="lastChangedAt">Unavailable</span></div>
     <h2>Properties</h2>
     <div id="selection">No Instance selected</div>
     <button id="activate" type="button" disabled>Activate</button>
@@ -54,8 +59,10 @@
 <script nonce="__NONCE__">
     const VsCode = acquireVsCodeApi();
     const Elements = Object.fromEntries(['status', 'error', 'width', 'height', 'resize', 'mapScroll', 'map',
-        'selection', 'activate', 'properties'].map(Id => [Id, document.getElementById(Id)]));
-    let State = { nodes: [], generation: 0, selectedId: 0, properties: [], status: '', error: '' };
+        'selection', 'activate', 'properties', 'openCreated', 'openChanged', 'createdAt', 'lastChangedAt']
+        .map(Id => [Id, document.getElementById(Id)]));
+    let State = { nodes: [], generation: 0, selectedId: 0, properties: [], createdAt: null,
+        lastChangedAt: null, status: '', error: '' };
     let WindowNode = null;
     function Label(Node) { return Node.title || Node.text || Node.name || Node.className; }
     function Select(Id) { VsCode.postMessage({ type: 'select', generation: State.generation, id: Id }); }
@@ -71,6 +78,12 @@
         Elements.error.textContent = State.error;
         Elements.selection.textContent = Selected ? Selected.className + ' #' + Selected.id + ' · ' + Label(Selected) : 'No Instance selected';
         Elements.activate.disabled = !Selected || !['TextButton', 'CheckBox'].includes(Selected.className);
+        Elements.openCreated.disabled = !State.createdAt;
+        Elements.openChanged.disabled = !State.lastChangedAt;
+        Elements.createdAt.textContent = State.createdAt ? State.createdAt.source + ':' + State.createdAt.line : 'Unavailable';
+        Elements.lastChangedAt.textContent = State.lastChangedAt ?
+            State.lastChangedAt.source + ':' + State.lastChangedAt.line +
+            (State.lastChangedAt.property ? ' · ' + State.lastChangedAt.property : '') : 'Unavailable';
         const Body = Elements.properties.querySelector('tbody');
         Body.replaceChildren();
         for (const Property of State.properties) {
@@ -133,6 +146,9 @@
             width: Number(Elements.width.value), height: Number(Elements.height.value) });
     });
     Elements.activate.addEventListener('click', () => { if (State.selectedId) Activate(State.selectedId); });
+    for (const [Element, Kind] of [[Elements.openCreated, 'created'], [Elements.openChanged, 'lastChanged']])
+        Element.addEventListener('click', () => VsCode.postMessage({ type: 'openSource',
+            generation: State.generation, id: State.selectedId, kind: Kind }));
     new ResizeObserver(() => { if (WindowNode) Render(); }).observe(Elements.mapScroll);
     VsCode.postMessage({ type: 'ready' });
 </script>

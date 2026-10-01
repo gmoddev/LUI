@@ -60,10 +60,12 @@ Test('editor client consumes the real preview host and reloads the tree', async 
         const [First, Generation] = await WaitFor(Client, 'tree', (_, Value) => Value === 1);
         Assert.equal(Generation, 1);
         Assert.equal(First.Nodes[0].bounds.width, 400);
+        Assert.equal(First.Nodes[0].createdAt.line, 1);
+        Assert.equal(First.Nodes[1].createdAt.line, 2);
         Assert.equal(Client.Classes.get('Window').name, 'Window');
         const Activated = WaitFor(Client, 'tree', Tree => Tree.Nodes[1]?.text === 'Clicked');
         Client.Activate(2);
-        await Activated;
+        Assert.equal((await Activated)[0].Nodes[1].lastChangedAt.property, 'Text');
         const Reloaded = WaitFor(Client, 'tree', (_, Value) => Value === 2);
         Client.RequestReload();
         const [Second] = await Reloaded;
@@ -78,7 +80,10 @@ Test('editor client consumes the real preview host and reloads the tree', async 
         const RuntimeError = WaitFor(Client, 'runtimeError', (_, Generation) => Generation === 3);
         const EmptyTree = WaitFor(Client, 'tree', (_, Generation) => Generation === 3);
         Client.RequestReload();
-        Assert.match((await RuntimeError)[0], /expected preview failure/);
+        const [ErrorMessage, , ErrorLocation] = await RuntimeError;
+        Assert.match(ErrorMessage, /expected preview failure/);
+        Assert.equal(ErrorLocation.line, 1);
+        Assert.equal(ErrorLocation.source, 'main.luau');
         Assert.equal((await EmptyTree)[0].Nodes.length, 0);
         Fs.writeFileSync(Path.join(Directory, 'main.luau'), 'Instance.new("Window", {Title="Recovered"})\n');
         const Recovered = WaitFor(Client, 'tree', (_, Generation) => Generation === 4);

@@ -99,6 +99,7 @@ class EditorController {
     constructor(Context) {
         this.Context = Context;
         this.Output = Vscode.window.createOutputChannel('LUI Preview');
+        this.Diagnostics = Vscode.languages.createDiagnosticCollection('LUI Preview');
         this.Explorer = new ExplorerProvider();
         this.Inspector = new InspectorProvider(Message => this.OnInspectorAction(Message));
         this.TreeView = Vscode.window.createTreeView('lui.explorer', { treeDataProvider: this.Explorer });
@@ -108,16 +109,18 @@ class EditorController {
         this.Status = 'Preview stopped';
         this.Error = '';
         this.LastRuntimeErrorGeneration = 0;
+        this.LastDiagnosticGeneration = 0;
         this.ManifestPath = '';
         this.ScriptPath = '';
         this.Folder = null;
         this.ReloadTimer = null;
-        Context.subscriptions.push(this.Output, this.TreeView, this.Explorer,
+        Context.subscriptions.push(this.Output, this.Diagnostics, this.TreeView, this.Explorer,
             Vscode.window.registerWebviewViewProvider('lui.inspector', this.Inspector),
             Vscode.commands.registerCommand('lui.startPreview', () => this.Start()),
             Vscode.commands.registerCommand('lui.reloadPreview', () => this.Client?.RequestReload()),
             Vscode.commands.registerCommand('lui.stopPreview', () => this.Stop()),
             Vscode.commands.registerCommand('lui.activateNode', Item => this.Activate(Item?.Id)),
+            Vscode.commands.registerCommand('lui.openSource', Item => this.OpenSource(Item?.Id, 'created')),
             Vscode.workspace.onDidSaveTextDocument(Document => this.OnSave(Document)),
             this.TreeView.onDidChangeSelection(Event => this.Select(Event.selection[0]?.Id || 0)));
     }
@@ -163,6 +166,7 @@ class EditorController {
         this.SetStatus('Connecting to preview host…');
         Client.on('tree', (Tree, Generation, ChangedGeneration) => {
             if (this.Client !== Client) return;
+            if (ChangedGeneration && this.LastDiagnosticGeneration !== Generation) this.Diagnostics.clear();
             if (ChangedGeneration || !Tree.ById.has(this.SelectedId))
                 this.SelectedId = Tree.Nodes.find(Node => Node.className === 'Window')?.id || Tree.Nodes[0]?.id || 0;
             this.Explorer.Update(Tree);
@@ -172,10 +176,15 @@ class EditorController {
             else this.SetStatus(`${Tree.Nodes.length} Instances · preview running`);
         });
         Client.on('consoleMessage', Message => this.Log('Console: ' + Message));
-        Client.on('diagnostic', Message => { this.Log('Diagnostic: ' + Message); this.SetStatus(this.Status, Message); });
-        Client.on('runtimeError', (Message, Generation) => {
+        Client.on('diagnostic', (Message, Generation, Location) => {
+            this.Log('Diagnostic: ' + Message);
+            this.PublishDiagnostic(Message, Location, Generation);
+            this.SetStatus(this.Status, Message);
+        });
+        Client.on('runtimeError', (Message, Generation, Location) => {
             this.LastRuntimeErrorGeneration = Generation;
             this.Log('Runtime error: ' + Message);
+            this.PublishDiagnostic(Message, Location, Generation);
             this.SetStatus('Preview script failed.', Message);
         });
         Client.on('failure', Message => { this.Log(Message); this.SetStatus('Preview protocol failed.', Message); });
@@ -197,6 +206,8 @@ class EditorController {
         Client?.Stop();
         this.Explorer.Update({ Nodes: [], ById: new Map(), Children: new Map([[0, []]]) });
         this.SelectedId = 0;
+        this.Diagnostics.clear();
+        this.LastDiagnosticGeneration = 0;
         this.TreeView.message = 'Run “LUI: Start Preview” to inspect an app.';
         this.SetStatus('Preview stopped');
     }
@@ -211,6 +222,37 @@ class EditorController {
         if (this.Client?.Tree.ById.has(Id)) this.Client.Activate(Id);
     }
 
+    GetSourceUri(Location) {
+        if (!Location || !this.ScriptPath || typeof Location.source !== 'string' ||
+            !Number.isSafeInteger(Location.line) || Location.line <= 0) return null;
+        const Candidate = Path.resolve(Path.dirname(this.ManifestPath), Location.source);
+        return Candidate === Path.resolve(this.ScriptPath) ? Vscode.Uri.file(Candidate) : null;
+    }
+
+    PublishDiagnostic(Message, Location, Generation) {
+        const Uri = this.GetSourceUri(Location);
+        if (!Uri) return;
+        this.LastDiagnosticGeneration = Generation;
+        const Line = Location.line - 1;
+        const Range = new Vscode.Range(Line, 0, Line, 1);
+        const Diagnostic = new Vscode.Diagnostic(Range, Message, Vscode.DiagnosticSeverity.Error);
+        Diagnostic.source = 'LUI preview';
+        this.Diagnostics.set(Uri, [Diagnostic]);
+    }
+
+    async OpenSource(Id, Kind) {
+        const Node = this.Client?.Tree.ById.get(Id);
+        const Location = Kind === 'lastChanged' ? Node?.lastChangedAt : Node?.createdAt;
+        const Uri = this.GetSourceUri(Location);
+        if (!Uri) { this.Log('No source location is available for that Instance.'); return; }
+        try {
+            const Document = await Vscode.workspace.openTextDocument(Uri);
+            const Line = Math.min(Location.line - 1, Math.max(0, Document.lineCount - 1));
+            const Selection = new Vscode.Range(Line, 0, Line, 0);
+            await Vscode.window.showTextDocument(Document, { preview: true, selection: Selection });
+        } catch (Error) { this.Log('Could not open source: ' + Error.message); }
+    }
+
     OnInspectorAction(Message) {
         if (!Message || !this.Client || Message.generation !== this.Client.Generation ||
             !Number.isSafeInteger(Message.id) || !this.Client.Tree.ById.has(Message.id)) return;
@@ -219,6 +261,8 @@ class EditorController {
             this.TreeView.reveal(this.Explorer.GetItem(Message.id), { select: true, focus: false })
                 .then(undefined, Error => this.Log('Could not reveal Instance: ' + Error.message));
         } else if (Message.type === 'activate') this.Activate(Message.id);
+        else if (Message.type === 'openSource' && (Message.kind === 'created' || Message.kind === 'lastChanged'))
+            this.OpenSource(Message.id, Message.kind);
         else if (Message.type === 'resizeViewport')
             this.Client.ResizeViewport(Message.id, Message.width, Message.height);
     }

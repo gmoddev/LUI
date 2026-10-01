@@ -10,7 +10,7 @@ class InspectorProvider {
         this.OnAction = OnAction;
         this.View = null;
         this.State = { status: 'Start a preview to inspect Instances.', generation: 0,
-            nodes: [], selectedId: 0, properties: [], error: '' };
+            nodes: [], selectedId: 0, properties: [], createdAt: null, lastChangedAt: null, error: '' };
     }
 
     resolveWebviewView(View) {
@@ -28,8 +28,11 @@ class InspectorProvider {
     }
 
     Render(Tree, Generation, SelectedId, Classes, Status, Error) {
+        const Selected = Tree.ById.get(SelectedId);
         this.State = { status: Status, generation: Generation, nodes: Tree.Nodes,
-            selectedId: SelectedId, properties: GetProperties(Tree.ById.get(SelectedId), Classes), error: Error };
+            selectedId: SelectedId, properties: GetProperties(Selected, Classes),
+            createdAt: Selected?.createdAt || null, lastChangedAt: Selected?.lastChangedAt || null,
+            error: Error };
         this.Post();
     }
 

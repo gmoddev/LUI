@@ -150,6 +150,8 @@ int main() {
         std::string(Lui_GetLastError(Runtime)).size() > 0, "invalid script passed the source checker");
     CompilerFailures += Check(Lui_CheckScript(Runtime, "local Value = 1") == 1,
         "source checker did not recover after an error");
+    CompilerFailures += Check(Lui_EnableSourceProvenance(Runtime) == 1,
+        "development source provenance could not be enabled");
     TestBackend Backend;
     Backend.Runtime = Runtime;
     Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
@@ -187,6 +189,8 @@ int main() {
         "preview snapshot did not contain resolved layout");
     Failures += Check(PreviewTree && std::string(PreviewTree).find("\"parentId\":2,\"className\":\"TextButton\"") != std::string::npos,
         "preview snapshot did not contain the authoritative tree");
+    Failures += Check(PreviewTree && std::string(PreviewTree).find("\"createdAt\":{\"source\":\"Headless\"") != std::string::npos,
+        "preview snapshot omitted Instance creation provenance");
     Failures += Check(Backend.Classes.size() == 4, "expected four native objects");
     Failures += Check(Backend.Parents[2] == 1 && Backend.Parents[3] == 2 && Backend.Parents[4] == 2, "parenting mismatch");
     auto TextEvent = std::find(Backend.Events.begin(), Backend.Events.end(), "3:Text");
@@ -244,6 +248,19 @@ int main() {
     Failures += CheckBackendFailure("Arrange", "Instance.new('Window')");
     Failures += CheckBackendFailure("Destroy", "local W = Instance.new('Window'); W:Destroy()");
     Failures += CheckCloneFailure();
+    LuiRuntime* ProvenanceRuntime = Lui_Create();
+    Failures += Check(Lui_EnableSourceProvenance(ProvenanceRuntime) == 1, "provenance setup failed");
+    Failures += Check(Lui_RunScript(ProvenanceRuntime,
+        "local W = Instance.new('Window')\nW.Title = 'Changed'", "provenance.luau") == 1,
+        Lui_GetLastError(ProvenanceRuntime));
+    const char* ProvenanceJson = Lui_GetPreviewTreeJson(ProvenanceRuntime);
+    Failures += Check(ProvenanceJson && std::string(ProvenanceJson).find(
+        "\"createdAt\":{\"source\":\"provenance.luau\",\"line\":1}") != std::string::npos,
+        "creation source line mismatch");
+    Failures += Check(ProvenanceJson && std::string(ProvenanceJson).find(
+        "\"lastChangedAt\":{\"source\":\"provenance.luau\",\"line\":2,\"property\":\"Title\"}") != std::string::npos,
+        "last changed source line mismatch");
+    Lui_Destroy(ProvenanceRuntime);
     std::ifstream ExampleFile(LUI_EXAMPLE_PATH);
     Failures += Check(ExampleFile.good(), "example file was not found");
     if (ExampleFile) {

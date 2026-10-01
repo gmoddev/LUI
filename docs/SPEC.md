@@ -1300,7 +1300,7 @@ The LUI extension should provide:
 
 Luau language tooling should be reused rather than replaced where practical.
 
-The first implemented VS Code slice provides the Instance Explorer, a resolved-bounds layout map, read-only reflection-backed properties, activation for supported buttons, viewport resizing, a runtime Output channel, and reload on entry-script save. Type diagnostics, source navigation, richer input, and native preview remain planned.
+The implemented VS Code slice provides the Instance Explorer, a resolved-bounds layout map, read-only reflection-backed properties, activation for supported buttons, viewport resizing, a runtime Output channel, Luau creation/change locations, source navigation, source-linked runtime diagnostics, and reload on entry-script save. Type diagnostics, richer input, and native preview remain planned.
 
 ---
 
@@ -1365,7 +1365,7 @@ resizeViewport
 setTheme
 ```
 
-The protocol should be explicitly versioned. The implemented initial subset uses one UTF-8 JSON object per line, with `version: 1`, `type`, and `generation`. The host emits `hello` with the runtime reflection schema, `fullTree`, `diagnostic`, `consoleMessage`, and `runtimeError`. It accepts `reload`, `snapshot`, `activate`, `resizeViewport`, and `shutdown`; other message names above remain planned. A full tree contains live Instance IDs, parent IDs, class and display properties, state, and logical-unit bounds. Reload destroys the previous Luau VM and tree before incrementing the generation and rerunning the entry script. Commands against older generations are rejected. Protocol input and tree structure are bounded and validated on both sides. The initial preview requires a manifest without privileged capabilities or native extensions and is not a native visual renderer.
+The protocol should be explicitly versioned. The implemented initial subset uses one UTF-8 JSON object per line, with `version: 1`, `type`, and `generation`. The host emits `hello` with the runtime reflection schema, `fullTree`, `diagnostic`, `consoleMessage`, and `runtimeError`. It accepts `reload`, `snapshot`, `activate`, `resizeViewport`, and `shutdown`; other message names above remain planned. A full tree contains live Instance IDs, parent IDs, class and display properties, state, logical-unit bounds, and optional creation/last-change Luau source locations. Source-linked errors include an optional `location` with script and one-based line. Reload destroys the previous Luau VM and tree before incrementing the generation and rerunning the entry script. Commands against older generations are rejected. Protocol input and tree structure are bounded and validated on both sides. The initial preview requires a manifest without privileged capabilities or native extensions and is not a native visual renderer.
 
 ---
 
@@ -1392,7 +1392,7 @@ This enables:
 - property history during debugging;
 - useful hot-reload diagnostics.
 
-Source provenance is development metadata and may be stripped from release builds.
+Source provenance is development metadata. The preview host enables it before running a script; other hosts leave it disabled by default. Luau frame information provides one-based lines but not columns. Initial Instance property tables point to their `Instance.new` call site when no closer Luau frame is available. Host-only/native changes have no new Luau location. The editor only opens a location when its source resolves to the manifest's validated entry script.
 
 ---
 

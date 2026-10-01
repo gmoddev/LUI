@@ -44,6 +44,14 @@ function ValidateTree(Nodes, Classes) {
         Require(Bounds && ['x', 'y', 'width', 'height'].every(Field =>
             typeof Bounds[Field] === 'number' && Number.isFinite(Bounds[Field])) &&
             Bounds.width >= 0 && Bounds.height >= 0, 'invalid node bounds');
+        for (const Field of ['createdAt', 'lastChangedAt']) {
+            const Location = Node[Field];
+            Require(Location === undefined || Location === null ||
+                (typeof Location.source === 'string' && Location.source.length <= 1024 &&
+                    Number.isSafeInteger(Location.line) && Location.line > 0 &&
+                    (Location.property === undefined || typeof Location.property === 'string')),
+            'invalid ' + Field);
+        }
         ById.set(Node.id, Node);
         Children.set(Node.id, []);
         PreviousId = Node.id;

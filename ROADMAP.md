@@ -35,7 +35,7 @@ Include basic system theming (light, dark, high contrast, and change notificatio
 
 ## Foundation 3 — Developer experience
 
-**Status:** in progress. The CLI and separate preview host provide versioned tree and layout snapshots with generation-based reload. A VS Code development extension now displays an Instance Explorer, a layout map, and reflection-backed read-only properties. Type diagnostics, source provenance, native preview command, and richer visual/input tools remain. See [Foundation 3 notes](docs/FOUNDATION-3.md).
+**Status:** in progress. The CLI and separate preview host provide versioned tree and layout snapshots with generation-based reload. The VS Code development extension displays an Instance Explorer, a layout map, reflection-backed properties, Luau creation/change locations, source navigation, and source-linked runtime diagnostics. Type diagnostics, a native preview command, and richer visual/input tools remain. The user visually confirmed the initial editor view on 2026-10-01. See [Foundation 3 notes](docs/FOUNDATION-3.md).
 
 Add the CLI, project manifest, preview host and versioned protocol, VS Code Explorer and inspector, source provenance, native preview, and generation-based hot reload.
 
@@ -53,4 +53,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Continue Foundation 3 with source provenance and diagnostics tied to Luau source, then a native preview launcher. Keep higher-level async Luau results and the future native object ABI in separately versioned designs.
+Continue Foundation 3 with a native preview launcher and Luau type diagnostics. Keep higher-level async Luau results and the future native object ABI in separately versioned designs.

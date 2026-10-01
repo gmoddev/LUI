@@ -31,6 +31,29 @@ void FlushLayout(LuiRuntime* Runtime);
 static void DrainBackendEvents(LuiRuntime* Runtime);
 static LuiRuntime* GetRuntime(lua_State* State);
 
+static SourceLocation CaptureSourceLocation(lua_State* State) {
+    auto* Runtime = GetRuntime(State);
+    if (!Runtime || !Runtime->SourceProvenanceEnabled) return {};
+    for (int Level = 0; Level < 16; ++Level) {
+        lua_Debug Debug{};
+        if (!lua_getinfo(State, Level, "sl", &Debug)) break;
+        if (Debug.currentline <= 0 || !Debug.source || !*Debug.source ||
+            !(std::strcmp(Debug.what, "Lua") == 0 || std::strcmp(Debug.what, "main") == 0)) continue;
+        std::string Source = Debug.source;
+        if (!Source.empty() && (Source[0] == '@' || Source[0] == '=')) Source.erase(0, 1);
+        if (Source.size() > 1024) Source.resize(1024);
+        return {Source, Debug.currentline};
+    }
+    return {};
+}
+
+static void RecordSourceMutation(lua_State* State, Node* Value, const char* Property) {
+    SourceLocation Location = CaptureSourceLocation(State);
+    if (Location.Line <= 0) return;
+    Value->LastChangedAt = std::move(Location);
+    Value->LastChangedProperty = Property;
+}
+
 struct DepthGuard {
     int& Depth;
     explicit DepthGuard(int& Value, LuiRuntime* Runtime = nullptr) : Depth(Value) {
@@ -339,6 +362,7 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
     QueueParent(Runtime, Value);
     Runtime->LayoutDirty = true;
     ClearInvalidInput(Runtime);
+    RecordSourceMutation(Runtime->State, Value, "Parent");
     FireSignal(Runtime, Value, "Changed");
 }
 
@@ -517,6 +541,7 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
     } else {
         luaL_error(State, "unknown or read-only property '%s'", Name);
     }
+    RecordSourceMutation(State, Value, Name);
     FireSignal(Runtime, Value, "Changed");
     if (Key == "Text" && Value->ClassName == "TextBox") FireSignal(Runtime, Value, "TextChanged");
     if (Key == "Checked") FireSignal(Runtime, Value, "CheckedChanged");
@@ -562,6 +587,9 @@ static int NodeGetDescendants(lua_State* State) {
 static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source, Node* Parent) {
     auto Value = std::make_unique<Node>();
     Value->Id = Runtime->NextNodeId++;
+    Value->CreatedAt = CaptureSourceLocation(State);
+    Value->LastChangedAt = Value->CreatedAt;
+    if (Value->LastChangedAt.Line > 0) Value->LastChangedProperty = "Clone";
     Value->ClassName = Source->ClassName;
     Value->Name = Source->Name;
     Value->Title = Source->Title;
@@ -861,6 +889,7 @@ static int InstanceNew(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     auto Value = std::make_unique<Node>();
     Value->Id = Runtime->NextNodeId++;
+    Value->CreatedAt = CaptureSourceLocation(State);
     Value->ClassName = ClassName;
     Value->Name = ClassName;
     Value->Visible = ClassName != "Window";
@@ -1225,6 +1254,17 @@ extern "C" LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const 
     Runtime->VmLimitBytes = Limits->MaxMemoryBytes;
     Runtime->MaxInterrupts = Limits->MaxInterrupts;
     Runtime->Sandboxed = true;
+    Runtime->LastError.clear();
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_EnableSourceProvenance(LuiRuntime* Runtime) {
+    if (!CheckOwner(Runtime)) return 0;
+    if (Runtime->ApplicationStarted) {
+        Runtime->LastError = "[LUI:Preview] Source provenance must be enabled before scripts";
+        return 0;
+    }
+    Runtime->SourceProvenanceEnabled = true;
     Runtime->LastError.clear();
     return 1;
 }

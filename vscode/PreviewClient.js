@@ -90,7 +90,12 @@ class PreviewClient extends EventEmitter {
             throw new Error('Unexpected preview diagnostic generation');
         if (['diagnostic', 'consoleMessage', 'runtimeError'].includes(Message.type) &&
             typeof Message.message === 'string') {
-            this.emit(Message.type, Message.message, Message.generation);
+            const Location = Message.location;
+            if (Location !== undefined && Location !== null &&
+                (!Location || typeof Location.source !== 'string' || Location.source.length > 1024 ||
+                    !Number.isSafeInteger(Location.line) || Location.line <= 0))
+                throw new Error('Invalid diagnostic source location');
+            this.emit(Message.type, Message.message, Message.generation, Location || null);
             return;
         }
         throw new Error('Unknown preview message type');

@@ -44,6 +44,11 @@ struct PointerInputValue {
     bool IsCanceled = false;
 };
 
+struct SourceLocation {
+    std::string Source;
+    int Line = 0;
+};
+
 struct KeyboardInputValue {
     std::string Key;
     bool IsRepeat = false;
@@ -53,6 +58,9 @@ struct Node {
     int Id = 0;
     int Reference = 0;
     int ParentId = 0;
+    SourceLocation CreatedAt;
+    SourceLocation LastChangedAt;
+    std::string LastChangedProperty;
     bool Destroyed = false;
     bool DestroyingInProgress = false;
     bool Visible = true;
@@ -184,6 +192,7 @@ struct LuiRuntime {
     uint64_t MaxInterrupts = 0;
     uint64_t InterruptCount = 0;
     bool Sandboxed = false;
+    bool SourceProvenanceEnabled = false;
     bool CapabilitiesDeclared = false;
     bool ApplicationStarted = false;
     bool InitializingExtension = false;

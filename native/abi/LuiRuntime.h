@@ -70,6 +70,8 @@ LUI_API void LUI_CALL Lui_SetBackendName(LuiRuntime* Runtime, const char* Name);
 LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* Context, LuiLogCallback Callback);
 LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime, const LuiCapabilityDeclarationV1* Declaration);
 LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const LuiSandboxLimitsV1* Limits);
+/* Enable development-only source locations before the first script. */
+LUI_API int LUI_CALL Lui_EnableSourceProvenance(LuiRuntime* Runtime);
 /* Registers a packaged asset name before scripts; source paths stay in the host. */
 LUI_API int LUI_CALL Lui_RegisterAsset(LuiRuntime* Runtime, const char* Name);
 /* Path must be absolute. Call before the first script; failures leave the runtime usable. */

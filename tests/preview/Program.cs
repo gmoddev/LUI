@@ -62,10 +62,16 @@ internal static class Program
             JsonElement InitialNodes = Trees[0].GetProperty("nodes");
             Require(InitialNodes.GetArrayLength() == 2 && InitialNodes[1].GetProperty("parentId").GetInt32() == 1,
                 "initial tree was not rooted");
+            Require(InitialNodes[0].GetProperty("createdAt").GetProperty("line").GetInt32() == 1 &&
+                InitialNodes[1].GetProperty("createdAt").GetProperty("line").GetInt32() == 2,
+                "preview omitted Luau creation lines");
             Require(InitialNodes[0].GetProperty("bounds").GetProperty("width").GetDouble() == 400,
                 "preview did not use resolved runtime layout");
             Require(Trees.Any(Tree => Tree.GetProperty("generation").GetInt32() == 1 &&
                 Tree.GetProperty("nodes")[1].GetProperty("text").GetString() == "Clicked"), "activation did not update tree");
+            Require(Trees.Any(Tree => Tree.GetProperty("generation").GetInt32() == 1 &&
+                Tree.GetProperty("nodes")[1].GetProperty("lastChangedAt").GetProperty("property").GetString() == "Text"),
+                "preview omitted Luau mutation property");
             Require(Trees.Any(Tree => Tree.GetProperty("generation").GetInt32() == 2 &&
                 Tree.GetProperty("nodes")[1].GetProperty("text").GetString() == "Go"), "reload did not reset runtime");
             Require(Trees.Any(Tree => Tree.GetProperty("generation").GetInt32() == 2 &&

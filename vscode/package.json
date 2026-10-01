@@ -2,7 +2,7 @@
   "name": "lui-vscode",
   "displayName": "LUI Preview",
   "description": "Instance Explorer and layout inspector for LUI applications",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "gmoddev",
   "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
   "private": true,
@@ -24,7 +24,8 @@
       { "command": "lui.startPreview", "title": "LUI: Start Preview", "icon": "$(play)" },
       { "command": "lui.reloadPreview", "title": "LUI: Reload Preview", "icon": "$(refresh)" },
       { "command": "lui.stopPreview", "title": "LUI: Stop Preview", "icon": "$(debug-stop)" },
-      { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" }
+      { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" },
+      { "command": "lui.openSource", "title": "LUI: Open Instance Source", "icon": "$(go-to-file)" }
     ],
     "menus": {
       "view/title": [
@@ -33,7 +34,8 @@
         { "command": "lui.stopPreview", "when": "view == lui.explorer", "group": "navigation@3" }
       ],
       "view/item/context": [
-        { "command": "lui.activateNode", "when": "view == lui.explorer && viewItem == lui.activatable", "group": "inline" }
+        { "command": "lui.activateNode", "when": "view == lui.explorer && viewItem == lui.activatable", "group": "inline" },
+        { "command": "lui.openSource", "when": "view == lui.explorer", "group": "inline" }
       ]
     },
     "configuration": {

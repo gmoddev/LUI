@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Lui.WinUI;
 
 namespace Lui.PreviewHost;
@@ -43,6 +44,8 @@ internal sealed class PreviewSession : IDisposable
     private string? LastTree;
     private volatile bool InputClosed;
     private int QueueOverflow;
+    private static readonly Regex SourcePattern = new(@"\[string ""(?<Source>[^""]+)""\]:(?<Line>[1-9]\d*):",
+        RegexOptions.CultureInvariant);
 
     public PreviewSession(string ManifestPath, string RuntimePath)
     {
@@ -134,6 +137,7 @@ internal sealed class PreviewSession : IDisposable
                 MaxInterrupts = Math.Min(Manifest.Sandbox?.MaxInterrupts ?? 100_000UL, 1_000_000UL),
             };
             if (Native.ConfigureSandbox(Runtime, ref Limits) == 0) throw new InvalidDataException(Native.Error(Runtime));
+            if (Native.EnableSourceProvenance(Runtime) == 0) throw new InvalidDataException(Native.Error(Runtime));
             foreach (string Name in Manifest.AssetPaths.Keys)
                 if (Native.RegisterAsset(Runtime, Name) == 0) throw new InvalidDataException(Native.Error(Runtime));
             FileInfo Script = new(Manifest.ScriptPath);
@@ -147,7 +151,8 @@ internal sealed class PreviewSession : IDisposable
         catch (Exception Error) when (Error is IOException or InvalidDataException or UnauthorizedAccessException or DecoderFallbackException)
         {
             if (Runtime != IntPtr.Zero) { Native.Destroy(Runtime); Runtime = IntPtr.Zero; }
-            Write(new { version = ProtocolVersion, type = "runtimeError", generation = Generation, message = Error.Message });
+            Write(new { version = ProtocolVersion, type = "runtimeError", generation = Generation,
+                message = Error.Message, location = GetLocation(Error.Message) });
             Write(new { version = ProtocolVersion, type = "fullTree", generation = Generation, nodes = Array.Empty<object>() });
         }
     }
@@ -250,7 +255,16 @@ internal sealed class PreviewSession : IDisposable
     {
         if (Message.Length > 8192) Message = Message[..8192] + "…";
         Write(new { version = ProtocolVersion, type = Level == "Print" ? "consoleMessage" : "diagnostic",
-            generation = Generation, level = Level, message = Message });
+            generation = Generation, level = Level, message = Message,
+            location = Level == "Print" ? null : GetLocation(Message) });
+    }
+
+    private object? GetLocation(string Message)
+    {
+        Match Match = SourcePattern.Match(Message);
+        if (!Match.Success || Match.Groups["Source"].Value != Manifest.Script ||
+            !int.TryParse(Match.Groups["Line"].Value, out int Line) || Line <= 0) return null;
+        return new { source = Manifest.Script, line = Line };
     }
 
     private void Write(object Message)
@@ -298,6 +312,7 @@ internal sealed class NativeRuntime : IDisposable
     internal readonly SetLogDelegate SetLogCallback;
     internal readonly SetNameDelegate SetBackendName;
     internal readonly SandboxDelegate ConfigureSandbox;
+    internal readonly PumpDelegate EnableSourceProvenance;
     internal readonly StringDelegate RegisterAsset;
     internal readonly RunDelegate RunScript;
     internal readonly IntDelegate Activate;
@@ -315,6 +330,7 @@ internal sealed class NativeRuntime : IDisposable
         SetLogCallback = Load<SetLogDelegate>("Lui_SetLogCallback");
         SetBackendName = Load<SetNameDelegate>("Lui_SetBackendName");
         ConfigureSandbox = Load<SandboxDelegate>("Lui_ConfigureSandbox");
+        EnableSourceProvenance = Load<PumpDelegate>("Lui_EnableSourceProvenance");
         RegisterAsset = Load<StringDelegate>("Lui_RegisterAsset");
         RunScript = Load<RunDelegate>("Lui_RunScript");
         Activate = Load<IntDelegate>("Lui_Activate");

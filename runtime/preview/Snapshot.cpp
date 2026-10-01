@@ -47,6 +47,18 @@ void AppendNumber(std::string& Output, double Value) {
     Output += Buffer;
 }
 
+void AppendLocation(std::string& Output, const SourceLocation& Location, const std::string& Property = {}) {
+    if (Location.Line <= 0 || Location.Source.empty()) { Output += "null"; return; }
+    Output += "{\"source\":";
+    AppendString(Output, Location.Source);
+    Output += ",\"line\":" + std::to_string(Location.Line);
+    if (!Property.empty()) {
+        Output += ",\"property\":";
+        AppendString(Output, Property);
+    }
+    Output += '}';
+}
+
 }
 
 extern "C" LUI_API const char* LUI_CALL Lui_GetPreviewTreeJson(LuiRuntime* Runtime) {
@@ -81,6 +93,9 @@ extern "C" LUI_API const char* LUI_CALL Lui_GetPreviewTreeJson(LuiRuntime* Runti
         StringField("source", Value.Source);
         StringField("accessibilityLabel", Value.AccessibilityLabel);
         StringField("accessibilityDescription", Value.AccessibilityDescription);
+        Output += ",\"createdAt\":"; AppendLocation(Output, Value.CreatedAt);
+        Output += ",\"lastChangedAt\":";
+        AppendLocation(Output, Value.LastChangedAt, Value.LastChangedProperty);
         Output += ",\"visible\":"; Output += Value.Visible ? "true" : "false";
         Output += ",\"enabled\":"; Output += Value.Enabled ? "true" : "false";
         Output += ",\"checked\":"; Output += Value.Checked ? "true" : "false";
