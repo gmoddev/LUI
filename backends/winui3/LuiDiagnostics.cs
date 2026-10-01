@@ -11,9 +11,13 @@ internal static class LuiDiagnostics
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
+    [DllImport("kernel32.dll")]
+    private static extern uint SetErrorMode(uint Mode);
 
     public static void Initialize(bool ShowDiagnostics, bool SaveLog = false)
     {
+        // Keep OS crash and critical-error dialogs out of the user's foreground session.
+        SetErrorMode(0x0001 | 0x0002 | 0x8000);
         if (!ShowDiagnostics && !SaveLog) return;
         Enabled = true;
         try

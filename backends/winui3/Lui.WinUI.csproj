@@ -5,6 +5,7 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -16,10 +17,10 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="../../examples/hello.luau" Link="examples/hello.luau" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="../../examples/controls.luau" Link="examples/controls.luau" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="../../examples/grid.luau" Link="examples/grid.luau" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="../../tests/winui/NativeMapping.luau" Link="tests/winui/NativeMapping.luau" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../examples/hello.luau" Link="examples/hello.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="../../examples/controls.luau" Link="examples/controls.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="../../examples/grid.luau" Link="examples/grid.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="../../tests/winui/NativeMapping.luau" Link="tests/winui/NativeMapping.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
     <None Include="$(LuiNativeDll)" Link="LuiRuntime.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiNativeDll)' != ''" />
   </ItemGroup>
 </Project>

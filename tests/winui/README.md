@@ -2,7 +2,7 @@
 
 The shared C++ conformance suite runs in CI without a display. These cases exercise the real WinUI controls and UI Automation tree in an interactive Windows session. Both Luau scripts are loaded by the headless test so CI also catches syntax and startup errors; the native event observations still require a desktop.
 
-Build with `scripts/Build-Windows.ps1`. Run `Lui.WinUI.exe --native-qualification` from the generated output folder for the automatic native mapping probe. It loads `NativeMapping.luau`, checks real WinUI properties, accessible name and help text, parenting, bounds, disabled and hidden state, and native text and slider event round trips. It writes a nonmodal log under `%LOCALAPPDATA%\LUI\Logs`, sets the process exit code, and exits. Windows CI compiles the probe but does not launch a desktop app.
+Build with `scripts/Build-Windows.ps1`. Run `Lui.WinUI.exe --native-qualification` from the generated output folder for the automatic native mapping probe. It loads `NativeMapping.luau`, checks real WinUI properties, accessibility peer name and help text, parenting, bounds at the current DPI scale, disabled and hidden state, system theme reporting, and native text and slider event round trips. It writes a nonmodal log under `%LOCALAPPDATA%\LUI\Logs`, sets the process exit code, and exits. Windows CI compiles the probe but does not launch a desktop app. For a published folder, copy `NativeMapping.luau` into `tests/winui` inside a separate qualification copy of the folder; application packages omit test scripts.
 
 For input routing, run the generated `Lui.WinUI.exe` with a script path resolved from the repository root. Enable `--diagnostics` to keep an event trace in `%LOCALAPPDATA%\LUI\Logs`.
 

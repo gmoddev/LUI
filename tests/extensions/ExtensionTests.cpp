@@ -14,7 +14,7 @@ static int Check(bool Condition, const char* Message) {
 }
 
 int main(int Count, char** Arguments) {
-    if (Count != 5) return Check(false, "expected sample and three rejected library paths");
+    if (Count != 6) return Check(false, "expected sample, three rejected, and legacy library paths");
     LuiRuntime* Runtime = Lui_Create();
     if (!Runtime) return Check(false, "runtime creation failed");
     int Failures = 0;
@@ -34,7 +34,7 @@ int main(int Count, char** Arguments) {
     Failures += Check(Lui_DeclareCapabilities(Runtime, &Invalid) == 0,
         "incompatible capability declaration was accepted");
     Invalid = Declaration;
-    Invalid.GrantedCapabilities |= UINT64_C(2);
+    Invalid.GrantedCapabilities |= UINT64_C(16);
     Failures += Check(Lui_DeclareCapabilities(Runtime, &Invalid) == 0,
         "unknown capability bit was accepted");
     Failures += Check(Lui_DeclareCapabilities(Runtime, &Declaration) == 1,
@@ -59,12 +59,17 @@ int main(int Count, char** Arguments) {
         "failed initializer was not reported");
     Failures += Check(std::string(Lui_GetExtensionSchemaJson(Runtime)).find("NativeMath") == std::string::npos,
         "failed initializer left a service registered");
+    Failures += Check(std::string(Lui_GetExtensionSchemaJson(Runtime)).find("Completed") == std::string::npos,
+        "failed initializer left a signal registered");
 
     Failures += Check(Lui_LoadExtension(Runtime, Arguments[1]) == 1,
         "compatible extension did not load");
+    Failures += Check(Lui_LoadExtension(Runtime, Arguments[5]) == 1,
+        "original ABI prefix extension did not load");
     const std::string Schema = Lui_GetExtensionSchemaJson(Runtime);
     Failures += Check(Schema.find("NativeMath") != std::string::npos &&
-        Schema.find("Add") != std::string::npos && Schema.find("Echo") != std::string::npos,
+        Schema.find("Add") != std::string::npos && Schema.find("Echo") != std::string::npos &&
+        Schema.find("Completed") != std::string::npos,
         "registered service was absent from runtime reflection");
     Failures += Check(Lui_LoadExtension(Runtime, Arguments[1]) == 0,
         "extension loaded twice under the same identity");
@@ -76,6 +81,7 @@ int main(int Count, char** Arguments) {
         "assert(Service == app:GetService('NativeMath'))\n"
         "assert(Service:Add(2, 3) == 5)\n"
         "assert(Service:Echo('LUI') == 'LUI')\n"
+        "assert(app:GetService('Legacy'):Value() == 123)\n"
         "local Ok, Error = pcall(function() Service:Add('wrong', 3) end)\n"
         "assert(not Ok and string.find(Error, 'Add requires two numbers'))\n"
         "Ok, Error = pcall(function() Service:Add({}, 3) end)\n"
@@ -85,7 +91,7 @@ int main(int Count, char** Arguments) {
     Failures += Check(Lui_RunScript(Runtime, Source, "ExtensionService") == 1,
         Lui_GetLastError(Runtime));
     Failures += Check(Lui_RunScript(Runtime,
-        "local Service = app:GetService('NativeMath'); assert(Service:BeginCompletion()); assert(Service:GetCompletionCount() == 0)",
+        "local Service = app:GetService('NativeMath'); Received = 0; CompletionConnection = Service.Completed:Connect(function(Value) Received = Value end); assert(Service:BeginCompletion()); assert(Service:GetCompletionCount() == 0)",
         "BeginNativeWorker") == 1, "native worker did not begin");
     int Completed = 0;
     for (int Attempt = 0; Attempt < 2000 && !Completed; ++Attempt) {
@@ -94,7 +100,7 @@ int main(int Count, char** Arguments) {
     }
     Failures += Check(Completed == 1, "worker completion was not delivered through the UI pump");
     Failures += Check(Lui_RunScript(Runtime,
-        "local Service = app:GetService('NativeMath'); assert(Service:GetCompletionCount() == 1 and Service:WasCompletionOnOwner())",
+        "local Service = app:GetService('NativeMath'); assert(Service:GetCompletionCount() == 1 and Service:WasCompletionOnOwner() and Received == 1); CompletionConnection:Disconnect()",
         "NativeWorkerResult") == 1, "native completion ran off the runtime owner thread");
     std::ifstream ExampleFile(LUI_NATIVE_EXAMPLE_PATH);
     const std::string Example((std::istreambuf_iterator<char>(ExampleFile)), std::istreambuf_iterator<char>());

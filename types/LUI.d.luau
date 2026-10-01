@@ -8,6 +8,7 @@ export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad"
 export type KeyboardInput = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean }
 export type InputEvent = PointerInput | KeyboardInput
 export type InputSignal = { read Connect: (Self: InputSignal, Callback: (Input: InputEvent) -> ()) -> Connection }
+export type ThemeSignal = { read Connect: (Self: ThemeSignal, Callback: (Theme: string) -> ()) -> Connection }
 
 export type Instance = {
     Name: string,
@@ -95,6 +96,10 @@ export type ProgressBar = GuiObject & {
     Value: number,
 }
 
+export type ImageLabel = GuiObject & {
+    Source: string,
+}
+
 export type UIComponent = Instance & {
 }
 
@@ -129,7 +134,25 @@ export type PlatformService = {
     read Supports: (Self: PlatformService, Capability: string) -> boolean,
 }
 
-export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) }
+export type ThemeService = {
+    read CurrentTheme: string,
+    read ThemeChanged: ThemeSignal,
+}
+
+export type ClipboardService = {
+    read WriteText: (Self: ClipboardService, Text: string) -> boolean,
+    read ReadText: (Self: ClipboardService, Callback: (Text: string?, Error: string?) -> ()) -> (),
+}
+
+export type DialogService = {
+    read OpenFile: (Self: DialogService, Callback: (Path: string?, Error: string?) -> ()) -> (),
+}
+
+export type AssetService = {
+    read Has: (Self: AssetService, Name: string) -> boolean,
+}
+
+export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) }
 
 export type WindowInit = {
     Name: string?,
@@ -237,6 +260,19 @@ export type ProgressBarInit = {
     Value: number?,
 }
 
+export type ImageLabelInit = {
+    Name: string?,
+    Parent: (Window | Frame)?,
+    Visible: boolean?,
+    AccessibilityLabel: string?,
+    AccessibilityDescription: string?,
+    Size: UDim2?,
+    Position: UDim2?,
+    AnchorPoint: Vector2?,
+    LayoutOrder: number?,
+    Source: string?,
+}
+
 export type UIPaddingInit = {
     Name: string?,
     Parent: (Window | Frame)?,
@@ -267,7 +303,7 @@ export type UISizeConstraintInit = {
     MaxSize: Vector2?,
 }
 
-declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "UIPadding" | "UIListLayout" | "UIGridLayout" | "UISizeConstraint", Properties: any) -> (ProgressBar | UIPadding | UIListLayout | UIGridLayout | UISizeConstraint))))) }
+declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "ImageLabel" | "UIPadding" | "UIListLayout" | "UIGridLayout" | "UISizeConstraint", Properties: any) -> (ProgressBar | ImageLabel | UIPadding | UIListLayout | UIGridLayout | UISizeConstraint))))) }
 declare Vector2: { read new: (X: number, Y: number) -> Vector2 }
 declare UDim: { read new: (Scale: number, Offset: number) -> UDim }
 declare UDim2: {

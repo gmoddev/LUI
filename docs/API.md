@@ -153,6 +153,14 @@ Base: `GuiObject`. Creatable: `true`.
 | `Maximum` | `number` | 100 | No |
 | `Value` | `number` | 0 | No |
 
+## ImageLabel
+
+Base: `GuiObject`. Creatable: `true`.
+
+| Property | Type | Default | Read only |
+| --- | --- | --- | --- |
+| `Source` | `string` |  | No |
+
 ## UIComponent
 
 Base: `Instance`. Creatable: `false`.
@@ -202,3 +210,7 @@ Base: `UIComponent`. Creatable: `true`.
 
 - `WindowService`: GetWindows
 - `PlatformService`: Supports
+- `ThemeService`: ThemeChanged
+- `ClipboardService`: WriteText, ReadText
+- `DialogService`: OpenFile
+- `AssetService`: Has

@@ -26,6 +26,42 @@ try
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Extensions\":[\"a.dll\"]}");
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"NativeExtensions\"],\"Extensions\":[\"../a.dll\"]}");
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"../outside.luau\"}");
+    string NestedDirectory = Path.Combine(TempRoot, "ui");
+    Directory.CreateDirectory(NestedDirectory);
+    File.WriteAllText(Path.Combine(NestedDirectory, "main.luau"), "print('nested script')");
+    File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"ui/main.luau\"}");
+    if (!AppManifest.Load(ManifestPath).ScriptPath.EndsWith(
+            Path.Combine("ui", "main.luau"), StringComparison.Ordinal))
+        throw new Exception("[LUI:ManifestTest] Nested script did not resolve");
+    bool LinkCreated = false;
+    try
+    {
+        Directory.CreateSymbolicLink(Path.Combine(TempRoot, "linked-ui"), NestedDirectory);
+        LinkCreated = true;
+    }
+    catch (Exception Error) when (Error is UnauthorizedAccessException or IOException)
+    {
+        Console.WriteLine("[LUI:ManifestTest] Directory symlink creation unavailable");
+    }
+    if (LinkCreated)
+    {
+        Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"linked-ui/main.luau\"}");
+        Directory.Delete(Path.Combine(TempRoot, "linked-ui"));
+    }
+    Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Sandbox\":{\"MaxMemoryBytes\":1024,\"MaxInterrupts\":100}}");
+    Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"NativeExtensions\"],\"Sandbox\":{\"MaxMemoryBytes\":1048576,\"MaxInterrupts\":100}}");
+    File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Sandbox\":{\"MaxMemoryBytes\":1048576,\"MaxInterrupts\":100}}");
+    if (AppManifest.Load(ManifestPath).Sandbox?.MaxInterrupts != 100)
+        throw new Exception("[LUI:ManifestTest] Sandbox manifest did not resolve");
+    File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"Clipboard\",\"Dialogs\"]}");
+    AppManifest Platform = AppManifest.Load(ManifestPath);
+    if (!Platform.AllowClipboard || !Platform.AllowDialogs)
+        throw new Exception("[LUI:ManifestTest] Platform capability manifest did not resolve");
+    File.WriteAllBytes(Path.Combine(TempRoot, "logo.png"), new byte[] { 1, 2, 3 });
+    File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Assets\":[\"logo.png\"]}");
+    if (!AppManifest.Load(ManifestPath).AssetPaths.ContainsKey("logo.png"))
+        throw new Exception("[LUI:ManifestTest] Packaged asset did not resolve");
+    Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Assets\":[\"../logo.png\"]}");
 }
 finally
 {

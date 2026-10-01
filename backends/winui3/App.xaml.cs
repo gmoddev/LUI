@@ -21,7 +21,13 @@ public partial class App : Application
         string[] Arguments = Environment.GetCommandLineArgs();
         LuiDiagnostics.Initialize(Arguments.Skip(1).Any(Argument => Argument == "--diagnostics"),
             Arguments.Skip(1).Any(Argument => Argument == "--native-qualification" || Argument == "--manifest"));
-        UnhandledException += (_, Args) => LuiDiagnostics.Error("Xaml", Args.Exception.ToString());
+        UnhandledException += (_, Args) =>
+        {
+            LuiDiagnostics.Error("Xaml", Args.Exception.ToString());
+            Args.Handled = true;
+            Environment.ExitCode = 1;
+            ExitCleanly();
+        };
         InitializeComponent();
     }
 

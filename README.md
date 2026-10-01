@@ -2,7 +2,7 @@
 
 LUI (Luau UI) is a planned native desktop application framework with Roblox-like Luau semantics. Application code creates `Instance` objects, sets properties, connects signals, and uses services. LUI owns layout, lifecycle, scheduling, and input semantics; platform backends render native controls.
 
-**Status:** Foundations 0 and 1 are complete. The native runtime and WinUI 3 host build, headless semantics pass, and Windows desktop input and control behavior have been qualified. Foundation 2 native integration is in progress. This is not a released package or production SDK.
+**Status:** Foundations 0 and 1 and the defined Windows exit criteria for Foundation 2 are complete. Foundation 2 adds a C++ host facade, native extension methods and signals, capability-gated Windows services, VM sandbox limits, packaged assets, and a self-contained Windows folder verified on the desktop at 100% DPI. This is not a signed release or stable SDK.
 
 ```lua
 local Window = Instance.new("Window", {
@@ -25,7 +25,7 @@ This syntax is implemented in the Foundation 0 proof. See [build and run instruc
 
 The WinUI host supports `--diagnostics` for live traces and a saved crash/error log. Foundation 1 adds native controls, canonical layout, focus, pointer and keyboard input, accessibility metadata, and reflection. See [Foundation 1 run instructions](docs/FOUNDATION-1.md#verify) and the [WinUI desktop qualification cases](tests/winui/README.md).
 
-Foundation 2 begins with an experimental version 1 C extension ABI, host-declared `NativeExtensions` capability, and a WinUI application manifest. The [native service example](examples/native-service.luau) calls a C DLL through `app:GetService`. See the [Foundation 2 build and staging instructions](docs/FOUNDATION-2.md#build-and-verify).
+Foundation 2 uses a version 1 primitive C extension ABI and a host-declared capability manifest. The [native service example](examples/native-service.luau) calls a C DLL through `app:GetService`. The [Foundation 2 guide](docs/FOUNDATION-2.md) covers sandbox limits, clipboard, dialogs, themes, assets, a self-contained Windows release folder, and its exit audit.
 
 The [generated Luau definitions](types/LUI.d.luau) describe the implemented globals, classes, and services. The Windows build validates them with the pinned Luau type checker.
 
@@ -35,7 +35,7 @@ The [generated Luau definitions](types/LUI.d.luau) describe the implemented glob
 - [Architecture summary and boundaries](docs/ARCHITECTURE.md)
 - [Foundation 0 build and scope](docs/FOUNDATION-0.md)
 - [Foundation 1 canonical baseline](docs/FOUNDATION-1.md)
-- [Foundation 2 progress and remaining work](docs/FOUNDATION-2.md)
+- [Foundation 2 features and qualification](docs/FOUNDATION-2.md)
 - [Implemented API reference](docs/API.md)
 - [Public compatibility policy](docs/COMPATIBILITY.md)
 - [Roadmap and milestone acceptance criteria](ROADMAP.md)
@@ -58,7 +58,7 @@ LUI's public semantics are backend independent. The first backend is WinUI 3 on 
 | `tests/` | Runtime, layout, conformance, integration tests |
 | `docs/` | Specification and architecture records |
 
-Implementation currently lives in `runtime/` (including reflection and input), `ui/layout/`, `native/abi/`, `backends/winui3/`, `tests/`, and `examples/`. Other directories mark planned module boundaries.
+Implementation currently lives in `runtime/` (including reflection, input, extensions, and platform services), `ui/layout/`, `native/abi/`, `native/host/`, `backends/winui3/`, `tools/packaging/`, `tests/`, and `examples/`. Other directories mark planned module boundaries.
 
 ## Contributing
 

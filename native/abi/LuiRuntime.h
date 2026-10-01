@@ -28,6 +28,15 @@ typedef struct LuiCapabilityDeclarationV1 {
     uint64_t GrantedCapabilities;
 } LuiCapabilityDeclarationV1;
 
+/* Restricts the Luau VM before any extension or script. Limits apply to each
+   top-level script, signal callback, and scheduled callback dispatch. */
+typedef struct LuiSandboxLimitsV1 {
+    uint32_t StructSize;
+    uint32_t AbiVersion;
+    uint64_t MaxMemoryBytes;
+    uint64_t MaxInterrupts;
+} LuiSandboxLimitsV1;
+
 /* Internal host contract. This is not the stable extension ABI. */
 typedef struct LuiBackendCallbacks {
     void* Context;
@@ -40,14 +49,40 @@ typedef struct LuiBackendCallbacks {
     int (LUI_CALL* Destroy)(void* Context, int Id);
 } LuiBackendCallbacks;
 
+/* Internal platform bridge. Async completions must return to the owner thread. */
+typedef struct LuiPlatformCallbacksV1 {
+    uint32_t StructSize;
+    uint32_t AbiVersion;
+    void* Context;
+    int (LUI_CALL* WriteClipboardText)(void* Context, const char* Text);
+    int (LUI_CALL* ReadClipboardText)(void* Context, uint64_t RequestId);
+    int (LUI_CALL* OpenFile)(void* Context, uint64_t RequestId);
+} LuiPlatformCallbacksV1;
+
 LUI_API LuiRuntime* LUI_CALL Lui_Create(void);
 LUI_API void LUI_CALL Lui_SetBackend(LuiRuntime* Runtime, LuiBackendCallbacks Callbacks);
+LUI_API int LUI_CALL Lui_SetPlatformCallbacks(LuiRuntime* Runtime, const LuiPlatformCallbacksV1* Callbacks);
+/* Result is UTF-8 or null for cancellation. Error is UTF-8 or null on success. */
+LUI_API int LUI_CALL Lui_CompletePlatformRequest(LuiRuntime* Runtime, uint64_t RequestId,
+    const char* Result, const char* Error);
 LUI_API void LUI_CALL Lui_ReportBackendError(LuiRuntime* Runtime, const char* Message);
 LUI_API void LUI_CALL Lui_SetBackendName(LuiRuntime* Runtime, const char* Name);
 LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* Context, LuiLogCallback Callback);
 LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime, const LuiCapabilityDeclarationV1* Declaration);
+LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const LuiSandboxLimitsV1* Limits);
+/* Registers a packaged asset name before scripts; source paths stay in the host. */
+LUI_API int LUI_CALL Lui_RegisterAsset(LuiRuntime* Runtime, const char* Name);
 /* Path must be absolute. Call before the first script; failures leave the runtime usable. */
 LUI_API int LUI_CALL Lui_LoadExtension(LuiRuntime* Runtime, const char* Path);
+/* Host bindings use the same primitive method contract and reflection as extensions.
+   The host owns MethodContext until after Lui_Destroy and registers before scripts. */
+LUI_API int LUI_CALL Lui_RegisterHostMethod(LuiRuntime* Runtime, const char* ServiceName,
+    const char* MethodName, const char* Type, LuiExtensionMethodV1 Method, void* MethodContext);
+LUI_API void LUI_CALL Lui_SetHostError(LuiRuntime* Runtime, const char* Message);
+LUI_API int LUI_CALL Lui_RegisterHostSignal(LuiRuntime* Runtime, const char* ServiceName,
+    const char* SignalName, const char* Type);
+LUI_API int LUI_CALL Lui_EmitHostSignal(LuiRuntime* Runtime, const char* ServiceName,
+    const char* SignalName, const LuiValueV1* Arguments, uint32_t ArgumentCount);
 /* Runtime-specific reflection for dynamically registered extension services. */
 LUI_API const char* LUI_CALL Lui_GetExtensionSchemaJson(LuiRuntime* Runtime);
 LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName);
@@ -65,6 +100,8 @@ LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, in
 /* Phase: 0 pressed, 1 repeated, 2 released. Key is a canonical portable key name. */
 LUI_API int LUI_CALL Lui_KeyInput(LuiRuntime* Runtime, int Id, int Phase, const char* Key);
 LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime);
+/* Host notification. Delivered to ThemeService listeners by the next owner-thread pump. */
+LUI_API int LUI_CALL Lui_SystemThemeChanged(LuiRuntime* Runtime, const char* Theme);
 LUI_API const char* LUI_CALL Lui_GetLastError(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetSchemaJson(void);
 LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime);

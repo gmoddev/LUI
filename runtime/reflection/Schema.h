@@ -49,6 +49,12 @@ struct ServicePropertyDefinition {
     const char* Type;
 };
 
+struct ServiceSignalDefinition {
+    const char* Owner;
+    const char* Name;
+    const char* Type;
+};
+
 const ClassDefinition* FindClass(const std::string& Name);
 const PropertyDefinition* FindProperty(const std::string& ClassName, const std::string& Name);
 const MethodDefinition* FindMethod(const std::string& ClassName, const std::string& Name);

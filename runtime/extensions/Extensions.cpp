@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -73,6 +74,8 @@ void CloseLibrary(void* Library) {
 }
 
 void RefreshSchema(LuiRuntime* Runtime);
+int LUI_EXTENSION_CALL EmitSignal(void* HostContext, const char* ServiceName,
+    const char* SignalName, const LuiValueV1* Arguments, uint32_t ArgumentCount);
 
 struct LibraryGuard {
     void* Library;
@@ -84,6 +87,7 @@ struct LibraryGuard {
 struct InitGuard {
     LuiRuntime* Runtime;
     size_t PreviousCount;
+    size_t PreviousSignalCount;
     LuiExtensionShutdownV1 Shutdown;
     void* Context = nullptr;
     bool InitCalled = false;
@@ -93,6 +97,7 @@ struct InitGuard {
         Runtime->InitializingExtension = false;
         Runtime->InitializingExtensionName.clear();
         Runtime->ExtensionMethods.resize(PreviousCount);
+        Runtime->ExtensionSignals.resize(PreviousSignalCount);
         if (InitCalled) {
             try { Shutdown(Context); }
             catch (...) { try { Report(Runtime, "Error", "[LUI:Extension] shutdown failed after init rejection"); } catch (...) { } }
@@ -117,6 +122,11 @@ int LUI_EXTENSION_CALL RegisterMethod(void* HostContext, const char* ServiceName
             return 0;
         }
     }
+    for (const auto& Signal : Runtime->ExtensionSignals)
+        if (Signal->ServiceName == ServiceName && Signal->Name == MethodName) {
+            Runtime->ExtensionError = "method duplicates a signal";
+            return 0;
+        }
     try {
         auto Method = std::make_unique<ExtensionMethod>();
         Method->ExtensionName = Runtime->InitializingExtensionName;
@@ -129,6 +139,89 @@ int LUI_EXTENSION_CALL RegisterMethod(void* HostContext, const char* ServiceName
         return 1;
     } catch (...) { return 0; }
 }
+
+int LUI_EXTENSION_CALL RegisterSignal(void* HostContext, const char* ServiceName,
+    const char* SignalName, const char* Type) {
+    auto* Runtime = static_cast<LuiRuntime*>(HostContext);
+    if (!CheckOwner(Runtime) || !Runtime->InitializingExtension) return 0;
+    if (!IsIdentifier(ServiceName) || !IsIdentifier(SignalName) || !Type || !*Type ||
+        std::char_traits<char>::length(Type) > 256 || LuiSchema::FindService(ServiceName)) {
+        Runtime->ExtensionError = "invalid or reserved signal registration";
+        return 0;
+    }
+    for (const auto& Method : Runtime->ExtensionMethods)
+        if (Method->ServiceName == ServiceName &&
+            (Method->ExtensionName != Runtime->InitializingExtensionName || Method->Name == SignalName)) {
+            Runtime->ExtensionError = "duplicate service or signal registration";
+            return 0;
+        }
+    for (const auto& Signal : Runtime->ExtensionSignals)
+        if (Signal->ServiceName == ServiceName &&
+            (Signal->ExtensionName != Runtime->InitializingExtensionName || Signal->Name == SignalName)) {
+            Runtime->ExtensionError = "duplicate service or signal registration";
+            return 0;
+        }
+    try {
+        auto Signal = std::make_unique<ExtensionSignal>();
+        Signal->ExtensionName = Runtime->InitializingExtensionName;
+        Signal->ServiceName = ServiceName;
+        Signal->Name = SignalName;
+        Signal->Type = Type;
+        Runtime->ExtensionSignals.push_back(std::move(Signal));
+        return 1;
+    } catch (...) { return 0; }
+}
+
+} // namespace
+
+extern "C" LUI_API int LUI_CALL Lui_RegisterHostMethod(LuiRuntime* Runtime,
+    const char* ServiceName, const char* MethodName, const char* Type,
+    LuiExtensionMethodV1 Method, void* MethodContext) {
+    if (!CheckOwner(Runtime)) return 0;
+    if (Runtime->ApplicationStarted || Runtime->VmDepth || Runtime->BackendDepth ||
+        Runtime->InitializingExtension) return Fail(Runtime, "host methods must register before scripts");
+    Runtime->InitializingExtension = true;
+    Runtime->InitializingExtensionName = "Host";
+    Runtime->ExtensionError.clear();
+    const int Status = RegisterMethod(Runtime, ServiceName, MethodName, Type, Method, MethodContext);
+    Runtime->InitializingExtension = false;
+    Runtime->InitializingExtensionName.clear();
+    if (!Status) return Fail(Runtime, Runtime->ExtensionError.empty() ?
+        "host method registration failed" : Runtime->ExtensionError);
+    RefreshSchema(Runtime);
+    Runtime->LastError.clear();
+    return 1;
+}
+
+extern "C" LUI_API void LUI_CALL Lui_SetHostError(LuiRuntime* Runtime, const char* Message) {
+    if (CheckOwner(Runtime)) Runtime->ExtensionError = Message ? Message : "host method failed";
+}
+
+extern "C" LUI_API int LUI_CALL Lui_RegisterHostSignal(LuiRuntime* Runtime,
+    const char* ServiceName, const char* SignalName, const char* Type) {
+    if (!CheckOwner(Runtime)) return 0;
+    if (Runtime->ApplicationStarted || Runtime->VmDepth || Runtime->BackendDepth ||
+        Runtime->InitializingExtension) return Fail(Runtime, "host signals must register before scripts");
+    Runtime->InitializingExtension = true;
+    Runtime->InitializingExtensionName = "Host";
+    Runtime->ExtensionError.clear();
+    const int Status = RegisterSignal(Runtime, ServiceName, SignalName, Type);
+    Runtime->InitializingExtension = false;
+    Runtime->InitializingExtensionName.clear();
+    if (!Status) return Fail(Runtime, Runtime->ExtensionError.empty() ?
+        "host signal registration failed" : Runtime->ExtensionError);
+    RefreshSchema(Runtime);
+    Runtime->LastError.clear();
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_EmitHostSignal(LuiRuntime* Runtime,
+    const char* ServiceName, const char* SignalName,
+    const LuiValueV1* Arguments, uint32_t ArgumentCount) {
+    return EmitSignal(Runtime, ServiceName, SignalName, Arguments, ArgumentCount);
+}
+
+namespace {
 
 void LUI_EXTENSION_CALL HostLog(void* HostContext, const char* Message) {
     auto* Runtime = static_cast<LuiRuntime*>(HostContext);
@@ -155,6 +248,88 @@ int LUI_EXTENSION_CALL ScheduleUi(void* HostContext, LuiUiCompletionV1 Completio
         Runtime->PendingUiCompletions.push_back({Completion, CompletionContext});
         return 1;
     } catch (...) { return 0; }
+}
+
+int LUI_EXTENSION_CALL EmitSignal(void* HostContext, const char* ServiceName,
+    const char* SignalName, const LuiValueV1* Arguments, uint32_t ArgumentCount) {
+    auto* Runtime = static_cast<LuiRuntime*>(HostContext);
+    if (!CheckOwner(Runtime) || Runtime->VmDepth || Runtime->BackendDepth ||
+        Runtime->ShuttingDown || ArgumentCount > 32 || (ArgumentCount && !Arguments)) return 0;
+    try {
+    ExtensionSignal* Signal = nullptr;
+    for (const auto& Current : Runtime->ExtensionSignals)
+        if (Current->ServiceName == (ServiceName ? ServiceName : "") &&
+            Current->Name == (SignalName ? SignalName : "")) { Signal = Current.get(); break; }
+    if (!Signal) return 0;
+    for (uint32_t Index = 0; Index < ArgumentCount; ++Index) {
+        const LuiValueV1& Value = Arguments[Index];
+        if (Value.StructSize < sizeof(LuiValueV1) || Value.Type > LUI_VALUE_STRING ||
+            (Value.Type == LUI_VALUE_NUMBER && !std::isfinite(Value.Number)) ||
+            (Value.Type == LUI_VALUE_STRING &&
+                (Value.TextLength > 1024 * 1024 || (!Value.Text && Value.TextLength)))) return 0;
+    }
+    const auto Snapshot = Signal->Listeners;
+    for (const auto& Listener : Snapshot) {
+        if (!Listener.Active) continue;
+        auto Current = std::find_if(Signal->Listeners.begin(), Signal->Listeners.end(),
+            [&](const ExtensionSignalListener& Entry) { return Entry.Id == Listener.Id && Entry.Active; });
+        if (Current == Signal->Listeners.end()) continue;
+        lua_getref(Runtime->State, Current->Reference);
+        for (uint32_t Index = 0; Index < ArgumentCount; ++Index) {
+            const LuiValueV1& Value = Arguments[Index];
+            switch (Value.Type) {
+            case LUI_VALUE_NIL: lua_pushnil(Runtime->State); break;
+            case LUI_VALUE_BOOLEAN: lua_pushboolean(Runtime->State, Value.Boolean != 0); break;
+            case LUI_VALUE_NUMBER: lua_pushnumber(Runtime->State, Value.Number); break;
+            case LUI_VALUE_STRING:
+                lua_pushlstring(Runtime->State, Value.Text ? Value.Text : "",
+                    static_cast<size_t>(Value.TextLength));
+                break;
+            }
+        }
+        Runtime->InterruptCount = 0;
+        ++Runtime->VmDepth;
+        if (lua_pcall(Runtime->State, static_cast<int>(ArgumentCount), 0, 0) != LUA_OK) {
+            const char* Message = lua_tostring(Runtime->State, -1);
+            Report(Runtime, "Error", "[LUI:Extension] signal callback failed: " +
+                std::string(Message ? Message : "unknown error"));
+            lua_pop(Runtime->State, 1);
+        }
+        --Runtime->VmDepth;
+    }
+    return 1;
+    } catch (...) { return 0; }
+}
+
+int DisconnectExtensionSignal(lua_State* State) {
+    auto* Runtime = static_cast<LuiRuntime*>(lua_touserdata(State, lua_upvalueindex(1)));
+    auto* Signal = static_cast<ExtensionSignal*>(lua_touserdata(State, lua_upvalueindex(2)));
+    const int Id = static_cast<int>(lua_tointeger(State, lua_upvalueindex(3)));
+    for (auto& Listener : Signal->Listeners) {
+        if (Listener.Id != Id || !Listener.Active) continue;
+        Listener.Active = false;
+        lua_unref(Runtime->State, Listener.Reference);
+        Listener.Reference = 0;
+        break;
+    }
+    return 0;
+}
+
+int ConnectExtensionSignal(lua_State* State) {
+    auto* Runtime = static_cast<LuiRuntime*>(lua_touserdata(State, lua_upvalueindex(1)));
+    auto* Signal = static_cast<ExtensionSignal*>(lua_touserdata(State, lua_upvalueindex(2)));
+    luaL_checktype(State, 2, LUA_TFUNCTION);
+    const int Reference = lua_ref(State, 2);
+    const int Id = Runtime->NextExtensionListenerId++;
+    Signal->Listeners.push_back({Id, Reference, true});
+    lua_newtable(State);
+    lua_pushlightuserdata(State, Runtime);
+    lua_pushlightuserdata(State, Signal);
+    lua_pushinteger(State, Id);
+    lua_pushcclosure(State, DisconnectExtensionSignal, "ExtensionSignal.Disconnect", 3);
+    lua_setfield(State, -2, "Disconnect");
+    lua_setreadonly(State, -1, true);
+    return 1;
 }
 
 int CallMethod(lua_State* State) {
@@ -199,6 +374,11 @@ int CallMethod(lua_State* State) {
         Arguments.push_back(Value);
     }
     auto* Runtime = static_cast<LuiRuntime*>(lua_touserdata(State, lua_upvalueindex(2)));
+    if (Runtime->Sandboxed && Method->ExtensionName == "Host" &&
+        !(Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES)) {
+        luaL_error(State, "host service capability was not granted");
+        return 0;
+    }
     Runtime->ExtensionError.clear();
     LuiValueV1 Result{};
     Result.StructSize = sizeof(Result);
@@ -242,20 +422,32 @@ std::string EscapeJson(const std::string& Value) {
 
 void RefreshSchema(LuiRuntime* Runtime) {
     std::map<std::string, std::map<std::string, std::string>> Services;
+    std::map<std::string, std::map<std::string, std::string>> Signals;
+    std::set<std::string> Names;
     for (const auto& Method : Runtime->ExtensionMethods)
-        Services[Method->ServiceName][Method->Name] = Method->Type;
-    std::string Json = "{\"schemaVersion\":1,\"services\":[";
+        { Services[Method->ServiceName][Method->Name] = Method->Type; Names.insert(Method->ServiceName); }
+    for (const auto& Signal : Runtime->ExtensionSignals)
+        { Signals[Signal->ServiceName][Signal->Name] = Signal->Type; Names.insert(Signal->ServiceName); }
+    std::string Json = "{\"schemaVersion\":2,\"services\":[";
     bool FirstService = true;
-    for (const auto& Service : Services) {
+    for (const auto& Name : Names) {
         if (!FirstService) Json += ',';
         FirstService = false;
-        Json += "{\"name\":\"" + EscapeJson(Service.first) + "\",\"methods\":[";
+        Json += "{\"name\":\"" + EscapeJson(Name) + "\",\"methods\":[";
         bool FirstMethod = true;
-        for (const auto& Method : Service.second) {
+        for (const auto& Method : Services[Name]) {
             if (!FirstMethod) Json += ',';
             FirstMethod = false;
             Json += "{\"name\":\"" + EscapeJson(Method.first) + "\",\"type\":\"" +
                 EscapeJson(Method.second) + "\"}";
+        }
+        Json += "],\"signals\":[";
+        bool FirstSignal = true;
+        for (const auto& Signal : Signals[Name]) {
+            if (!FirstSignal) Json += ',';
+            FirstSignal = false;
+            Json += "{\"name\":\"" + EscapeJson(Signal.first) + "\",\"type\":\"" +
+                EscapeJson(Signal.second) + "\"}";
         }
         Json += "]}";
     }
@@ -267,6 +459,8 @@ void RefreshSchema(LuiRuntime* Runtime) {
 bool HasExtensionService(const LuiRuntime* Runtime, const std::string& Name) {
     for (const auto& Method : Runtime->ExtensionMethods)
         if (Method->ServiceName == Name) return true;
+    for (const auto& Signal : Runtime->ExtensionSignals)
+        if (Signal->ServiceName == Name) return true;
     return false;
 }
 
@@ -279,6 +473,16 @@ int PushExtensionService(lua_State* State, LuiRuntime* Runtime, const std::strin
         lua_pushcclosure(State, CallMethod, Method->Name.c_str(), 2);
         lua_setfield(State, -2, Method->Name.c_str());
     }
+    for (const auto& Signal : Runtime->ExtensionSignals) {
+        if (Signal->ServiceName != Name) continue;
+        lua_newtable(State);
+        lua_pushlightuserdata(State, Runtime);
+        lua_pushlightuserdata(State, Signal.get());
+        lua_pushcclosure(State, ConnectExtensionSignal, "ExtensionSignal.Connect", 2);
+        lua_setfield(State, -2, "Connect");
+        lua_setreadonly(State, -1, true);
+        lua_setfield(State, -2, Signal->Name.c_str());
+    }
     lua_setreadonly(State, -1, true);
     return 1;
 }
@@ -288,10 +492,13 @@ extern "C" LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime,
     if (!CheckOwner(Runtime)) return 0;
     if (!Declaration || Declaration->StructSize < sizeof(LuiCapabilityDeclarationV1) ||
         Declaration->AbiVersion != LUI_EXTENSION_ABI_VERSION ||
-        (Declaration->GrantedCapabilities & ~LUI_CAPABILITY_NATIVE_EXTENSIONS))
+        (Declaration->GrantedCapabilities & ~(LUI_CAPABILITY_NATIVE_EXTENSIONS | LUI_CAPABILITY_HOST_SERVICES |
+            LUI_CAPABILITY_CLIPBOARD | LUI_CAPABILITY_DIALOGS)))
         return Fail(Runtime, "invalid capability declaration");
     if (Runtime->CapabilitiesDeclared || Runtime->ApplicationStarted || !Runtime->Extensions.empty())
         return Fail(Runtime, "capabilities must be declared once before scripts or extensions");
+    if (Runtime->Sandboxed && (Declaration->GrantedCapabilities & LUI_CAPABILITY_NATIVE_EXTENSIONS))
+        return Fail(Runtime, "sandboxed applications cannot load native extensions");
     Runtime->GrantedCapabilities = Declaration->GrantedCapabilities;
     Runtime->CapabilitiesDeclared = true;
     Runtime->LastError.clear();
@@ -334,8 +541,8 @@ extern "C" LUI_API int LUI_CALL Lui_LoadExtension(LuiRuntime* Runtime, const cha
             }
         }
         LuiHostApiV1 Host{sizeof(LuiHostApiV1), LUI_EXTENSION_ABI_VERSION, Runtime,
-            RegisterMethod, HostLog, HostSetError, ScheduleUi};
-        InitGuard Pending{Runtime, Runtime->ExtensionMethods.size(), Shutdown};
+            RegisterMethod, HostLog, HostSetError, ScheduleUi, RegisterSignal, EmitSignal};
+        InitGuard Pending{Runtime, Runtime->ExtensionMethods.size(), Runtime->ExtensionSignals.size(), Shutdown};
         Runtime->InitializingExtension = true;
         Runtime->InitializingExtensionName = Name;
         Runtime->ExtensionError.clear();
@@ -375,6 +582,16 @@ void CloseExtensions(LuiRuntime* Runtime) {
     }
     Runtime->Extensions.clear();
     Runtime->ExtensionMethods.clear();
+    Runtime->ExtensionSignals.clear();
+}
+
+void CloseExtensionListeners(LuiRuntime* Runtime) {
+    for (const auto& Signal : Runtime->ExtensionSignals)
+        for (auto& Listener : Signal->Listeners) {
+            if (Listener.Active) lua_unref(Runtime->State, Listener.Reference);
+            Listener.Active = false;
+            Listener.Reference = 0;
+        }
 }
 
 int DrainUiCompletions(LuiRuntime* Runtime) {

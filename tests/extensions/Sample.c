@@ -12,6 +12,7 @@ typedef struct SampleContext {
     void* HostContext;
     void (LUI_EXTENSION_CALL* SetError)(void*, const char*);
     int (LUI_EXTENSION_CALL* ScheduleUi)(void*, LuiUiCompletionV1, void*);
+    int (LUI_EXTENSION_CALL* EmitSignal)(void*, const char*, const char*, const LuiValueV1*, uint32_t);
     int CompletionCount;
     int CompletedOnOwner;
     int WorkerStarted;
@@ -27,6 +28,13 @@ typedef struct SampleContext {
 static void LUI_EXTENSION_CALL CompleteOnUi(void* CompletionContext) {
     SampleContext* Context = (SampleContext*)CompletionContext;
     Context->CompletionCount++;
+    if (Context->EmitSignal) {
+        LuiValueV1 Value = {0};
+        Value.StructSize = sizeof(Value);
+        Value.Type = LUI_VALUE_NUMBER;
+        Value.Number = Context->CompletionCount;
+        Context->EmitSignal(Context->HostContext, "NativeMath", "Completed", &Value, 1);
+    }
 #if defined(_WIN32)
     Context->CompletedOnOwner = GetCurrentThreadId() == Context->OwnerThreadId;
 #else
@@ -143,6 +151,7 @@ LUI_EXTENSION_EXPORT int LUI_EXTENSION_CALL LuiExtensionInit(const LuiHostApiV1*
     Context->HostContext = Host->HostContext;
     Context->SetError = Host->SetError;
     Context->ScheduleUi = Host->ScheduleUi;
+    Context->EmitSignal = Host->EmitSignal;
 #if defined(_WIN32)
     Context->OwnerThreadId = GetCurrentThreadId();
 #else
@@ -151,6 +160,7 @@ LUI_EXTENSION_EXPORT int LUI_EXTENSION_CALL LuiExtensionInit(const LuiHostApiV1*
     *ExtensionContext = Context;
     if (!Host->RegisterMethod(Host->HostContext, "NativeMath", "Add",
         "(A: number, B: number) -> number", Add, Context)) return 0;
+    if (!Host->RegisterSignal(Host->HostContext, "NativeMath", "Completed", "Signal<number>")) return 0;
 #if defined(LUI_SAMPLE_FAIL_INIT)
     Host->SetError(Host->HostContext, "synthetic init failure");
     return 0;

@@ -22,6 +22,7 @@ $Types.Add('export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" 
 $Types.Add('export type KeyboardInput = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean }')
 $Types.Add('export type InputEvent = PointerInput | KeyboardInput')
 $Types.Add('export type InputSignal = { read Connect: (Self: InputSignal, Callback: (Input: InputEvent) -> ()) -> Connection }')
+$Types.Add('export type ThemeSignal = { read Connect: (Self: ThemeSignal, Callback: (Theme: string) -> ()) -> Connection }')
 $Types.Add('')
 
 $ClassMap = @{}
@@ -51,6 +52,9 @@ foreach ($Service in $Schema.services) {
     }
     foreach ($Method in $Service.methods) {
         $Types.Add("    read $($Method.name): $($Method.type),")
+    }
+    foreach ($Signal in $Service.signals) {
+        $Types.Add("    read $($Signal.name): $($Signal.type),")
     }
     $Types.Add('}')
     $Types.Add('')
@@ -154,8 +158,8 @@ foreach ($Class in $Schema.classes) {
 $Docs.Add('## Services')
 $Docs.Add('')
 foreach ($Service in $Schema.services) {
-    $Names = @($Service.methods | ForEach-Object name) -join ', '
-    $Docs.Add("- ``$($Service.name)``: $Names")
+    $Names = @($Service.methods | ForEach-Object name) + @($Service.signals | ForEach-Object name)
+    $Docs.Add("- ``$($Service.name)``: $($Names -join ', ')")
 }
 
 $Encoding = [System.Text.UTF8Encoding]::new($false)

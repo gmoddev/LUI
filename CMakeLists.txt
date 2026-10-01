@@ -19,7 +19,7 @@ else()
     FetchContent_MakeAvailable(Luau)
 endif()
 
-add_library(LuiRuntime SHARED runtime/LuiRuntime.cpp runtime/input/Input.cpp runtime/extensions/Extensions.cpp runtime/reflection/Schema.cpp ui/layout/Layout.cpp)
+add_library(LuiRuntime SHARED runtime/LuiRuntime.cpp runtime/input/Input.cpp runtime/extensions/Extensions.cpp runtime/platform/Services.cpp runtime/reflection/Schema.cpp ui/layout/Layout.cpp)
 target_include_directories(LuiRuntime PUBLIC native/abi)
 target_link_libraries(LuiRuntime PRIVATE Luau.Compiler Luau.VM)
 target_compile_definitions(LuiRuntime PRIVATE LUI_BUILD)
@@ -83,9 +83,36 @@ if(UNIX)
     target_link_libraries(LuiExtraCapabilityExtension PRIVATE Threads::Threads)
 endif()
 
+add_library(LuiLegacyExtension SHARED tests/extensions/Legacy.c)
+target_include_directories(LuiLegacyExtension PRIVATE native/abi)
+target_compile_definitions(LuiLegacyExtension PRIVATE LUI_EXTENSION_BUILD)
+
 add_executable(LuiExtensionTests tests/extensions/ExtensionTests.cpp)
 target_link_libraries(LuiExtensionTests PRIVATE LuiRuntime)
 target_compile_definitions(LuiExtensionTests PRIVATE LUI_NATIVE_EXAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/native-service.luau")
 add_test(NAME LuiExtensionTests COMMAND LuiExtensionTests
     $<TARGET_FILE:LuiSampleExtension> $<TARGET_FILE:LuiFailedExtension>
-    $<TARGET_FILE:LuiBadAbiExtension> $<TARGET_FILE:LuiExtraCapabilityExtension>)
+    $<TARGET_FILE:LuiBadAbiExtension> $<TARGET_FILE:LuiExtraCapabilityExtension>
+    $<TARGET_FILE:LuiLegacyExtension>)
+
+add_executable(LuiHostTests tests/host/Host.cpp)
+target_include_directories(LuiHostTests PRIVATE native/host)
+target_link_libraries(LuiHostTests PRIVATE LuiRuntime)
+add_test(NAME LuiHostTests COMMAND LuiHostTests)
+
+add_executable(LuiSandboxTests tests/sandbox/Sandbox.cpp)
+target_include_directories(LuiSandboxTests PRIVATE native/host)
+target_link_libraries(LuiSandboxTests PRIVATE LuiRuntime)
+add_test(NAME LuiSandboxTests COMMAND LuiSandboxTests)
+
+add_executable(LuiThemeTests tests/theme/Theme.cpp)
+target_link_libraries(LuiThemeTests PRIVATE LuiRuntime)
+add_test(NAME LuiThemeTests COMMAND LuiThemeTests)
+
+add_executable(LuiPlatformTests tests/platform/Services.cpp)
+target_link_libraries(LuiPlatformTests PRIVATE LuiRuntime)
+add_test(NAME LuiPlatformTests COMMAND LuiPlatformTests)
+
+add_executable(LuiAssetTests tests/assets/Assets.cpp)
+target_link_libraries(LuiAssetTests PRIVATE LuiRuntime)
+add_test(NAME LuiAssetTests COMMAND LuiAssetTests)

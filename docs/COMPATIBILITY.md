@@ -1,6 +1,6 @@
 # Public compatibility policy
 
-LUI is currently experimental at version `0.0.1`. The implemented API is listed in [API.md](API.md); the broader [specification](SPEC.md) is a design target. No stable public package is published. The version 1 extension ABI exists for Foundation 2 development but is still experimental until a stable release.
+LUI is currently experimental at version `0.0.1`. The implemented API is listed in [API.md](API.md); the broader [specification](SPEC.md) is a design target. No stable public package is published. The size-versioned C extension ABI version 1 is the supported primitive method and signal contract for Foundation 2; opaque objects and additional registration kinds will need a separately versioned design.
 
 ## Semantic contract
 
@@ -17,5 +17,7 @@ LUI is currently experimental at version `0.0.1`. The implemented API is listed 
 - Schema version 2 replaces name-only method and signal lists with typed entries and adds parent and container metadata. Consumers of version 1 must update their parser before using version 2.
 - `native/abi/LuiRuntime.h` is the current internal host callback boundary. Its functions are not the separate extension ABI in `LuiExtension.h`.
 - `native/abi/LuiExtension.h` is the separate version 1 C extension contract. The loader requires an exact ABI version and checks structure sizes; an incompatible library is rejected before initialization. Extension-specific services appear in runtime reflection, not the static built-in type/schema files.
+- The version 1 extension host table appends optional signal registration and emission entries. Extension binaries compiled against the original prefix continue to load; code using signal entries must check the host table size. Runtime-specific extension schema version 2 adds `signals` to service metadata.
+- Built-in schema version 2 adds service signals and `ImageLabel`. Consumers that ignore unknown fields remain compatible; strict consumers must accept the new `signals` service member. Built-in generated types describe current services, while manifest grants and backend support determine whether a capability-gated service can be obtained at runtime.
 
 Foundation 1 passed its shared semantic tests and Windows desktop qualification on 2026-10-01. Future backend implementations must pass the same semantic expectations before claiming support.

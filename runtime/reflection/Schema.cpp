@@ -17,6 +17,7 @@ static constexpr ClassDefinition Classes[] = {
     {"CheckBox", "GuiObject", true, true, false, ""},
     {"Slider", "GuiObject", true, true, false, ""},
     {"ProgressBar", "GuiObject", true, true, false, ""},
+    {"ImageLabel", "GuiObject", true, true, false, ""},
     {"UIComponent", "Instance", false, false, false, ""},
     {"UIPadding", "UIComponent", true, false, false, ""},
     {"UIListLayout", "UIComponent", true, false, false, ""},
@@ -84,6 +85,7 @@ static constexpr PropertyDefinition Properties[] = {
     {"ProgressBar", "Minimum", "number", "0", false},
     {"ProgressBar", "Maximum", "number", "100", false},
     {"ProgressBar", "Value", "number", "0", false},
+    {"ImageLabel", "Source", "string", "", false},
     {"UIListLayout", "Padding", "UDim", "0", false},
     {"UIListLayout", "FillDirection", "string", "Vertical", false},
     {"UIGridLayout", "CellSize", "UDim2", "100x100", false},
@@ -99,15 +101,28 @@ static constexpr PropertyDefinition Properties[] = {
 static constexpr ServiceDefinition Services[] = {
     {"WindowService"},
     {"PlatformService"},
+    {"ThemeService"},
+    {"ClipboardService"},
+    {"DialogService"},
+    {"AssetService"},
 };
 
 static constexpr ServiceMethodDefinition ServiceMethods[] = {
     {"WindowService", "GetWindows", "(Self: WindowService) -> {Window}"},
     {"PlatformService", "Supports", "(Self: PlatformService, Capability: string) -> boolean"},
+    {"ClipboardService", "WriteText", "(Self: ClipboardService, Text: string) -> boolean"},
+    {"ClipboardService", "ReadText", "(Self: ClipboardService, Callback: (Text: string?, Error: string?) -> ()) -> ()"},
+    {"DialogService", "OpenFile", "(Self: DialogService, Callback: (Path: string?, Error: string?) -> ()) -> ()"},
+    {"AssetService", "Has", "(Self: AssetService, Name: string) -> boolean"},
 };
 
 static constexpr ServicePropertyDefinition ServiceProperties[] = {
     {"PlatformService", "BackendName", "string"},
+    {"ThemeService", "CurrentTheme", "string"},
+};
+
+static constexpr ServiceSignalDefinition ServiceSignals[] = {
+    {"ThemeService", "ThemeChanged", "ThemeSignal"},
 };
 
 const ClassDefinition* FindClass(const std::string& Name) {
@@ -236,6 +251,7 @@ const std::string& GetJson() {
             Output << "{\"name\":"; AppendQuoted(Output, Service.Name);
             Output << ",\"methods\":"; AppendDefinitions(Output, ServiceMethods, Service.Name);
             Output << ",\"properties\":"; AppendDefinitions(Output, ServiceProperties, Service.Name);
+            Output << ",\"signals\":"; AppendDefinitions(Output, ServiceSignals, Service.Name);
             Output << '}';
         }
         Output << "]}";

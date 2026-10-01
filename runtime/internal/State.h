@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct lua_State;
@@ -65,6 +66,7 @@ struct Node {
     std::string Name;
     std::string Title;
     std::string Text;
+    std::string Source;
     std::string AccessibilityLabel;
     std::string AccessibilityDescription;
     double Minimum = 0;
@@ -135,6 +137,20 @@ struct ExtensionMethod {
     void* Context = nullptr;
 };
 
+struct ExtensionSignalListener {
+    int Id = 0;
+    int Reference = 0;
+    bool Active = true;
+};
+
+struct ExtensionSignal {
+    std::string ExtensionName;
+    std::string ServiceName;
+    std::string Name;
+    std::string Type;
+    std::vector<ExtensionSignalListener> Listeners;
+};
+
 struct LoadedExtension {
     std::string Name;
     void* Library = nullptr;
@@ -147,14 +163,27 @@ struct PendingUiCompletion {
     void* Context = nullptr;
 };
 
+struct PlatformRequestCompletion {
+    uint64_t Id = 0;
+    std::string Result;
+    std::string Error;
+    bool HasResult = false;
+};
+
 struct LuiRuntime {
     lua_State* State = nullptr;
     std::thread::id Owner;
     LuiBackendCallbacks Backend{};
+    LuiPlatformCallbacksV1 Platform{};
     void* LogContext = nullptr;
     LuiLogCallback LogCallback = nullptr;
     std::string BackendName = "headless";
     uint64_t GrantedCapabilities = 0;
+    uint64_t VmBytes = 0;
+    uint64_t VmLimitBytes = 0;
+    uint64_t MaxInterrupts = 0;
+    uint64_t InterruptCount = 0;
+    bool Sandboxed = false;
     bool CapabilitiesDeclared = false;
     bool ApplicationStarted = false;
     bool InitializingExtension = false;
@@ -166,10 +195,19 @@ struct LuiRuntime {
     std::string ExtensionError;
     std::string ExtensionSchemaJson;
     std::vector<std::unique_ptr<ExtensionMethod>> ExtensionMethods;
+    std::vector<std::unique_ptr<ExtensionSignal>> ExtensionSignals;
+    int NextExtensionListenerId = 1;
     std::vector<LoadedExtension> Extensions;
     std::unordered_map<std::string, int> ServiceRefs;
+    std::unordered_set<std::string> Assets;
+    std::unordered_map<uint64_t, int> PlatformRequests;
+    std::deque<PlatformRequestCompletion> PlatformCompletions;
+    uint64_t NextPlatformRequestId = 1;
     std::unordered_map<int, std::unique_ptr<Node>> Nodes;
     std::unordered_map<int, Listener> Listeners;
+    std::vector<int> ThemeListeners;
+    std::string CurrentTheme = "Light";
+    std::string PendingTheme;
     std::vector<ScheduledCall> Tasks;
     std::vector<BackendChange> PendingChanges;
     std::deque<BackendEvent> PendingBackendEvents;

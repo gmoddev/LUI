@@ -416,6 +416,20 @@ AccessibilityService
 
 The root environment should use `app` rather than `game`.
 
+Foundation 2 implements `WindowService`, `PlatformService`, `ThemeService`, `AssetService`, and capability-gated `ClipboardService` and `DialogService`. Clipboard reads and file picking currently use callbacks so the WinUI thread stays responsive:
+
+```lua
+app:GetService("ClipboardService"):ReadText(function(text, error)
+    -- text is nil when the clipboard has no text
+end)
+
+app:GetService("DialogService"):OpenFile(function(path, error)
+    -- path is nil when the picker is cancelled
+end)
+```
+
+The synchronous file-picker form in the later example is a design illustration, not an implemented Foundation 2 call signature.
+
 Example:
 
 ```lua
@@ -741,6 +755,8 @@ HighContrast
 
 Applications may define custom themes above this layer.
 
+The implemented `CurrentTheme` values are `Light`, `Dark`, and `HighContrast`. `System` is a possible future theme selection mode, not a current value. `ThemeChanged` is delivered by the scheduler pump.
+
 ---
 
 # 22. Platform-specific visual capabilities
@@ -966,6 +982,8 @@ This enables extensions written in:
 
 Foundation 2's initial implementation uses [LuiExtension.h](../native/abi/LuiExtension.h) with version 1 query, init, and shutdown exports. The query reports required capabilities before initialization. A host must explicitly grant `NativeExtensions` before loading a DLL; normal Luau code cannot grant it. The current implementation registers primitive service methods and reflects them per runtime. Object handles and additional registration kinds remain design targets.
 
+The version 1 host table now also appends service-signal registration and owner-thread emission entries. Old binaries can use the original table prefix; extensions that use appended entries check `StructSize`. Signals and methods appear in runtime-specific reflection. Version 1 is supported for its documented primitive method and signal subset; object handles, properties, enums, and datatypes require a later versioned design.
+
 ---
 
 # 30. Extension registration
@@ -996,7 +1014,7 @@ The C ABI should be versioned explicitly.
 
 Internal C++ types must never cross the stable ABI boundary.
 
-The version 1 implemented host table currently offers method registration, structured logging, error reporting, and bounded owner-thread completion scheduling. The broader registration list above is future work. Failed initialization rolls back registered methods and unloads the library; compatible extensions load before the first application script.
+The version 1 implemented host table offers method and signal registration, signal emission, structured logging, error reporting, and bounded owner-thread completion scheduling. The broader registration list above is future work. Failed initialization rolls back registered methods and signals and unloads the library; compatible extensions load before the first application script.
 
 ---
 
@@ -1083,6 +1101,8 @@ NativeWindowHandle
 rather than an integer pointer.
 
 The user must deliberately cross the portability boundary.
+
+Foundation 2 provides explicit, capability-gated clipboard and file-picking services rather than a raw native window handle. The handle example above remains a design target for a later typed object ABI with lifetime rules; it is not an implemented Luau API.
 
 ---
 
@@ -1211,6 +1231,8 @@ terminal = "extensions/terminal"
 database = "extensions/database"
 ```
 
+The current WinUI host uses a version 1 JSON manifest while the project-wide TOML format above remains a design target. It declares a script, capability names, DLL filenames, packaged asset filenames, and optional sandbox VM limits. The host validates local paths before loading; ordinary Luau code cannot alter the grant mask.
+
 ---
 
 # 38. Application packaging
@@ -1252,6 +1274,8 @@ The resulting application should not require users to install Luau or LUI separa
 Bytecode is an implementation detail and must not become part of the stable application API.
 
 Future AOT/native compilation could be introduced without changing normal LUI source.
+
+Foundation 2 can publish a self-contained Windows folder with the WinUI host and only the manifest's declared application script, native DLLs, and assets. It does not yet produce a signed installer or use precompiled Luau bytecode.
 
 ---
 
@@ -1473,6 +1497,8 @@ May be restricted through:
 Capabilities must be explicit.
 
 Sandbox guarantees must never depend solely on Luau code convention.
+
+The current sandbox enforces a Luau VM heap limit and per-dispatch interrupt budget from host configuration. It denies native extension loading and gates host bindings on a `HostServices` grant. Clipboard and file-picking services have separate grants. There is no ordinary Luau filesystem, network, process, or shell service yet; any such future service must define its own grant and boundary checks. The VM heap limit is not a process-wide memory ceiling, and a trusted native host is outside the sandbox boundary.
 
 ---
 

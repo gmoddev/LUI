@@ -4,6 +4,7 @@
 #include "internal/Dispatch.h"
 #include "internal/Input.h"
 #include "internal/Extensions.h"
+#include "internal/Platform.h"
 #include "internal/Diagnostics.h"
 #include "../ui/layout/Layout.h"
 
@@ -16,6 +17,8 @@
 #include <climits>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <string>
@@ -30,9 +33,33 @@ static LuiRuntime* GetRuntime(lua_State* State);
 
 struct DepthGuard {
     int& Depth;
-    explicit DepthGuard(int& Value) : Depth(Value) { ++Depth; }
+    explicit DepthGuard(int& Value, LuiRuntime* Runtime = nullptr) : Depth(Value) {
+        if (Runtime && !Depth) Runtime->InterruptCount = 0;
+        ++Depth;
+    }
     ~DepthGuard() { --Depth; }
 };
+
+static void* VmAllocate(void* Context, void* Pointer, size_t OldSize, size_t NewSize) {
+    auto* Runtime = static_cast<LuiRuntime*>(Context);
+    if (!NewSize) {
+        std::free(Pointer);
+        Runtime->VmBytes -= Pointer ? OldSize : 0;
+        return nullptr;
+    }
+    const uint64_t Previous = Pointer ? OldSize : 0;
+    if (NewSize > Previous && Runtime->VmLimitBytes &&
+        NewSize - Previous > Runtime->VmLimitBytes - Runtime->VmBytes) return nullptr;
+    void* Result = std::realloc(Pointer, NewSize);
+    if (Result) Runtime->VmBytes = Runtime->VmBytes - Previous + NewSize;
+    return Result;
+}
+
+static void VmInterrupt(lua_State* State, int) {
+    auto* Runtime = static_cast<LuiRuntime*>(lua_callbacks(State)->userdata);
+    if (Runtime && Runtime->MaxInterrupts && ++Runtime->InterruptCount > Runtime->MaxInterrupts)
+        luaL_error(State, "[LUI:Sandbox] execution limit exceeded");
+}
 
 static void EmitLog(LuiRuntime* Runtime, const char* Level, const std::string& Message) {
     if (Runtime->LogCallback) Runtime->LogCallback(Runtime->LogContext, Level, Message.c_str());
@@ -252,7 +279,7 @@ void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
             lua_setfield(Runtime->State, -2, "IsRepeat");
             lua_setreadonly(Runtime->State, -1, true);
         }
-        DepthGuard Guard(Runtime->VmDepth);
+        DepthGuard Guard(Runtime->VmDepth, Runtime);
         if (lua_pcall(Runtime->State, Pointer || Keyboard ? 1 : 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau callback failed";
@@ -363,7 +390,15 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         SetParent(Runtime, Value, lua_isnil(State, ValueIndex) ? nullptr : GetNode(State, ValueIndex));
         return;
     }
-    if (Key == "Name" || Key == "Title" || Key == "Text" ||
+    if (Key == "Source") {
+        if (Value->ClassName != "ImageLabel" || lua_type(State, ValueIndex) != LUA_TSTRING)
+            luaL_error(State, "Source belongs to ImageLabel and must be string");
+        const std::string Source = lua_tostring(State, ValueIndex);
+        if (!Source.empty() && Runtime->Assets.find(Source) == Runtime->Assets.end())
+            luaL_error(State, "asset '%s' was not declared", Source.c_str());
+        Value->Source = Source;
+        QueueProperty(Runtime, Value, "Source", Source);
+    } else if (Key == "Name" || Key == "Title" || Key == "Text" ||
         Key == "AccessibilityLabel" || Key == "AccessibilityDescription") {
         if (lua_type(State, ValueIndex) != LUA_TSTRING) luaL_error(State, "%s must be string", Name);
         const char* Text = lua_tostring(State, ValueIndex);
@@ -531,6 +566,7 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->Name = Source->Name;
     Value->Title = Source->Title;
     Value->Text = Source->Text;
+    Value->Source = Source->Source;
     Value->AccessibilityLabel = Source->AccessibilityLabel;
     Value->AccessibilityDescription = Source->AccessibilityDescription;
     Value->Visible = Source->Visible;
@@ -575,6 +611,8 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     if (Parent) SetParent(Runtime, Copy, Parent);
     if (LuiSchema::IsNative(Copy->ClassName)) {
         if (Copy->ClassName == "Window") QueueProperty(Runtime, Copy, "Title", Copy->Title);
+        if (Copy->ClassName == "ImageLabel" && !Copy->Source.empty())
+            QueueProperty(Runtime, Copy, "Source", Copy->Source);
         if (Copy->ClassName == "TextLabel" || Copy->ClassName == "TextButton" ||
             Copy->ClassName == "TextBox" || Copy->ClassName == "CheckBox")
             QueueProperty(Runtime, Copy, "Text", Copy->Text);
@@ -640,11 +678,15 @@ static int SignalConnect(lua_State* State) {
     luaL_checktype(State, 2, LUA_TFUNCTION);
     auto* Runtime = GetRuntime(State);
     auto Found = Runtime->Nodes.find(Signal->NodeId);
-    if (Found == Runtime->Nodes.end() || Found->second->Destroyed) luaL_error(State, "Signal owner is destroyed");
+    if (Signal->NodeId != 0 && (Found == Runtime->Nodes.end() || Found->second->Destroyed))
+        luaL_error(State, "Signal owner is destroyed");
+    if (Signal->NodeId == 0 && std::string(Signal->Name) != "ThemeChanged")
+        luaL_error(State, "unknown service signal");
     int Reference = lua_ref(State, 2);
     int Id = Runtime->NextListenerId++;
     Runtime->Listeners.emplace(Id, Listener{Id, Signal->NodeId, Reference, Signal->Name, true});
-    Found->second->Listeners.push_back(Id);
+    if (Signal->NodeId == 0) Runtime->ThemeListeners.push_back(Id);
+    else Found->second->Listeners.push_back(Id);
     *static_cast<int*>(lua_newuserdata(State, sizeof(int))) = Id;
     lua_getfield(State, LUA_REGISTRYINDEX, "LuiConnectionMeta");
     lua_setmetatable(State, -2);
@@ -690,6 +732,7 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "Text") lua_pushstring(State, Value->Text.c_str());
     else if (Key == "AccessibilityLabel") lua_pushstring(State, Value->AccessibilityLabel.c_str());
     else if (Key == "AccessibilityDescription") lua_pushstring(State, Value->AccessibilityDescription.c_str());
+    else if (Key == "Source") lua_pushstring(State, Value->Source.c_str());
     else if (Key == "Visible") lua_pushboolean(State, Value->Visible);
     else if (Key == "Enabled") lua_pushboolean(State, Value->Enabled);
     else if (Key == "Checked") lua_pushboolean(State, Value->Checked);
@@ -973,9 +1016,61 @@ static int WindowServiceGetWindows(lua_State* State) {
 static int PlatformServiceSupports(lua_State* State) {
     const char* Capability = luaL_checkstring(State, 2);
     auto* Runtime = GetRuntime(State);
-    lua_pushboolean(State, std::string(Capability) == "NativeExtensions" &&
-        (Runtime->GrantedCapabilities & LUI_CAPABILITY_NATIVE_EXTENSIONS) != 0);
+    const std::string Name = Capability;
+    lua_pushboolean(State, (Name == "NativeExtensions" &&
+        (Runtime->GrantedCapabilities & LUI_CAPABILITY_NATIVE_EXTENSIONS) != 0) ||
+        (Name == "HostServices" &&
+        (!Runtime->Sandboxed || (Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES) != 0)) ||
+        (Name == "Clipboard" && PlatformServiceAvailable(Runtime, "ClipboardService")) ||
+        (Name == "Dialogs" && PlatformServiceAvailable(Runtime, "DialogService")));
     return 1;
+}
+
+static int ThemeServiceIndex(lua_State* State) {
+    const std::string Name = luaL_checkstring(State, 2);
+    auto* Runtime = GetRuntime(State);
+    if (Name == "CurrentTheme") lua_pushstring(State, Runtime->CurrentTheme.c_str());
+    else if (Name == "ThemeChanged") {
+        *static_cast<SignalValue*>(lua_newuserdata(State, sizeof(SignalValue))) = {0, "ThemeChanged"};
+        lua_getfield(State, LUA_REGISTRYINDEX, "LuiSignalMeta");
+        lua_setmetatable(State, -2);
+    } else lua_pushnil(State);
+    return 1;
+}
+
+static int AssetServiceHas(lua_State* State) {
+    const char* Name = luaL_checkstring(State, 2);
+    auto* Runtime = GetRuntime(State);
+    lua_pushboolean(State, Runtime->Assets.find(Name) != Runtime->Assets.end());
+    return 1;
+}
+
+static int ThemeServiceNewIndex(lua_State* State) {
+    luaL_error(State, "ThemeService is read-only");
+    return 0;
+}
+
+static void DeliverTheme(LuiRuntime* Runtime) {
+    if (Runtime->PendingTheme.empty() || Runtime->CurrentTheme == Runtime->PendingTheme) {
+        Runtime->PendingTheme.clear();
+        return;
+    }
+    Runtime->CurrentTheme.swap(Runtime->PendingTheme);
+    Runtime->PendingTheme.clear();
+    const std::vector<int> Snapshot = Runtime->ThemeListeners;
+    for (int Id : Snapshot) {
+        auto Found = Runtime->Listeners.find(Id);
+        if (Found == Runtime->Listeners.end() || !Found->second.Active) continue;
+        lua_getref(Runtime->State, Found->second.Reference);
+        lua_pushstring(Runtime->State, Runtime->CurrentTheme.c_str());
+        DepthGuard Guard(Runtime->VmDepth, Runtime);
+        if (lua_pcall(Runtime->State, 1, 0, 0) != LUA_OK) {
+            const char* Message = lua_tostring(Runtime->State, -1);
+            Runtime->LastError = Message ? Message : "theme callback failed";
+            EmitLog(Runtime, "Error", "Theme: " + Runtime->LastError);
+            lua_pop(Runtime->State, 1);
+        }
+    }
 }
 
 static int AppGetService(lua_State* State) {
@@ -983,23 +1078,38 @@ static int AppGetService(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     if (!LuiSchema::FindService(Name) && !HasExtensionService(Runtime, Name))
         luaL_error(State, "unknown service '%s'", Name.c_str());
+    if (Runtime->Sandboxed && HasExtensionService(Runtime, Name) &&
+        !(Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES))
+        luaL_error(State, "host service capability was not granted");
+    if ((Name == "ClipboardService" || Name == "DialogService") &&
+        !PlatformServiceAvailable(Runtime, Name))
+        luaL_error(State, "%s capability was not granted or backend is unavailable", Name.c_str());
     auto Found = Runtime->ServiceRefs.find(Name);
     if (Found != Runtime->ServiceRefs.end()) {
         lua_getref(State, Found->second);
         return 1;
     }
     if (HasExtensionService(Runtime, Name)) PushExtensionService(State, Runtime, Name);
-    else lua_newtable(State);
+    else if (Name == "ClipboardService" || Name == "DialogService")
+        PushPlatformService(State, Runtime, Name);
+    else if (Name == "ThemeService") {
+        lua_newuserdata(State, 1);
+        lua_getfield(State, LUA_REGISTRYINDEX, "LuiThemeServiceMeta");
+        lua_setmetatable(State, -2);
+    } else lua_newtable(State);
     if (Name == "WindowService") {
         lua_pushcfunction(State, WindowServiceGetWindows, "WindowService.GetWindows");
         lua_setfield(State, -2, "GetWindows");
+    } else if (Name == "AssetService") {
+        lua_pushcfunction(State, AssetServiceHas, "AssetService.Has");
+        lua_setfield(State, -2, "Has");
     } else if (Name == "PlatformService") {
         lua_pushcfunction(State, PlatformServiceSupports, "PlatformService.Supports");
         lua_setfield(State, -2, "Supports");
         lua_pushstring(State, Runtime->BackendName.c_str());
         lua_setfield(State, -2, "BackendName");
     }
-    lua_setreadonly(State, -1, true);
+    if (Name != "ThemeService") lua_setreadonly(State, -1, true);
     Runtime->ServiceRefs.emplace(Name, lua_ref(State, -1));
     return 1;
 }
@@ -1010,6 +1120,7 @@ static void RegisterGlobals(lua_State* State) {
     RegisterMeta(State, "LuiNodeMeta", NodeIndex, NodeNewIndex);
     RegisterMeta(State, "LuiSignalMeta", SignalIndex);
     RegisterMeta(State, "LuiConnectionMeta", ConnectionIndex);
+    RegisterMeta(State, "LuiThemeServiceMeta", ThemeServiceIndex, ThemeServiceNewIndex);
     lua_newtable(State);
     lua_pushcfunction(State, InstanceNew, "Instance.new");
     lua_setfield(State, -2, "new");
@@ -1060,9 +1171,11 @@ bool CheckOwner(LuiRuntime* Runtime) {
 extern "C" LUI_API LuiRuntime* LUI_CALL Lui_Create(void) {
     auto* Runtime = new LuiRuntime();
     Runtime->Owner = std::this_thread::get_id();
-    Runtime->State = luaL_newstate();
+    Runtime->State = lua_newstate(VmAllocate, Runtime);
     if (!Runtime->State) { delete Runtime; return nullptr; }
     luaL_openlibs(Runtime->State);
+    lua_callbacks(Runtime->State)->userdata = Runtime;
+    lua_callbacks(Runtime->State)->interrupt = VmInterrupt;
     lua_pushlightuserdata(Runtime->State, Runtime);
     lua_setfield(Runtime->State, LUA_REGISTRYINDEX, "LuiRuntime");
     RegisterGlobals(Runtime->State);
@@ -1092,9 +1205,60 @@ extern "C" LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* C
     Runtime->LogCallback = Callback;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const LuiSandboxLimitsV1* Limits) {
+    if (!CheckOwner(Runtime)) return 0;
+    if (!Limits || Limits->StructSize < sizeof(LuiSandboxLimitsV1) ||
+        Limits->AbiVersion != LUI_EXTENSION_ABI_VERSION ||
+        Limits->MaxMemoryBytes < 1024 * 1024 || !Limits->MaxInterrupts ||
+        Limits->MaxMemoryBytes < Runtime->VmBytes || Runtime->Sandboxed ||
+        Runtime->ApplicationStarted || !Runtime->Extensions.empty() ||
+        (Runtime->GrantedCapabilities & LUI_CAPABILITY_NATIVE_EXTENSIONS)) {
+        Runtime->LastError = "[LUI:Sandbox] invalid or late sandbox configuration";
+        return 0;
+    }
+    luaL_sandbox(Runtime->State);
+    luaL_sandboxthread(Runtime->State);
+    if (Runtime->VmBytes > Limits->MaxMemoryBytes) {
+        Runtime->LastError = "[LUI:Sandbox] memory limit is below VM startup size";
+        return 0;
+    }
+    Runtime->VmLimitBytes = Limits->MaxMemoryBytes;
+    Runtime->MaxInterrupts = Limits->MaxInterrupts;
+    Runtime->Sandboxed = true;
+    Runtime->LastError.clear();
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_RegisterAsset(LuiRuntime* Runtime, const char* Name) {
+    if (!CheckOwner(Runtime)) return 0;
+    if (Runtime->ApplicationStarted || !Name || !*Name || std::strlen(Name) > 128 ||
+        Runtime->Assets.size() >= 4096) {
+        Runtime->LastError = "[LUI:Asset] invalid or late asset registration";
+        return 0;
+    }
+    for (const char* Cursor = Name; *Cursor; ++Cursor) {
+        if (!((*Cursor >= 'a' && *Cursor <= 'z') || (*Cursor >= 'A' && *Cursor <= 'Z') ||
+            (*Cursor >= '0' && *Cursor <= '9') || *Cursor == '.' || *Cursor == '_' || *Cursor == '-')) {
+            Runtime->LastError = "[LUI:Asset] asset name must be a filename";
+            return 0;
+        }
+    }
+    if (std::string(Name) == "." || std::string(Name) == ".." || !Runtime->Assets.insert(Name).second) {
+        Runtime->LastError = "[LUI:Asset] asset name is duplicated or reserved";
+        return 0;
+    }
+    Runtime->LastError.clear();
+    return 1;
+}
+
 extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName) {
     if (!CheckOwner(Runtime) || !Source) return 0;
     if (Runtime->BackendFailed) return 0;
+    if (Runtime->Sandboxed && std::strlen(Source) > Runtime->VmLimitBytes) {
+        Runtime->LastError = "[LUI:Sandbox] script source exceeds memory limit";
+        EmitLog(Runtime, "Error", Runtime->LastError);
+        return 0;
+    }
     if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) {
         Runtime->LastError = "[LUI:Scheduler] Cannot run a script during an active dispatch";
         EmitLog(Runtime, "Error", Runtime->LastError);
@@ -1105,7 +1269,7 @@ extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* S
         const std::string Bytecode = Luau::compile(Source);
         int Status = luau_load(Runtime->State, ChunkName ? ChunkName : "LUI", Bytecode.data(), Bytecode.size(), 0);
         if (Status == LUA_OK) {
-            DepthGuard Guard(Runtime->VmDepth);
+            DepthGuard Guard(Runtime->VmDepth, Runtime);
             Status = lua_pcall(Runtime->State, 0, 0, 0);
         }
         if (Runtime->BackendFailed) {
@@ -1265,7 +1429,8 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         EmitLog(Runtime, "Error", Runtime->LastError);
         return 0;
     }
-    int Count = DrainUiCompletions(Runtime);
+    DeliverTheme(Runtime);
+    int Count = DrainUiCompletions(Runtime) + DrainPlatformRequests(Runtime);
     const auto Now = std::chrono::steady_clock::now();
     std::vector<ScheduledCall> Pending;
     Pending.swap(Runtime->Tasks);
@@ -1273,7 +1438,7 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         if (Runtime->BackendFailed) break;
         if (Call.Due > Now) { Runtime->Tasks.push_back(Call); continue; }
         lua_getref(Runtime->State, Call.Reference);
-        DepthGuard Guard(Runtime->VmDepth);
+        DepthGuard Guard(Runtime->VmDepth, Runtime);
         if (lua_pcall(Runtime->State, 0, 0, 0) != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "scheduled callback failed";
@@ -1285,6 +1450,21 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
     }
     FlushLayout(Runtime);
     return Runtime->BackendFailed ? 0 : Count;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_SystemThemeChanged(LuiRuntime* Runtime, const char* Theme) {
+    if (!CheckOwner(Runtime) || !Theme || Runtime->ShuttingDown) return 0;
+    const std::string Value = Theme;
+    if (Value != "Light" && Value != "Dark" && Value != "HighContrast") {
+        Runtime->LastError = "[LUI:Theme] invalid system theme";
+        return 0;
+    }
+    if (!Runtime->ApplicationStarted) {
+        Runtime->CurrentTheme = Value;
+        return 1;
+    }
+    Runtime->PendingTheme = Value;
+    return 1;
 }
 
 extern "C" LUI_API const char* LUI_CALL Lui_GetLastError(LuiRuntime* Runtime) {
@@ -1312,6 +1492,9 @@ extern "C" LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime) {
     }
     for (auto& Pair : Runtime->Nodes) if (!Pair.second->Destroyed) DestroyNode(Runtime, Pair.second.get());
     for (const auto& Call : Runtime->Tasks) lua_unref(Runtime->State, Call.Reference);
+    ClosePlatformRequests(Runtime);
+    for (int Id : Runtime->ThemeListeners) Disconnect(Runtime, Id);
+    CloseExtensionListeners(Runtime);
     for (const auto& Pair : Runtime->ServiceRefs) lua_unref(Runtime->State, Pair.second);
     lua_close(Runtime->State);
     CloseExtensions(Runtime);

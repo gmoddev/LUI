@@ -25,6 +25,9 @@ extern "C" {
 
 #define LUI_EXTENSION_ABI_VERSION 1u
 #define LUI_CAPABILITY_NATIVE_EXTENSIONS UINT64_C(1)
+#define LUI_CAPABILITY_HOST_SERVICES UINT64_C(2)
+#define LUI_CAPABILITY_CLIPBOARD UINT64_C(4)
+#define LUI_CAPABILITY_DIALOGS UINT64_C(8)
 
 typedef enum LuiValueTypeV1 {
     LUI_VALUE_NIL = 0,
@@ -60,6 +63,12 @@ typedef struct LuiHostApiV1 {
     /* Callable from a worker thread. The completion runs in Lui_Pump on the owner thread. */
     int (LUI_EXTENSION_CALL* ScheduleUi)(void* HostContext, LuiUiCompletionV1 Completion,
         void* CompletionContext);
+    /* Additive v1 entries: test StructSize before using from a preexisting host. */
+    int (LUI_EXTENSION_CALL* RegisterSignal)(void* HostContext, const char* ServiceName,
+        const char* SignalName, const char* Type);
+    /* Owner thread only; worker threads use ScheduleUi first. */
+    int (LUI_EXTENSION_CALL* EmitSignal)(void* HostContext, const char* ServiceName,
+        const char* SignalName, const LuiValueV1* Arguments, uint32_t ArgumentCount);
 } LuiHostApiV1;
 
 typedef struct LuiExtensionInfoV1 {

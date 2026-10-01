@@ -34,7 +34,7 @@ if ($LuauSourceDir) {
 
 & $Cmake @Options
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CMake configure failed' }
-& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension --parallel 8
+& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension --parallel 8
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native build failed' }
 & (Join-Path $Build "$Configuration/LuiHeadlessTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Headless tests failed' }
@@ -46,13 +46,26 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Conformance tests failed' }
     (Join-Path $Build "$Configuration/LuiSampleExtension.dll") `
     (Join-Path $Build "$Configuration/LuiFailedExtension.dll") `
     (Join-Path $Build "$Configuration/LuiBadAbiExtension.dll") `
-    (Join-Path $Build "$Configuration/LuiExtraCapabilityExtension.dll")
+    (Join-Path $Build "$Configuration/LuiExtraCapabilityExtension.dll") `
+    (Join-Path $Build "$Configuration/LuiLegacyExtension.dll")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Extension ABI tests failed' }
+& (Join-Path $Build "$Configuration/LuiHostTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] C++ host tests failed' }
+& (Join-Path $Build "$Configuration/LuiSandboxTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Sandbox tests failed' }
+& (Join-Path $Build "$Configuration/LuiThemeTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Theme tests failed' }
+& (Join-Path $Build "$Configuration/LuiPlatformTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Platform service tests failed' }
+& (Join-Path $Build "$Configuration/LuiAssetTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Asset tests failed' }
 & (Join-Path $Root 'scripts/Generate-Types.ps1') -SchemaDump (Join-Path $Build "$Configuration/LuiSchemaDump.exe") -Root $Root
 & (Join-Path $Build "$Configuration/LuiTypeTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Generated type validation failed' }
 & dotnet run --project (Join-Path $Root 'tests/manifest/ManifestTests.csproj') --configuration $Configuration -- $Root
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Application manifest validation failed' }
+& dotnet run --project (Join-Path $Root 'tests/packaging/PackagingTests.csproj') --configuration $Configuration
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Package staging tests failed' }
 
 $Dll = Join-Path $Build "$Configuration/LuiRuntime.dll"
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"

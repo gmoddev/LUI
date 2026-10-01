@@ -3,9 +3,13 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.UI.ViewManagement;
 
 namespace Lui.WinUI;
 
@@ -32,17 +36,24 @@ internal sealed class WinUIBackend : IDisposable
     }
 
     private readonly Dictionary<int, View> Views = new();
+    private readonly Dictionary<string, string> AssetPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Native.CreateCallback CreateCallback;
     private readonly Native.PropertyCallback PropertyCallback;
     private readonly Native.ParentCallback ParentCallback;
     private readonly Native.ArrangeCallback ArrangeCallback;
     private readonly Native.DestroyCallback DestroyCallback;
     private readonly Native.LogCallback LogCallback;
+    private readonly Native.WriteClipboardCallback WriteClipboardCallback;
+    private readonly Native.StartPlatformRequestCallback ReadClipboardCallback;
+    private readonly Native.StartPlatformRequestCallback OpenFileCallback;
     private readonly IntPtr Runtime;
     private string LastReportedError = string.Empty;
     private int FocusedViewId;
     private bool IsDisposed;
     private bool IsDisposing;
+    private readonly AccessibilitySettings Accessibility = new();
+    private readonly UISettings UiSettings = new();
+    private string LastTheme = string.Empty;
 
     public event Action? AllWindowsClosed;
 
@@ -56,6 +67,9 @@ internal sealed class WinUIBackend : IDisposable
         ArrangeCallback = OnArrange;
         DestroyCallback = OnDestroy;
         LogCallback = OnNativeLog;
+        WriteClipboardCallback = OnWriteClipboardText;
+        ReadClipboardCallback = OnReadClipboardText;
+        OpenFileCallback = OnOpenFile;
         Runtime = Native.Lui_Create();
         if (Runtime == IntPtr.Zero) throw new InvalidOperationException("Could not initialize Luau");
         Native.Lui_SetLogCallback(Runtime, IntPtr.Zero, LogCallback);
@@ -68,6 +82,17 @@ internal sealed class WinUIBackend : IDisposable
             Arrange = ArrangeCallback,
             Destroy = DestroyCallback,
         });
+        Native.PlatformCallbacks Platform = new()
+        {
+            StructSize = (uint)Marshal.SizeOf<Native.PlatformCallbacks>(),
+            AbiVersion = 1,
+            WriteClipboardText = WriteClipboardCallback,
+            ReadClipboardText = ReadClipboardCallback,
+            OpenFile = OpenFileCallback,
+        };
+        if (Native.Lui_SetPlatformCallbacks(Runtime, ref Platform) != 1)
+            throw new InvalidOperationException("Platform callbacks failed: " + LastError);
+        CheckTheme();
     }
 
     public void Dispose()
@@ -85,14 +110,35 @@ internal sealed class WinUIBackend : IDisposable
         {
             StructSize = (uint)Marshal.SizeOf<Native.CapabilityDeclaration>(),
             AbiVersion = 1,
-            GrantedCapabilities = Manifest.AllowNativeExtensions ? 1UL : 0UL,
+            GrantedCapabilities = (Manifest.AllowNativeExtensions ? 1UL : 0UL) |
+                (Manifest.AllowHostServices ? 2UL : 0UL) |
+                (Manifest.AllowClipboard ? 4UL : 0UL) |
+                (Manifest.AllowDialogs ? 8UL : 0UL),
         };
         if (Native.Lui_DeclareCapabilities(Runtime, ref Declaration) != 1)
             throw new InvalidOperationException("Capability declaration failed: " + LastError);
+        if (Manifest.Sandbox is not null)
+        {
+            Native.SandboxLimits Limits = new()
+            {
+                StructSize = (uint)Marshal.SizeOf<Native.SandboxLimits>(),
+                AbiVersion = 1,
+                MaxMemoryBytes = Manifest.Sandbox.MaxMemoryBytes,
+                MaxInterrupts = Manifest.Sandbox.MaxInterrupts,
+            };
+            if (Native.Lui_ConfigureSandbox(Runtime, ref Limits) != 1)
+                throw new InvalidOperationException("Sandbox configuration failed: " + LastError);
+        }
         foreach (string ExtensionPath in Manifest.ExtensionPaths)
         {
             if (Native.Lui_LoadExtension(Runtime, ExtensionPath) != 1)
                 throw new InvalidOperationException("Extension load failed: " + LastError);
+        }
+        foreach (KeyValuePair<string, string> Asset in Manifest.AssetPaths)
+        {
+            if (Native.Lui_RegisterAsset(Runtime, Asset.Key) != 1)
+                throw new InvalidOperationException("Asset registration failed: " + LastError);
+            AssetPaths.Add(Asset.Key, Asset.Value);
         }
     }
 
@@ -113,6 +159,7 @@ internal sealed class WinUIBackend : IDisposable
     {
         try
         {
+            LuiDiagnostics.Log("Qualification", "Checking native views");
             View Find(string Label) => Views.Values.Single(View => View.Element is not null &&
                 AutomationProperties.GetName(View.Element) == Label);
             static void Require(bool Condition, string Message)
@@ -144,6 +191,7 @@ internal sealed class WinUIBackend : IDisposable
             Require(NativeInput.Element is FrameworkElement Arranged && Arranged.Width == 240 && Arranged.Height == 36,
                 "resolved native bounds mismatch");
 
+            LuiDiagnostics.Log("Qualification", "Waiting for loaded controls");
             TextBox NativeTextBox = (TextBox)NativeInput.Element!;
             if (!NativeTextBox.IsLoaded)
             {
@@ -151,6 +199,17 @@ internal sealed class WinUIBackend : IDisposable
                 NativeTextBox.Loaded += (_, _) => Loaded.TrySetResult(true);
                 await Loaded.Task.WaitAsync(TimeSpan.FromSeconds(5));
             }
+            LuiDiagnostics.Log("Qualification", "Checking accessibility peer");
+            AutomationPeer? Peer = FrameworkElementAutomationPeer.CreatePeerForElement(NativeTextBox);
+            Require(Peer is not null && Peer.GetName() == "Qualification input" &&
+                Peer.GetHelpText() == "Native help text", "native accessibility peer mismatch");
+            Require(NativeTextBox.XamlRoot is not null &&
+                NativeTextBox.XamlRoot.RasterizationScale > 0 &&
+                Math.Abs(NativeTextBox.ActualWidth - 240) < 1 &&
+                Math.Abs(NativeTextBox.ActualHeight - 36) < 1,
+                "logical bounds or DPI mapping mismatch");
+            LuiDiagnostics.Log("Qualification", $"DPI scale {NativeTextBox.XamlRoot!.RasterizationScale}; theme {LastTheme}");
+            LuiDiagnostics.Log("Qualification", "Checking native event round trip");
             TaskCompletionSource<bool> Edited = new(TaskCreationOptions.RunContinuationsAsynchronously);
             NativeTextBox.TextChanged += (_, _) =>
             {
@@ -161,6 +220,9 @@ internal sealed class WinUIBackend : IDisposable
             ((Slider)NativeSlider.Element!).Value = 17;
             await Edited.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Pump();
+            Require(Native.Lui_RunScript(Runtime,
+                $"assert(app:GetService('ThemeService').CurrentTheme == '{LastTheme}')",
+                "NativeThemeCheck") == 1, "system theme did not reach Luau");
             Require(Native.Lui_RunScript(Runtime,
                 "assert(Input.Text == 'native edit', 'text round trip'); assert(Slider.Value == 17, 'slider round trip'); assert(Check.Checked and not Check.Enabled, 'checkbox mapping')",
                 "NativeMappingCheck") == 1, "native event did not reach Luau: " + LastError);
@@ -176,6 +238,7 @@ internal sealed class WinUIBackend : IDisposable
 
     public void Pump()
     {
+        CheckTheme();
         int Completed = Native.Lui_Pump(Runtime);
         if (Completed > 0) LuiDiagnostics.Log("Scheduler", $"Completed {Completed} callback(s)");
         string Error = LastError;
@@ -184,6 +247,90 @@ internal sealed class WinUIBackend : IDisposable
             LastReportedError = Error;
             LuiDiagnostics.Error("Runtime", Error);
         }
+    }
+
+    private void CheckTheme()
+    {
+        try
+        {
+            var Background = UiSettings.GetColorValue(UIColorType.Background);
+            string Theme = Accessibility.HighContrast ? "HighContrast" :
+                Background.R + Background.G + Background.B < 384 ? "Dark" : "Light";
+            if (Theme == LastTheme) return;
+            if (Native.Lui_SystemThemeChanged(Runtime, Theme) != 1)
+                throw new InvalidOperationException(LastError);
+            LastTheme = Theme;
+            LuiDiagnostics.Log("Theme", "System theme: " + Theme);
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Theme", "Detection failed: " + Error); }
+    }
+
+    private int OnWriteClipboardText(IntPtr Context, string Text)
+    {
+        try
+        {
+            DataPackage Package = new();
+            Package.SetText(Text);
+            Clipboard.SetContent(Package);
+            return 1;
+        }
+        catch (Exception Error)
+        {
+            LuiDiagnostics.Error("Clipboard", "Write failed: " + Error);
+            return 0;
+        }
+    }
+
+    private int OnReadClipboardText(IntPtr Context, ulong RequestId)
+    {
+        _ = ReadClipboardTextAsync(RequestId);
+        return 1;
+    }
+
+    private async Task ReadClipboardTextAsync(ulong RequestId)
+    {
+        try
+        {
+            DataPackageView Content = Clipboard.GetContent();
+            string? Text = Content.Contains(StandardDataFormats.Text) ? await Content.GetTextAsync() : null;
+            CompletePlatformRequest(RequestId, Text, null);
+        }
+        catch (Exception Error)
+        {
+            LuiDiagnostics.Error("Clipboard", "Read failed: " + Error);
+            CompletePlatformRequest(RequestId, null, "Clipboard read failed");
+        }
+    }
+
+    private int OnOpenFile(IntPtr Context, ulong RequestId)
+    {
+        Microsoft.UI.Xaml.Window? Window = Views.Values.FirstOrDefault(View =>
+            View.IsAlive && View.Window is not null)?.Window;
+        if (Window is null) return 0;
+        _ = OpenFileAsync(Window, RequestId);
+        return 1;
+    }
+
+    private async Task OpenFileAsync(Microsoft.UI.Xaml.Window Window, ulong RequestId)
+    {
+        try
+        {
+            Microsoft.Windows.Storage.Pickers.FileOpenPicker Picker = new(Window.AppWindow.Id);
+            var Result = await Picker.PickSingleFileAsync();
+            CompletePlatformRequest(RequestId, Result?.Path, null);
+        }
+        catch (Exception Error)
+        {
+            LuiDiagnostics.Error("Dialog", "File picker failed: " + Error);
+            CompletePlatformRequest(RequestId, null, "File picker failed");
+        }
+    }
+
+    private void CompletePlatformRequest(ulong RequestId, string? Result, string? Error)
+    {
+        if (IsDisposed || IsDisposing) return;
+        if (Native.Lui_CompletePlatformRequest(Runtime, RequestId, Result, Error) != 1)
+            LuiDiagnostics.Error("Platform", "Completion was rejected: " + RequestId);
     }
 
     private static void OnNativeLog(IntPtr Context, string Level, string Message)
@@ -231,6 +378,12 @@ internal sealed class WinUIBackend : IDisposable
                     break;
                 case "TextLabel":
                     NewView.Element = new TextBlock { TextWrapping = TextWrapping.Wrap };
+                    break;
+                case "ImageLabel":
+                    Image Picture = new() { Stretch = Stretch.Uniform };
+                    Picture.ImageFailed += (_, Args) =>
+                        LuiDiagnostics.Error("Asset", "Image failed to load: " + Args.ErrorMessage);
+                    NewView.Element = Picture;
                     break;
                 case "TextButton":
                     Button Button = new();
@@ -507,6 +660,12 @@ internal sealed class WinUIBackend : IDisposable
                     case "Text" when Target.Element is TextBlock Label:
                         Label.Text = Value;
                         break;
+                    case "Source" when Target.Element is Image Picture:
+                        Picture.Source = string.IsNullOrEmpty(Value) ? null :
+                            AssetPaths.TryGetValue(Value, out string? AssetPath) ?
+                                new BitmapImage(new Uri(AssetPath)) :
+                                throw new InvalidOperationException("Undeclared image asset: " + Value);
+                        break;
                     case "Text" when Target.Element is Button Button:
                         Button.Content = Value;
                         break;
@@ -650,6 +809,14 @@ internal sealed class WinUIBackend : IDisposable
             internal uint AbiVersion;
             internal ulong GrantedCapabilities;
         }
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct SandboxLimits
+        {
+            internal uint StructSize;
+            internal uint AbiVersion;
+            internal ulong MaxMemoryBytes;
+            internal ulong MaxInterrupts;
+        }
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int CreateCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string ClassName);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -662,6 +829,22 @@ internal sealed class WinUIBackend : IDisposable
         internal delegate int DestroyCallback(IntPtr Context, int Id);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void LogCallback(IntPtr Context, [MarshalAs(UnmanagedType.LPUTF8Str)] string Level, [MarshalAs(UnmanagedType.LPUTF8Str)] string Message);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate int WriteClipboardCallback(IntPtr Context,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string Text);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate int StartPlatformRequestCallback(IntPtr Context, ulong RequestId);
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct PlatformCallbacks
+        {
+            internal uint StructSize;
+            internal uint AbiVersion;
+            internal IntPtr Context;
+            internal WriteClipboardCallback WriteClipboardText;
+            internal StartPlatformRequestCallback ReadClipboardText;
+            internal StartPlatformRequestCallback OpenFile;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct BackendCallbacks
@@ -681,9 +864,20 @@ internal sealed class WinUIBackend : IDisposable
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_DeclareCapabilities(IntPtr Runtime, ref CapabilityDeclaration Declaration);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_ConfigureSandbox(IntPtr Runtime, ref SandboxLimits Limits);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_RegisterAsset(IntPtr Runtime,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string Name);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_LoadExtension(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Path);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackend(IntPtr Runtime, BackendCallbacks Callbacks);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_SetPlatformCallbacks(IntPtr Runtime, ref PlatformCallbacks Callbacks);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_CompletePlatformRequest(IntPtr Runtime, ulong RequestId,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string? Result,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string? Error);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_ReportBackendError(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Message);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -714,6 +908,9 @@ internal sealed class WinUIBackend : IDisposable
             uint PointerId, double X, double Y);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_Pump(IntPtr Runtime);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_SystemThemeChanged(IntPtr Runtime,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string Theme);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr Lui_GetLastError(IntPtr Runtime);
     }
