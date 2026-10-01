@@ -5,8 +5,10 @@ const Assert = require('node:assert/strict');
 const Fs = require('node:fs');
 const Os = require('node:os');
 const Path = require('node:path');
+const { EventEmitter } = require('node:events');
 const { PreviewClient } = require('../../vscode/PreviewClient');
 const { ValidateSchema, ValidateTree, GetProperties } = require('../../vscode/PreviewModel');
+const { NativePreview, ResolveNativeHost } = require('../../vscode/NativePreview');
 
 function WaitFor(Emitter, Event, Predicate = () => true) {
     return new Promise((Resolve, Reject) => {
@@ -40,6 +42,54 @@ Test('reflection metadata drives inspector properties and invalid trees fail clo
     Assert.throws(() => ValidateTree([{ ...Window, parentId: 2 }, { ...Frame, parentId: 1 }], Classes), /cycle/);
     Assert.throws(() => ValidateTree([{ ...Window, bounds: { ...Window.bounds, width: -1 } }], Classes), /bounds/);
     Assert.throws(() => ValidateTree([{ ...Window, className: 'Unknown' }], Classes), /class/);
+});
+
+Test('native preview uses the WinUI host and tracks its process lifecycle', () => {
+    const Directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'LuiNativePreviewTest-'));
+    try {
+        const Host = Path.join(Directory, 'Lui.WinUI.exe');
+        const Manifest = Path.join(Directory, 'lui.json');
+        Fs.writeFileSync(Host, 'test host');
+        Fs.writeFileSync(Path.join(Directory, 'LuiRuntime.dll'), 'test runtime');
+        Fs.writeFileSync(Manifest, '{}');
+        Assert.equal(ResolveNativeHost(Directory), Host);
+        Assert.equal(ResolveNativeHost(Host), Host);
+        Fs.rmSync(Path.join(Directory, 'LuiRuntime.dll'));
+        Assert.throws(() => ResolveNativeHost(Host), /LuiRuntime/);
+        Fs.writeFileSync(Path.join(Directory, 'LuiRuntime.dll'), 'test runtime');
+
+        const Child = new EventEmitter();
+        Child.kill = () => { Child.emit('close', null, 'SIGTERM'); return true; };
+        let Spawned;
+        const Native = new NativePreview(Manifest, Host, (Exe, Arguments, Options) => {
+            Spawned = { Exe, Arguments, Options };
+            return Child;
+        });
+        let Exit;
+        Native.on('exit', Value => { Exit = Value; });
+        Assert.equal(Native.Start(), true);
+        Assert.equal(Native.Start(), false);
+        Assert.equal(Spawned.Exe, Host);
+        Assert.deepEqual(Spawned.Arguments, ['--manifest', Manifest]);
+        Assert.equal(Spawned.Options.cwd, Directory);
+        Assert.equal(Spawned.Options.windowsHide, false);
+        Assert.equal(Native.Stop(), true);
+        Assert.equal(Exit.WasStopped, true);
+        Assert.equal(Native.Process, null);
+
+        const FailedChild = new EventEmitter();
+        const Failed = new NativePreview(Manifest, Host, () => FailedChild);
+        let Failure;
+        let FailedExit;
+        Failed.on('failure', Message => { Failure = Message; });
+        Failed.on('exit', Value => { FailedExit = Value; });
+        Failed.Start();
+        FailedChild.emit('error', new Error('spawn denied'));
+        FailedChild.emit('close', -2, null);
+        Assert.match(Failure, /spawn denied/);
+        Assert.equal(FailedExit.LaunchFailed, true);
+        Assert.equal(Failed.Process, null);
+    } finally { Fs.rmSync(Directory, { recursive: true, force: true }); }
 });
 
 Test('editor client consumes the real preview host and reloads the tree', async Context => {

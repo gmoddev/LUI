@@ -1300,7 +1300,7 @@ The LUI extension should provide:
 
 Luau language tooling should be reused rather than replaced where practical.
 
-The implemented VS Code slice provides the Instance Explorer, a resolved-bounds layout map, read-only reflection-backed properties, activation for supported buttons, viewport resizing, a runtime Output channel, Luau creation/change locations, source navigation, source-linked runtime diagnostics, and reload on entry-script save. Type diagnostics, richer input, and native preview remain planned.
+The implemented VS Code slice provides the Instance Explorer, a resolved-bounds layout map, read-only reflection-backed properties, activation for supported buttons, viewport resizing, a runtime Output channel, Luau creation/change locations, source navigation, source-linked runtime diagnostics, and reload on entry-script save. On Windows it can explicitly launch the existing WinUI host in a separate process for exact native rendering. That native process is independent of the isolated Explorer preview and does not automatically reload on save. Type diagnostics and richer input remain planned.
 
 ---
 

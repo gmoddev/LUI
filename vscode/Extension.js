@@ -5,6 +5,7 @@ const Path = require('node:path');
 const Vscode = require('vscode');
 const { PreviewClient } = require('./PreviewClient');
 const { InspectorProvider } = require('./InspectorProvider');
+const { NativePreview, ResolveNativeHost } = require('./NativePreview');
 
 function GetFolder() {
     const ActivePath = Vscode.window.activeTextEditor?.document.uri.fsPath;
@@ -41,6 +42,21 @@ function GetPaths(Folder) {
             Path.join(Repo, 'build/linux-x64/libLuiRuntime.so'),
         ]);
     return { Manifest, Host, Runtime };
+}
+
+function GetNativeHostPath(Folder) {
+    const Root = Folder.uri.fsPath;
+    const Settings = Vscode.workspace.getConfiguration('lui', Folder.uri);
+    const Configured = GetConfiguredPath(Settings.get('nativeHostPath', ''), Root);
+    if (Configured) return Configured;
+    const Candidates = [
+        Path.join(Root, 'backends/winui3/bin/x64/Debug/net9.0-windows10.0.19041.0/win-x64/Lui.WinUI.exe'),
+        Path.join(Root, 'backends/winui3/bin/x64/Release/net9.0-windows10.0.19041.0/win-x64/Lui.WinUI.exe'),
+    ];
+    return Candidates.find(Candidate => {
+        try { ResolveNativeHost(Candidate); return true; }
+        catch { return false; }
+    }) || '';
 }
 
 function GetEntryScript(ManifestPath) {
@@ -105,6 +121,7 @@ class EditorController {
         this.TreeView = Vscode.window.createTreeView('lui.explorer', { treeDataProvider: this.Explorer });
         this.TreeView.message = 'Run “LUI: Start Preview” to inspect an app.';
         this.Client = null;
+        this.Native = null;
         this.SelectedId = 0;
         this.Status = 'Preview stopped';
         this.Error = '';
@@ -119,6 +136,8 @@ class EditorController {
             Vscode.commands.registerCommand('lui.startPreview', () => this.Start()),
             Vscode.commands.registerCommand('lui.reloadPreview', () => this.Client?.RequestReload()),
             Vscode.commands.registerCommand('lui.stopPreview', () => this.Stop()),
+            Vscode.commands.registerCommand('lui.openNativePreview', () => this.OpenNative()),
+            Vscode.commands.registerCommand('lui.stopNativePreview', () => this.StopNative()),
             Vscode.commands.registerCommand('lui.activateNode', Item => this.Activate(Item?.Id)),
             Vscode.commands.registerCommand('lui.openSource', Item => this.OpenSource(Item?.Id, 'created')),
             Vscode.workspace.onDidSaveTextDocument(Document => this.OnSave(Document)),
@@ -126,6 +145,10 @@ class EditorController {
     }
 
     Log(Message) { this.Output.appendLine('[LUI:Editor] ' + Message); }
+    NativeMessage(Message) {
+        this.Log(Message);
+        Vscode.window.setStatusBarMessage('[LUI:NativePreview] ' + Message, 7000);
+    }
 
     SetStatus(Status, Error = '') {
         this.Status = Status;
@@ -212,6 +235,45 @@ class EditorController {
         this.SetStatus('Preview stopped');
     }
 
+    OpenNative() {
+        if (!OperatingSystemIsWindows()) {
+            this.NativeMessage('Native preview currently requires Windows.');
+            return;
+        }
+        if (!Vscode.workspace.isTrusted) {
+            this.NativeMessage('Native preview requires a trusted workspace.');
+            return;
+        }
+        if (this.Native?.Process) {
+            this.NativeMessage('Native preview is already open.');
+            return;
+        }
+        const Folder = GetFolder();
+        if (!Folder) { this.NativeMessage('Open a workspace folder to launch native preview.'); return; }
+        const Manifest = GetPaths(Folder).Manifest;
+        if (!Fs.existsSync(Manifest)) { this.NativeMessage('Native preview manifest was not found.'); return; }
+        let Host;
+        try { Host = ResolveNativeHost(GetNativeHostPath(Folder)); }
+        catch (Error) { this.NativeMessage(Error.message + ' Set lui.nativeHostPath to a built WinUI host.'); return; }
+        const Native = new NativePreview(Manifest, Host);
+        this.Native = Native;
+        Native.on('failure', Message => this.NativeMessage(Message));
+        Native.on('exit', ({ Code, Signal, WasStopped, LaunchFailed }) => {
+            if (this.Native === Native) this.Native = null;
+            if (LaunchFailed) return;
+            if (WasStopped) this.Log('Native preview stopped.');
+            else if (Code === 0) this.Log('Native preview window closed.');
+            else this.NativeMessage(`Native preview exited with code ${Code ?? 'unknown'}${Signal ? ' · ' + Signal : ''}. ` +
+                'See the LUI log in your local application data folder.');
+        });
+        try {
+            Native.Start();
+            this.Log('Opening native preview for ' + Manifest);
+        } catch (Error) { this.Native = null; this.NativeMessage('Could not launch native preview: ' + Error.message); }
+    }
+
+    StopNative() { this.Native?.Stop(); }
+
     Select(Id) {
         if (!this.Client?.Tree.ById.has(Id)) return;
         this.SelectedId = Id;
@@ -280,8 +342,15 @@ class EditorController {
         this.ReloadTimer = setTimeout(() => { this.ReloadTimer = null; this.Client?.RequestReload(); }, 250);
     }
 
-    Dispose() { this.Stop(); }
+    Dispose() {
+        this.Native?.removeAllListeners();
+        this.StopNative();
+        this.Native = null;
+        this.Stop();
+    }
 }
+
+function OperatingSystemIsWindows() { return process.platform === 'win32'; }
 
 let Controller;
 function activate(Context) {

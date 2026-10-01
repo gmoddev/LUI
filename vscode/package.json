@@ -2,13 +2,13 @@
   "name": "lui-vscode",
   "displayName": "LUI Preview",
   "description": "Instance Explorer and layout inspector for LUI applications",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "gmoddev",
   "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
   "private": true,
   "engines": { "vscode": "^1.90.0" },
   "main": "./Extension.js",
-  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview"],
+  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview", "onCommand:lui.openNativePreview"],
   "scripts": { "test": "node --test ../tests/editor/EditorTests.js" },
   "contributes": {
     "viewsContainers": {
@@ -24,6 +24,8 @@
       { "command": "lui.startPreview", "title": "LUI: Start Preview", "icon": "$(play)" },
       { "command": "lui.reloadPreview", "title": "LUI: Reload Preview", "icon": "$(refresh)" },
       { "command": "lui.stopPreview", "title": "LUI: Stop Preview", "icon": "$(debug-stop)" },
+      { "command": "lui.openNativePreview", "title": "LUI: Open Native Preview", "icon": "$(window)" },
+      { "command": "lui.stopNativePreview", "title": "LUI: Stop Native Preview", "icon": "$(close)" },
       { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" },
       { "command": "lui.openSource", "title": "LUI: Open Instance Source", "icon": "$(go-to-file)" }
     ],
@@ -31,7 +33,8 @@
       "view/title": [
         { "command": "lui.startPreview", "when": "view == lui.explorer", "group": "navigation@1" },
         { "command": "lui.reloadPreview", "when": "view == lui.explorer", "group": "navigation@2" },
-        { "command": "lui.stopPreview", "when": "view == lui.explorer", "group": "navigation@3" }
+        { "command": "lui.stopPreview", "when": "view == lui.explorer", "group": "navigation@3" },
+        { "command": "lui.openNativePreview", "when": "view == lui.explorer", "group": "navigation@4" }
       ],
       "view/item/context": [
         { "command": "lui.activateNode", "when": "view == lui.explorer && viewItem == lui.activatable", "group": "inline" },
@@ -52,6 +55,10 @@
         "lui.runtimePath": {
           "type": "string", "default": "",
           "description": "Native LuiRuntime library. If empty, use a build found in the repository or LUI_RUNTIME."
+        },
+        "lui.nativeHostPath": {
+          "type": "string", "default": "",
+          "description": "Windows Lui.WinUI.exe or its directory for native preview. If empty, use a repository build."
         },
         "lui.autoReload": {
           "type": "boolean", "default": true,
