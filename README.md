@@ -29,6 +29,8 @@ Foundation 2 uses a version 1 primitive C extension ABI and a host-declared capa
 
 The [generated Luau definitions](types/LUI.d.luau) describe the implemented globals, classes, and services. The Windows build validates them with the pinned Luau type checker.
 
+The [launcher dashboard demo](examples/dashboard/README.md) is an interactive Windows sample with discovery, search, project details, simulated installation, and session-only settings. It uses fictional data to exercise the current native controls.
+
 ## Design
 
 - [Full product and architecture specification](docs/SPEC.md)
