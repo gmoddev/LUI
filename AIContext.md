@@ -1,6 +1,6 @@
 # AI context for LUI
 
-Read this before making changes. **Foundations 0, 1, and the defined Windows exit criteria for 2 are complete**. The native Luau runtime, Instance model, WinUI host, portable layout/control/input semantics, and headless conformance tests build. Foundation 0 interactive behavior was verified on 2026-09-29; Foundation 1 mapping and input passed on Windows on 2026-10-01. Foundation 2 adds a versioned primitive extension ABI, C++ host bindings, sandbox VM quotas, platform services, assets, and a self-contained Windows folder. Its published desktop qualification passed on 2026-10-01 at DPI scale 1. No CLI or other platform backend exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
+Read this before making changes. **Foundations 0, 1, and the defined Windows exit criteria for 2 are complete; Foundation 3 is in progress**. The native Luau runtime, Instance model, WinUI host, portable layout/control/input semantics, and headless conformance tests build. Foundation 0 interactive behavior was verified on 2026-09-29; Foundation 1 mapping and input passed on Windows on 2026-10-01. Foundation 2 adds a versioned primitive extension ABI, C++ host bindings, sandbox VM quotas, platform services, assets, and a self-contained Windows folder. Its published desktop qualification passed on 2026-10-01 at DPI scale 1. The first CLI slice exists; no other platform backend or preview host exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
 
 ## Project intent
 
@@ -31,3 +31,5 @@ Foundation 2's supported primitive extension contract is [native/abi/LuiExtensio
 The Windows build checks the generated definitions with the pinned Luau type checker. Direct constructor property tables currently use `any` in overloads; annotate a table with a generated `ClassNameInit` type to statically check its fields.
 
 The examples in the original spec are design illustrations. New code should follow the repository naming and diagnostic conventions in [AGENTS.md](AGENTS.md).
+
+Foundation 3's first CLI slice is in [tools/cli](tools/cli). It reuses the version 1 JSON host manifest for project scaffolding, syntax checking, Windows launching, and staging from a published host. `Lui_CheckScript` compiles without executing Luau. The CLI does not yet typecheck application source, and no preview host or editor protocol is implemented. See [Foundation 3 notes](docs/FOUNDATION-3.md).

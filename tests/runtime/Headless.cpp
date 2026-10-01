@@ -144,6 +144,12 @@ static int CheckCloneFailure() {
 int main() {
     LuiRuntime* Runtime = Lui_Create();
     if (!Runtime) return Check(false, "could not create runtime");
+    int CompilerFailures = Check(Lui_CheckScript(Runtime, "error('check must not execute')") == 1,
+        "valid script did not compile without execution");
+    CompilerFailures += Check(Lui_CheckScript(Runtime, "local = ") == 0 &&
+        std::string(Lui_GetLastError(Runtime)).size() > 0, "invalid script passed the source checker");
+    CompilerFailures += Check(Lui_CheckScript(Runtime, "local Value = 1") == 1,
+        "source checker did not recover after an error");
     TestBackend Backend;
     Backend.Runtime = Runtime;
     Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
@@ -175,7 +181,7 @@ int main() {
         Frame.Destroying:Connect(function() Frame:Destroy() end)
         Window.Visible = true
     )";
-    int Failures = Check(Lui_RunScript(Runtime, Script, "Headless") == 1, Lui_GetLastError(Runtime));
+    int Failures = CompilerFailures + Check(Lui_RunScript(Runtime, Script, "Headless") == 1, Lui_GetLastError(Runtime));
     Failures += Check(Backend.Classes.size() == 4, "expected four native objects");
     Failures += Check(Backend.Parents[2] == 1 && Backend.Parents[3] == 2 && Backend.Parents[4] == 2, "parenting mismatch");
     auto TextEvent = std::find(Backend.Events.begin(), Backend.Events.end(), "3:Text");

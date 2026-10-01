@@ -26,12 +26,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
       - name: Configure
         run: cmake -S . -B build/linux-x64 -DCMAKE_BUILD_TYPE=Debug
       - name: Build
         run: cmake --build build/linux-x64 --parallel 2 --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension
       - name: Test
         run: ctest --test-dir build/linux-x64 --output-on-failure
+      - name: CLI tests
+        run: dotnet run --project tests/cli/CliTests.csproj --configuration Release -- build/linux-x64/libLuiRuntime.so
       - name: Check generated schema
         run: |
           build/linux-x64/LuiSchemaDump > build/linux-x64/schema.json

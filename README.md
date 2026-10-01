@@ -31,6 +31,8 @@ The [generated Luau definitions](types/LUI.d.luau) describe the implemented glob
 
 The [launcher dashboard demo](examples/dashboard/README.md) is an interactive Windows sample with discovery, search, project details, simulated installation, and session-only settings. It uses fictional data to exercise the current native controls.
 
+Foundation 3 has begun with the [developer CLI](docs/FOUNDATION-3.md): scaffold a project, check its manifest and Luau syntax without running it, launch the Windows host, and stage a package from a published host. Preview and editor tools are still planned.
+
 ## Design
 
 - [Full product and architecture specification](docs/SPEC.md)
@@ -38,6 +40,7 @@ The [launcher dashboard demo](examples/dashboard/README.md) is an interactive Wi
 - [Foundation 0 build and scope](docs/FOUNDATION-0.md)
 - [Foundation 1 canonical baseline](docs/FOUNDATION-1.md)
 - [Foundation 2 features and qualification](docs/FOUNDATION-2.md)
+- [Foundation 3 CLI and project manifest](docs/FOUNDATION-3.md)
 - [Implemented API reference](docs/API.md)
 - [Public compatibility policy](docs/COMPATIBILITY.md)
 - [Roadmap and milestone acceptance criteria](ROADMAP.md)

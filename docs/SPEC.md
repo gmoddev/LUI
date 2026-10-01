@@ -1205,6 +1205,8 @@ lui pack
 lui docs
 ```
 
+The first Foundation 3 CLI slice implements `new`, `check`, `run`, and `build`. `check` validates the version 1 manifest and compiles the entry script without executing it; type diagnostics are not yet included. `run` launches the existing WinUI host on Windows. `build` stages a self-contained folder from an already published Windows host. `preview` remains a planned command until the isolated preview host and protocol exist.
+
 ---
 
 # 37. Project manifest
@@ -1232,6 +1234,8 @@ database = "extensions/database"
 ```
 
 The current WinUI host uses a version 1 JSON manifest while the project-wide TOML format above remains a design target. It declares a script, capability names, DLL filenames, packaged asset filenames, and optional sandbox VM limits. The host validates local paths before loading; ordinary Luau code cannot alter the grant mask.
+
+The first CLI uses this same version 1 JSON manifest, conventionally named `lui.json`, as its project manifest. The project and host therefore share path and capability validation. A later TOML format needs an explicit schema version and migration rather than an implicit reinterpretation of version 1 JSON.
 
 ---
 

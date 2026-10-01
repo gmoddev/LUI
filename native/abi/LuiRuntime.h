@@ -85,6 +85,8 @@ LUI_API int LUI_CALL Lui_EmitHostSignal(LuiRuntime* Runtime, const char* Service
     const char* SignalName, const LuiValueV1* Arguments, uint32_t ArgumentCount);
 /* Runtime-specific reflection for dynamically registered extension services. */
 LUI_API const char* LUI_CALL Lui_GetExtensionSchemaJson(LuiRuntime* Runtime);
+/* Compiles without executing source or mutating the object tree. Diagnostics are in Lui_GetLastError. */
+LUI_API int LUI_CALL Lui_CheckScript(LuiRuntime* Runtime, const char* Source);
 LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName);
 LUI_API int LUI_CALL Lui_Activate(LuiRuntime* Runtime, int Id);
 LUI_API int LUI_CALL Lui_TextChanged(LuiRuntime* Runtime, int Id, const char* Text);

@@ -66,8 +66,12 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Generated type validation failed' 
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Application manifest validation failed' }
 & dotnet run --project (Join-Path $Root 'tests/packaging/PackagingTests.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Package staging tests failed' }
-
 $Dll = Join-Path $Build "$Configuration/LuiRuntime.dll"
+& dotnet run --project (Join-Path $Root 'tests/cli/CliTests.csproj') --configuration $Configuration -- $Dll
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CLI tests failed' }
+& dotnet build (Join-Path $Root 'tools/cli/Lui.Cli.csproj') --configuration $Configuration
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CLI build failed' }
+
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] WinUI build failed' }
-Write-Host '[LUI:Build] Native and WinUI builds, headless, extension, and manifest tests, schema generation, and type validation passed'
+Write-Host '[LUI:Build] Native, WinUI, and CLI builds and runtime, manifest, packaging, CLI, and type tests passed'

@@ -1251,6 +1251,22 @@ extern "C" LUI_API int LUI_CALL Lui_RegisterAsset(LuiRuntime* Runtime, const cha
     return 1;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_CheckScript(LuiRuntime* Runtime, const char* Source) {
+    if (!CheckOwner(Runtime) || !Source) return 0;
+    try {
+        const std::string Bytecode = Luau::compile(Source);
+        if (Bytecode.empty() || Bytecode[0] == '\0') {
+            Runtime->LastError = Bytecode.size() > 1 ? Bytecode.substr(1) : "Luau compilation failed";
+            return 0;
+        }
+        Runtime->LastError.clear();
+        return 1;
+    } catch (const std::exception& Error) {
+        Runtime->LastError = Error.what();
+        return 0;
+    }
+}
+
 extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName) {
     if (!CheckOwner(Runtime) || !Source) return 0;
     if (Runtime->BackendFailed) return 0;
