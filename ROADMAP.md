@@ -17,7 +17,7 @@ Build the embedded Luau VM, one UI scheduler, `Instance`, properties, `Signal`/`
 
 ## Foundation 1 — Canonical UI semantics
 
-**Status:** in progress. Structured reflection, generated and typechecked Luau definitions, API docs, derived geometry, padding/list/grid layout, size constraints, common controls, deterministic focus transitions, hover and pointer input signals, basic services, backend failure reporting, VM reentrancy protection, and headless conformance tests are implemented. Native control qualification and the remaining semantic scope are tracked in [Foundation 1 notes](docs/FOUNDATION-1.md).
+**Status:** complete. Structured reflection, generated and typechecked Luau definitions, API docs, derived geometry, padding/list/grid layout, size constraints, common controls, deterministic focus transitions, hover and pointer input signals, basic services, backend failure reporting, VM reentrancy protection, and headless conformance tests are implemented. The [Foundation 1 exit audit](docs/FOUNDATION-1.md#exit-audit) records the passing Windows native mapping and input qualification on 2026-10-01.
 
 Define and test property defaults and validation, lifecycle, layout, input, focus, common controls, basic services, reflection, generated Luau types, and a backend conformance suite. This is the semantic baseline for other backends.
 
@@ -49,4 +49,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Finish the [Foundation 1 exit audit](docs/FOUNDATION-1.md#exit-audit): run the native mapping probe and the interactive keyboard/pointer matrix on a Windows desktop, then record the results before marking the milestone complete.
+Begin Foundation 2 with a versioned C extension ABI and capability declaration at the native host boundary. Keep the portable Foundation 1 semantics and shared conformance suite as the baseline for each integration step.

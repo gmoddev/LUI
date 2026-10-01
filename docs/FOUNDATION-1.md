@@ -1,6 +1,6 @@
 # Foundation 1: canonical UI semantics
 
-Foundation 1 is in progress. The current implementation extends the Foundation 0 proof with shared layout, controls, services, runtime reflection, generated API files, and headless conformance tests. The expanded WinUI controls compile and have interactive desktop qualification cases in [tests/winui](../tests/winui/README.md).
+Foundation 1 is complete as the canonical UI semantic baseline. The implementation extends the Foundation 0 proof with shared layout, controls, services, runtime reflection, generated API files, and headless conformance tests. Native WinUI mapping and input were qualified on a Windows desktop on 2026-10-01 using the cases in [tests/winui](../tests/winui/README.md).
 
 ## Implemented in this increment
 
@@ -59,12 +59,11 @@ Add `--diagnostics` before or after the script path to open a live diagnostics c
 .\Lui.WinUI.exe --diagnostics examples\controls.luau
 ```
 
-## Remaining Foundation 1 work
+## Follow-up work
 
-- Complete the WinUI desktop qualification matrix for keyboard pairing and pointer cancellation, including press during disable. Native UI Automation exposed the configured accessible name and help text on 2026-09-30. Focus, disabled state, text entry, checkbox, slider, button hover, and grid resize have been observed on Windows.
-- Run the native mapping probe and finish the interactive keyboard and pointer matrix in a Windows desktop session. Windows CI compiles the probe and checks all qualification scripts for startup errors, but it does not host a native desktop session.
 - Improve constructor typing when Luau can accept more overloads without losing static checks on property tables.
 - Continue moving object, scheduler, and signals code into internal modules as the runtime grows. Input and focus now have their own internal module.
+- Add hosted native desktop automation and assistive technology, high contrast, and DPI qualification during Foundation 2 production Windows work.
 
 The [full specification](SPEC.md) describes the intended design beyond this increment.
 
@@ -75,7 +74,7 @@ The [full specification](SPEC.md) describes the intended design beyond this incr
 | Reflection, generated types, API reference, and implemented behavior agree | Schema is the generator input; Windows CI checks generated files; type tests compile valid and reject invalid examples. | Passed |
 | Portable layout and control semantics run without a display | Windows and Linux headless, layout, and conformance jobs pass. | Passed |
 | Keyboard and pointer pairing, cancellation, focus, hide, disable, and destruction have explicit rules | [Decisions](decisions/0014-keyboard-input.md) and headless conformance tests cover the event order and rejection cases. | Passed in shared runtime |
-| WinUI controls preserve native property and accessibility mappings | Text entry, checkbox, slider, disabled state, focus, grid resize, accessible name, and help text have been observed. The [native mapping probe](../tests/winui/README.md) is compiled but still needs a desktop run. | Pending probe run |
-| Native keyboard and pointer routing matches the shared semantics | The [interactive input case](../tests/winui/InputQualification.luau) is repeatable and loads headlessly. Physical keyboard and pointer observations are still needed. | Pending desktop run |
+| WinUI controls preserve native property and accessibility mappings | The [native mapping probe](../tests/winui/README.md) passed on a Windows desktop on 2026-10-01 with exit code 0. It checked text, ranges, checked and disabled state, visibility, parenting, bounds, accessible name and help text, and native text and slider event round trips. | Passed on Windows |
+| Native keyboard and pointer routing matches the shared semantics | The [interactive input case](../tests/winui/InputQualification.luau) showed `K+A K-A Text:a`, a normal `P+1 P-1`, drag-out `P+1 PC1`, and self-disable `D+1 DC` with the control disabled on 2026-10-01. UI Automation exposed the keyboard target name and help text. | Passed on Windows |
 
-Foundation 1 should be marked complete only after the two pending native checks pass. The direct constructor table typing limit is documented above; automated GUI execution in hosted CI and assistive technology qualification belong to future tooling and production Windows work.
+The exit criteria are met. The direct constructor table typing limit is documented above; automated GUI execution in hosted CI and assistive technology qualification belong to future tooling and production Windows work. This Windows qualification does not establish native behavior on other platforms.

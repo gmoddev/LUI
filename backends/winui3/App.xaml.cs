@@ -17,7 +17,7 @@ public partial class App : Application
         InitializeComponent();
     }
 
-    protected override void OnLaunched(LaunchActivatedEventArgs Args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs Args)
     {
         string[] Arguments = Environment.GetCommandLineArgs();
         bool Qualification = Arguments.Skip(1).Any(Argument => Argument == "--native-qualification");
@@ -42,7 +42,7 @@ public partial class App : Application
 
             if (Qualification)
             {
-                Environment.ExitCode = Backend.RunNativeQualification() ? 0 : 1;
+                Environment.ExitCode = await Backend.RunNativeQualificationAsync() ? 0 : 1;
                 Exit();
                 return;
             }

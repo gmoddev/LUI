@@ -1,6 +1,6 @@
 # AI context for LUI
 
-Read this before making changes. **Foundation 0 is complete**: the native Luau runtime, small Instance model, WinUI host, and headless tests build, and the user verified interactive behavior on 2026-09-29. Foundation 1 is in progress. No CLI, production package, or other platform backend exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
+Read this before making changes. **Foundations 0 and 1 are complete**: the native Luau runtime, Instance model, WinUI host, portable layout/control/input semantics, and headless conformance tests build. The user verified Foundation 0 interactive behavior on 2026-09-29; the native Foundation 1 mapping and input matrix passed on Windows on 2026-10-01. No CLI, production package, or other platform backend exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
 
 ## Project intent
 

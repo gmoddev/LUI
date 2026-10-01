@@ -78,7 +78,7 @@ internal sealed class WinUIBackend
         }
     }
 
-    public bool RunNativeQualification()
+    public async Task<bool> RunNativeQualificationAsync()
     {
         try
         {
@@ -113,10 +113,25 @@ internal sealed class WinUIBackend
             Require(NativeInput.Element is FrameworkElement Arranged && Arranged.Width == 240 && Arranged.Height == 36,
                 "resolved native bounds mismatch");
 
-            ((TextBox)NativeInput.Element!).Text = "native edit";
+            TextBox NativeTextBox = (TextBox)NativeInput.Element!;
+            if (!NativeTextBox.IsLoaded)
+            {
+                TaskCompletionSource<bool> Loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                NativeTextBox.Loaded += (_, _) => Loaded.TrySetResult(true);
+                await Loaded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            TaskCompletionSource<bool> Edited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            NativeTextBox.TextChanged += (_, _) =>
+            {
+                if (NativeTextBox.Text == "native edit") Edited.TrySetResult(true);
+            };
+            NativeTextBox.Focus(FocusState.Programmatic);
+            NativeTextBox.Text = "native edit";
             ((Slider)NativeSlider.Element!).Value = 17;
+            await Edited.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Pump();
             Require(Native.Lui_RunScript(Runtime,
-                "assert(Input.Text == 'native edit' and Slider.Value == 17 and Check.Checked and not Check.Enabled)",
+                "assert(Input.Text == 'native edit', 'text round trip'); assert(Slider.Value == 17, 'slider round trip'); assert(Check.Checked and not Check.Enabled, 'checkbox mapping')",
                 "NativeMappingCheck") == 1, "native event did not reach Luau: " + LastError);
             LuiDiagnostics.Log("Qualification", "Native control mapping and event round trip passed");
             return true;
@@ -258,7 +273,7 @@ internal sealed class WinUIBackend
                 NewView.Element.AddHandler(UIElement.PointerCanceledEvent,
                     new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
                 NewView.Element.AddHandler(UIElement.PointerCaptureLostEvent,
-                    new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 3, Args)), true);
+                    new PointerEventHandler((_, Args) => OnPointerCaptureLost(Id, NewView, Args)), true);
                 NewView.Element.AddHandler(UIElement.KeyDownEvent,
                     new KeyEventHandler((_, Args) => OnKeyInput(Id, NewView, false, Args)), true);
                 NewView.Element.AddHandler(UIElement.KeyUpEvent,
@@ -311,6 +326,35 @@ internal sealed class WinUIBackend
             Native.Lui_PointerInput(Runtime, Id, Phase, Device, Point.PointerId, Point.Position.X, Point.Position.Y);
         }
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer: " + Error); }
+    }
+
+    private void OnPointerCaptureLost(int Id, View Target, PointerRoutedEventArgs Args)
+    {
+        try
+        {
+            if (!Target.IsAlive || Target.Element is null) return;
+            uint PointerId = Args.Pointer.PointerId;
+            int Device = Args.Pointer.PointerDeviceType switch
+            {
+                Microsoft.UI.Input.PointerDeviceType.Mouse => 0,
+                Microsoft.UI.Input.PointerDeviceType.Pen => 1,
+                Microsoft.UI.Input.PointerDeviceType.Touch => 2,
+                Microsoft.UI.Input.PointerDeviceType.Touchpad => 3,
+                _ => -1,
+            };
+            if (Device < 0) return;
+            Target.Element.DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    if (!Target.IsAlive) return;
+                    Diagnostic($"PointerCaptureLost {Id} {PointerId}");
+                    Native.Lui_PointerInput(Runtime, Id, 3, Device, PointerId, 0, 0);
+                }
+                catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer capture: " + Error); }
+            });
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer capture: " + Error); }
     }
 
     private void SyncFocus(UIElement Source)
