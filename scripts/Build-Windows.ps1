@@ -76,7 +76,11 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Preview host build failed' }
 $PreviewHost = Join-Path $Root "tools/preview-host/bin/$Configuration/net9.0/lui-preview-host.dll"
 & dotnet run --project (Join-Path $Root 'tests/preview/PreviewTests.csproj') --configuration $Configuration -- $PreviewHost $Dll
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Preview protocol tests failed' }
+$env:LUI_TEST_PREVIEW_HOST = $PreviewHost
+$env:LUI_TEST_RUNTIME = $Dll
+& node --test (Join-Path $Root 'tests/editor/EditorTests.js')
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] VS Code preview client tests failed' }
 
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] WinUI build failed' }
-Write-Host '[LUI:Build] Native, WinUI, CLI, preview, runtime, manifest, packaging, and type tests passed'
+Write-Host '[LUI:Build] Native, WinUI, CLI, preview, VS Code client, runtime, manifest, packaging, and type tests passed'

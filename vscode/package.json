@@ -1,0 +1,61 @@
+{
+  "name": "lui-vscode",
+  "displayName": "LUI Preview",
+  "description": "Instance Explorer and layout inspector for LUI applications",
+  "version": "0.0.1",
+  "publisher": "gmoddev",
+  "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./Extension.js",
+  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview"],
+  "scripts": { "test": "node --test ../tests/editor/EditorTests.js" },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{ "id": "lui", "title": "LUI", "icon": "media/icon.svg" }]
+    },
+    "views": {
+      "lui": [
+        { "id": "lui.explorer", "name": "Instances" },
+        { "id": "lui.inspector", "name": "Layout & Properties", "type": "webview" }
+      ]
+    },
+    "commands": [
+      { "command": "lui.startPreview", "title": "LUI: Start Preview", "icon": "$(play)" },
+      { "command": "lui.reloadPreview", "title": "LUI: Reload Preview", "icon": "$(refresh)" },
+      { "command": "lui.stopPreview", "title": "LUI: Stop Preview", "icon": "$(debug-stop)" },
+      { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "lui.startPreview", "when": "view == lui.explorer", "group": "navigation@1" },
+        { "command": "lui.reloadPreview", "when": "view == lui.explorer", "group": "navigation@2" },
+        { "command": "lui.stopPreview", "when": "view == lui.explorer", "group": "navigation@3" }
+      ],
+      "view/item/context": [
+        { "command": "lui.activateNode", "when": "view == lui.explorer && viewItem == lui.activatable", "group": "inline" }
+      ]
+    },
+    "configuration": {
+      "title": "LUI Preview",
+      "properties": {
+        "lui.manifestPath": {
+          "type": "string", "default": "lui.json",
+          "description": "Application manifest path, absolute or relative to the workspace folder."
+        },
+        "lui.previewHostPath": {
+          "type": "string", "default": "",
+          "description": "Preview host DLL or executable. If empty, use a build found in the repository."
+        },
+        "lui.runtimePath": {
+          "type": "string", "default": "",
+          "description": "Native LuiRuntime library. If empty, use a build found in the repository or LUI_RUNTIME."
+        },
+        "lui.autoReload": {
+          "type": "boolean", "default": true,
+          "description": "Reload the preview when its entry script is saved."
+        }
+      }
+    }
+  }
+}

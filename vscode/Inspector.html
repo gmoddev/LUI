@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-__NONCE__'; script-src 'nonce-__NONCE__';">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style nonce="__NONCE__">
+    :root { color-scheme: light dark; }
+    body { margin: 0; padding: 12px; color: var(--vscode-foreground); font: 12px var(--vscode-font-family); }
+    h2 { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; opacity: .76; margin: 18px 0 9px; }
+    h2:first-child { margin-top: 0; }
+    #status { min-height: 20px; line-height: 1.5; opacity: .82; }
+    #error { display: none; padding: 8px; border-left: 2px solid var(--vscode-errorForeground); color: var(--vscode-errorForeground); background: var(--vscode-inputValidation-errorBackground); white-space: pre-wrap; }
+    #toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+    #toolbar label { opacity: .8; }
+    input { width: 54px; padding: 3px 5px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
+    button { padding: 4px 8px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 2px; cursor: pointer; }
+    button:hover { background: var(--vscode-button-hoverBackground); }
+    button:disabled { opacity: .45; cursor: default; }
+    #mapScroll { max-height: 340px; overflow: auto; padding: 8px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+    #map { position: relative; box-sizing: border-box; background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-focusBorder); overflow: hidden; }
+    .node { position: absolute; box-sizing: border-box; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10px; padding: 2px 3px; border: 1px solid var(--vscode-focusBorder); background: var(--vscode-editor-background); cursor: pointer; }
+    .node.TextButton, .node.CheckBox { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    .node.TextLabel { border-style: dotted; }
+    .node.selected { outline: 2px solid var(--vscode-charts-orange); outline-offset: -2px; z-index: 2; }
+    .node.hidden { opacity: .35; border-style: dashed; }
+    .node:focus { outline: 2px solid var(--vscode-focusBorder); }
+    #selection { padding: 7px 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+    #properties { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    #properties td { border-top: 1px solid var(--vscode-panel-border); padding: 6px 4px; vertical-align: top; overflow-wrap: anywhere; }
+    #properties td:first-child { width: 40%; opacity: .75; }
+    .type { display: block; font-size: 10px; opacity: .55; margin-top: 2px; }
+    #hint { opacity: .65; line-height: 1.4; }
+</style>
+</head>
+<body>
+    <h2>Preview status</h2>
+    <div id="status" role="status"></div>
+    <div id="error" role="alert"></div>
+    <h2>Layout map</h2>
+    <div id="toolbar">
+        <label for="width">Viewport</label>
+        <input id="width" type="number" min="0" max="100000" step="1" aria-label="Viewport width">
+        <span>×</span>
+        <input id="height" type="number" min="0" max="100000" step="1" aria-label="Viewport height">
+        <button id="resize" type="button">Apply</button>
+    </div>
+    <div id="mapScroll"><div id="map" aria-label="Resolved LUI layout"></div></div>
+    <p id="hint">Diagram of logical bounds. Select a control to inspect it; double-click a button to activate it.</p>
+    <h2>Properties</h2>
+    <div id="selection">No Instance selected</div>
+    <button id="activate" type="button" disabled>Activate</button>
+    <table id="properties"><tbody></tbody></table>
+<script nonce="__NONCE__">
+    const VsCode = acquireVsCodeApi();
+    const Elements = Object.fromEntries(['status', 'error', 'width', 'height', 'resize', 'mapScroll', 'map',
+        'selection', 'activate', 'properties'].map(Id => [Id, document.getElementById(Id)]));
+    let State = { nodes: [], generation: 0, selectedId: 0, properties: [], status: '', error: '' };
+    let WindowNode = null;
+    function Label(Node) { return Node.title || Node.text || Node.name || Node.className; }
+    function Select(Id) { VsCode.postMessage({ type: 'select', generation: State.generation, id: Id }); }
+    function Activate(Id) { VsCode.postMessage({ type: 'activate', generation: State.generation, id: Id }); }
+    function Render() {
+        const ById = new Map(State.nodes.map(Node => [Node.id, Node]));
+        const Selected = ById.get(State.selectedId);
+        WindowNode = Selected;
+        while (WindowNode && WindowNode.className !== 'Window') WindowNode = ById.get(WindowNode.parentId);
+        if (!WindowNode) WindowNode = State.nodes.find(Node => Node.className === 'Window') || null;
+        Elements.status.textContent = State.status + (State.generation ? ' · generation ' + State.generation : '');
+        Elements.error.style.display = State.error ? 'block' : 'none';
+        Elements.error.textContent = State.error;
+        Elements.selection.textContent = Selected ? Selected.className + ' #' + Selected.id + ' · ' + Label(Selected) : 'No Instance selected';
+        Elements.activate.disabled = !Selected || !['TextButton', 'CheckBox'].includes(Selected.className);
+        const Body = Elements.properties.querySelector('tbody');
+        Body.replaceChildren();
+        for (const Property of State.properties) {
+            const Row = document.createElement('tr');
+            const Name = document.createElement('td');
+            Name.textContent = Property.name;
+            const Type = document.createElement('span');
+            Type.className = 'type';
+            Type.textContent = Property.type || '';
+            Name.appendChild(Type);
+            const Value = document.createElement('td');
+            Value.textContent = Property.value === null ? 'nil' : String(Property.value);
+            Row.append(Name, Value);
+            Body.appendChild(Row);
+        }
+        Elements.map.replaceChildren();
+        Elements.width.disabled = Elements.height.disabled = Elements.resize.disabled = !WindowNode;
+        if (!WindowNode) {
+            Elements.map.style.width = '100%'; Elements.map.style.height = '80px';
+            Elements.width.value = Elements.height.value = '';
+            return;
+        }
+        Elements.width.value = Math.round(WindowNode.bounds.width);
+        Elements.height.value = Math.round(WindowNode.bounds.height);
+        const Available = Math.max(120, Elements.mapScroll.clientWidth - 18);
+        const Scale = Math.min(1, Available / Math.max(1, WindowNode.bounds.width));
+        Elements.map.style.width = Math.max(1, WindowNode.bounds.width * Scale) + 'px';
+        Elements.map.style.height = Math.max(1, WindowNode.bounds.height * Scale) + 'px';
+        for (const Node of State.nodes) {
+            if (Node.id === WindowNode.id || Node.className.startsWith('UI')) continue;
+            let Parent = ById.get(Node.parentId);
+            let Belongs = false;
+            while (Parent) {
+                if (Parent.id === WindowNode.id) { Belongs = true; break; }
+                Parent = ById.get(Parent.parentId);
+            }
+            if (!Belongs || Node.bounds.width <= 0 || Node.bounds.height <= 0) continue;
+            const Box = document.createElement('div');
+            Box.classList.add('node', Node.className);
+            if (Node.id === State.selectedId) Box.classList.add('selected');
+            if (!Node.visible) Box.classList.add('hidden');
+            Box.style.left = (Node.bounds.x - WindowNode.bounds.x) * Scale + 'px';
+            Box.style.top = (Node.bounds.y - WindowNode.bounds.y) * Scale + 'px';
+            Box.style.width = Math.max(1, Node.bounds.width * Scale) + 'px';
+            Box.style.height = Math.max(1, Node.bounds.height * Scale) + 'px';
+            Box.textContent = Label(Node);
+            Box.title = Node.className + ' #' + Node.id + ' · ' + Label(Node);
+            Box.tabIndex = 0;
+            Box.setAttribute('role', 'button');
+            Box.addEventListener('click', () => Select(Node.id));
+            Box.addEventListener('dblclick', () => { if (['TextButton', 'CheckBox'].includes(Node.className)) Activate(Node.id); });
+            Box.addEventListener('keydown', Event => { if (Event.key === 'Enter') Select(Node.id); });
+            Elements.map.appendChild(Box);
+        }
+    }
+    window.addEventListener('message', Event => { if (Event.data?.type === 'state') { State = Event.data; Render(); } });
+    Elements.resize.addEventListener('click', () => {
+        if (!WindowNode) return;
+        VsCode.postMessage({ type: 'resizeViewport', generation: State.generation, id: WindowNode.id,
+            width: Number(Elements.width.value), height: Number(Elements.height.value) });
+    });
+    Elements.activate.addEventListener('click', () => { if (State.selectedId) Activate(State.selectedId); });
+    new ResizeObserver(() => { if (WindowNode) Render(); }).observe(Elements.mapScroll);
+    VsCode.postMessage({ type: 'ready' });
+</script>
+</body>
+</html>

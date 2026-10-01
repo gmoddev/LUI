@@ -54,6 +54,8 @@ internal static class Program
                 .Select(Line => JsonDocument.Parse(Line)).ToArray();
             JsonElement[] Roots = Messages.Select(Message => Message.RootElement).ToArray();
             Require(Roots[0].GetProperty("type").GetString() == "hello", "missing hello");
+            Require(Roots[0].GetProperty("schema").GetProperty("classes").GetArrayLength() > 0,
+                "hello omitted runtime reflection schema");
             JsonElement[] Trees = Roots.Where(Root => Root.GetProperty("type").GetString() == "fullTree").ToArray();
             Require(Trees.Length >= 4, "missing tree updates");
             Require(Trees[0].GetProperty("generation").GetInt32() == 1, "wrong initial generation");

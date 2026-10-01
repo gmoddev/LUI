@@ -55,7 +55,8 @@ internal sealed class PreviewSession : IDisposable
 
     public int Run()
     {
-        Write(new { version = ProtocolVersion, type = "hello", generation = 0 });
+        using (JsonDocument Schema = JsonDocument.Parse(Native.Schema()))
+            Write(new { version = ProtocolVersion, type = "hello", generation = 0, schema = Schema.RootElement });
         Reload();
         _ = Task.Run(ReadInput);
         while (!InputClosed || !Commands.IsEmpty)
@@ -289,6 +290,7 @@ internal sealed class NativeRuntime : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int PumpDelegate(IntPtr Runtime);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int ResizeDelegate(IntPtr Runtime, int Id, double Width, double Height);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate IntPtr PointerDelegate(IntPtr Runtime);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate IntPtr SchemaDelegate();
 
     private readonly IntPtr Library;
     internal readonly CreateDelegate Create;
@@ -303,6 +305,7 @@ internal sealed class NativeRuntime : IDisposable
     internal readonly PumpDelegate Pump;
     internal readonly PointerDelegate GetPreviewTreeJson;
     private readonly PointerDelegate GetLastError;
+    private readonly SchemaDelegate GetSchemaJson;
 
     internal NativeRuntime(string PathValue)
     {
@@ -319,11 +322,13 @@ internal sealed class NativeRuntime : IDisposable
         Pump = Load<PumpDelegate>("Lui_Pump");
         GetPreviewTreeJson = Load<PointerDelegate>("Lui_GetPreviewTreeJson");
         GetLastError = Load<PointerDelegate>("Lui_GetLastError");
+        GetSchemaJson = Load<SchemaDelegate>("Lui_GetSchemaJson");
     }
 
     private T Load<T>(string Name) where T : Delegate =>
         Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(Library, Name));
 
     internal string Error(IntPtr Runtime) => Marshal.PtrToStringUTF8(GetLastError(Runtime)) ?? "Native runtime error";
+    internal string Schema() => Marshal.PtrToStringUTF8(GetSchemaJson()) ?? throw new InvalidDataException("Runtime schema unavailable");
     public void Dispose() => NativeLibrary.Free(Library);
 }

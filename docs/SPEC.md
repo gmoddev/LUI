@@ -1300,6 +1300,8 @@ The LUI extension should provide:
 
 Luau language tooling should be reused rather than replaced where practical.
 
+The first implemented VS Code slice provides the Instance Explorer, a resolved-bounds layout map, read-only reflection-backed properties, activation for supported buttons, viewport resizing, a runtime Output channel, and reload on entry-script save. Type diagnostics, source navigation, richer input, and native preview remain planned.
+
 ---
 
 # 40. Preview architecture
@@ -1363,7 +1365,7 @@ resizeViewport
 setTheme
 ```
 
-The protocol should be explicitly versioned. The implemented initial subset uses one UTF-8 JSON object per line, with `version: 1`, `type`, and `generation`. The host emits `hello`, `fullTree`, `diagnostic`, `consoleMessage`, and `runtimeError`. It accepts `reload`, `snapshot`, `activate`, `resizeViewport`, and `shutdown`; other message names above remain planned. A full tree contains live Instance IDs, parent IDs, class and display properties, state, and logical-unit bounds. Reload destroys the previous Luau VM and tree before incrementing the generation and rerunning the entry script. Commands against older generations are rejected. Protocol input is bounded and validated. The initial preview requires a manifest without privileged capabilities or native extensions and is not a native visual renderer.
+The protocol should be explicitly versioned. The implemented initial subset uses one UTF-8 JSON object per line, with `version: 1`, `type`, and `generation`. The host emits `hello` with the runtime reflection schema, `fullTree`, `diagnostic`, `consoleMessage`, and `runtimeError`. It accepts `reload`, `snapshot`, `activate`, `resizeViewport`, and `shutdown`; other message names above remain planned. A full tree contains live Instance IDs, parent IDs, class and display properties, state, and logical-unit bounds. Reload destroys the previous Luau VM and tree before incrementing the generation and rerunning the entry script. Commands against older generations are rejected. Protocol input and tree structure are bounded and validated on both sides. The initial preview requires a manifest without privileged capabilities or native extensions and is not a native visual renderer.
 
 ---
 
