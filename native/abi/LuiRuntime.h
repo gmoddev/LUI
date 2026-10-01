@@ -106,6 +106,9 @@ LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime);
 LUI_API int LUI_CALL Lui_SystemThemeChanged(LuiRuntime* Runtime, const char* Theme);
 LUI_API const char* LUI_CALL Lui_GetLastError(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetSchemaJson(void);
+/* Host-only preview snapshot. UTF-8 JSON remains valid until the next snapshot or destruction.
+   Returns null and sets Lui_GetLastError when serialization fails. */
+LUI_API const char* LUI_CALL Lui_GetPreviewTreeJson(LuiRuntime* Runtime);
 LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime);
 
 #ifdef __cplusplus

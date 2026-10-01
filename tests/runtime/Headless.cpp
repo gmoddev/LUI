@@ -182,6 +182,11 @@ int main() {
         Window.Visible = true
     )";
     int Failures = CompilerFailures + Check(Lui_RunScript(Runtime, Script, "Headless") == 1, Lui_GetLastError(Runtime));
+    const char* PreviewTree = Lui_GetPreviewTreeJson(Runtime);
+    Failures += Check(PreviewTree && std::string(PreviewTree).find("\"bounds\":{\"x\":0,\"y\":0,\"width\":400") != std::string::npos,
+        "preview snapshot did not contain resolved layout");
+    Failures += Check(PreviewTree && std::string(PreviewTree).find("\"parentId\":2,\"className\":\"TextButton\"") != std::string::npos,
+        "preview snapshot did not contain the authoritative tree");
     Failures += Check(Backend.Classes.size() == 4, "expected four native objects");
     Failures += Check(Backend.Parents[2] == 1 && Backend.Parents[3] == 2 && Backend.Parents[4] == 2, "parenting mismatch");
     auto TextEvent = std::find(Backend.Events.begin(), Backend.Events.end(), "3:Text");
@@ -223,6 +228,10 @@ int main() {
         "Assertions") == 1, Lui_GetLastError(Runtime));
     Failures += Check(Lui_Activate(Runtime, 3) == 0, "destroyed button remained active");
     Failures += Check(Backend.Destroyed == 7, "destroyed descendants mismatch");
+    const char* AfterDestroy = Lui_GetPreviewTreeJson(Runtime);
+    Failures += Check(AfterDestroy && std::string(AfterDestroy).find("\"className\":\"Window\"") != std::string::npos &&
+        std::string(AfterDestroy).find("\"className\":\"TextButton\"") == std::string::npos,
+        "destroyed descendants remained in preview snapshot");
     Failures += Check(Lui_RunScript(Runtime, "print('hello', 42)", "Print") == 1, Lui_GetLastError(Runtime));
     Failures += Check(std::find(Backend.Logs.begin(), Backend.Logs.end(), "Print:hello\t42") != Backend.Logs.end(), "Luau print was not logged");
     Failures += Check(Lui_RunScript(Runtime, "error('expected diagnostic')", "Error") == 0, "expected script error");

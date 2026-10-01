@@ -212,6 +212,7 @@ struct LuiRuntime {
     std::vector<BackendChange> PendingChanges;
     std::deque<BackendEvent> PendingBackendEvents;
     std::string LastError;
+    std::string PreviewSnapshotJson;
     std::string BackendError;
     int NextNodeId = 1;
     int NextListenerId = 1;

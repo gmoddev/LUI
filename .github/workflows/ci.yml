@@ -37,6 +37,10 @@ jobs:
         run: ctest --test-dir build/linux-x64 --output-on-failure
       - name: CLI tests
         run: dotnet run --project tests/cli/CliTests.csproj --configuration Release -- build/linux-x64/libLuiRuntime.so
+      - name: Preview protocol tests
+        run: |
+          dotnet build tools/preview-host/Lui.PreviewHost.csproj --configuration Release
+          dotnet run --project tests/preview/PreviewTests.csproj --configuration Release -- tools/preview-host/bin/Release/net9.0/lui-preview-host.dll build/linux-x64/libLuiRuntime.so
       - name: Check generated schema
         run: |
           build/linux-x64/LuiSchemaDump > build/linux-x64/schema.json

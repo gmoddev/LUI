@@ -31,7 +31,7 @@ The [generated Luau definitions](types/LUI.d.luau) describe the implemented glob
 
 The [launcher dashboard demo](examples/dashboard/README.md) is an interactive Windows sample with discovery, search, project details, simulated installation, and session-only settings. It uses fictional data to exercise the current native controls.
 
-Foundation 3 has begun with the [developer CLI](docs/FOUNDATION-3.md): scaffold a project, check its manifest and Luau syntax without running it, launch the Windows host, and stage a package from a published host. Preview and editor tools are still planned.
+Foundation 3 includes the [developer CLI and isolated preview host](docs/FOUNDATION-3.md): scaffold a project, check its manifest and Luau syntax without running it, launch the Windows host, stage a package, and stream a versioned preview tree from a separate process. The VS Code editor tools remain planned.
 
 ## Design
 

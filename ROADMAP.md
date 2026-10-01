@@ -35,7 +35,7 @@ Include basic system theming (light, dark, high contrast, and change notificatio
 
 ## Foundation 3 — Developer experience
 
-**Status:** in progress. The first slice adds a .NET CLI with `new`, `check`, `run`, and `build` commands using the existing version 1 JSON application manifest. `check` compiles Luau syntax without executing source; type diagnostics, the isolated preview host, editor protocol and inspector, source provenance, native preview command, and generation-based hot reload remain to be built. See [Foundation 3 notes](docs/FOUNDATION-3.md).
+**Status:** in progress. The CLI provides `new`, `check`, `run`, `build`, and `preview` with the version 1 JSON manifest. A separate preview host uses the runtime's actual object tree and layout, versioned JSON lines, and generation-based runtime replacement. Type diagnostics, VS Code Explorer and inspector, source provenance, and native preview command remain. See [Foundation 3 notes](docs/FOUNDATION-3.md).
 
 Add the CLI, project manifest, preview host and versioned protocol, VS Code Explorer and inspector, source provenance, native preview, and generation-based hot reload.
 
@@ -53,4 +53,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Continue Foundation 3 with the isolated preview host and versioned protocol, then connect the VS Code Explorer and inspector. Keep higher-level async Luau results and the future native object ABI in separately versioned designs.
+Continue Foundation 3 by connecting the VS Code Explorer and inspector to the preview protocol. Keep higher-level async Luau results and the future native object ABI in separately versioned designs.

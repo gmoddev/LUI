@@ -1205,7 +1205,7 @@ lui pack
 lui docs
 ```
 
-The first Foundation 3 CLI slice implements `new`, `check`, `run`, and `build`. `check` validates the version 1 manifest and compiles the entry script without executing it; type diagnostics are not yet included. `run` launches the existing WinUI host on Windows. `build` stages a self-contained folder from an already published Windows host. `preview` remains a planned command until the isolated preview host and protocol exist.
+The Foundation 3 CLI implements `new`, `check`, `run`, `build`, and `preview`. `check` validates the version 1 manifest and compiles the entry script without executing it; type diagnostics are not yet included. `run` launches the existing WinUI host on Windows. `build` stages a self-contained folder from an already published Windows host. `preview` launches a separate headless host with a version 1 JSON-lines protocol and the actual runtime tree and resolved layout.
 
 ---
 
@@ -1363,7 +1363,7 @@ resizeViewport
 setTheme
 ```
 
-The protocol should be explicitly versioned.
+The protocol should be explicitly versioned. The implemented initial subset uses one UTF-8 JSON object per line, with `version: 1`, `type`, and `generation`. The host emits `hello`, `fullTree`, `diagnostic`, `consoleMessage`, and `runtimeError`. It accepts `reload`, `snapshot`, `activate`, `resizeViewport`, and `shutdown`; other message names above remain planned. A full tree contains live Instance IDs, parent IDs, class and display properties, state, and logical-unit bounds. Reload destroys the previous Luau VM and tree before incrementing the generation and rerunning the entry script. Commands against older generations are rejected. Protocol input is bounded and validated. The initial preview requires a manifest without privileged capabilities or native extensions and is not a native visual renderer.
 
 ---
 

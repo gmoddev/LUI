@@ -21,6 +21,7 @@ internal static class CliProgram
                     "  lui new <directory>\n" +
                     "  lui check [manifest] --runtime <LuiRuntime library>\n" +
                     "  lui run [manifest] --host <WinUI host directory or exe>\n" +
+                    "  lui preview [manifest] --host <preview-host dll or exe> --runtime <LuiRuntime library>\n" +
                     "  lui build [manifest] --host <published WinUI host directory> --output <empty directory> [--extensions <directory>]\n" +
                     "Default manifest: lui.json. Check compiles syntax without running the script; it does not typecheck yet.");
                 return 0;
@@ -55,6 +56,28 @@ internal static class CliProgram
                     CheckSource(Manifest, Path.Combine(Path.GetDirectoryName(Host)!, "LuiRuntime.dll"));
                     using Process Child = Process.Start(CreateRunStartInfo(Host, Position ?? "lui.json"))
                         ?? throw new IOException("Unable to start the WinUI host");
+                    Child.WaitForExit();
+                    return Child.ExitCode;
+                }
+                case "preview":
+                {
+                    RequireOptions(Options, "--host", "--runtime");
+                    string ManifestPath = Path.GetFullPath(Position ?? "lui.json");
+                    AppManifest.Load(ManifestPath);
+                    string Runtime = ResolveRuntime(Options.GetValueOrDefault("--runtime"));
+                    string Host = Path.GetFullPath(Required(Options, "--host"));
+                    if (!File.Exists(Host) || !(Host.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+                        Host.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
+                        throw new FileNotFoundException("Preview host DLL or executable was not found", Host);
+                    ProcessStartInfo Start = new(Host.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? "dotnet" : Host)
+                    {
+                        UseShellExecute = false,
+                        WorkingDirectory = Path.GetDirectoryName(ManifestPath)!,
+                    };
+                    if (Host.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) Start.ArgumentList.Add(Host);
+                    Start.ArgumentList.Add("--manifest"); Start.ArgumentList.Add(ManifestPath);
+                    Start.ArgumentList.Add("--runtime"); Start.ArgumentList.Add(Runtime);
+                    using Process Child = Process.Start(Start) ?? throw new IOException("Unable to start the preview host");
                     Child.WaitForExit();
                     return Child.ExitCode;
                 }
