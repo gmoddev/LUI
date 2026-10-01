@@ -9,7 +9,7 @@ using Microsoft.UI.Xaml.Media;
 
 namespace Lui.WinUI;
 
-internal sealed class WinUIBackend
+internal sealed class WinUIBackend : IDisposable
 {
     internal static void Diagnostic(string Message)
     {
@@ -28,6 +28,7 @@ internal sealed class WinUIBackend
         public bool IsAlive = true;
         public bool Visible = true;
         public bool Enabled = true;
+        public bool NativeClosed;
     }
 
     private readonly Dictionary<int, View> Views = new();
@@ -40,6 +41,10 @@ internal sealed class WinUIBackend
     private readonly IntPtr Runtime;
     private string LastReportedError = string.Empty;
     private int FocusedViewId;
+    private bool IsDisposed;
+    private bool IsDisposing;
+
+    public event Action? AllWindowsClosed;
 
     public string LastError => Marshal.PtrToStringUTF8(Native.Lui_GetLastError(Runtime)) ?? "unknown error";
 
@@ -63,6 +68,32 @@ internal sealed class WinUIBackend
             Arrange = ArrangeCallback,
             Destroy = DestroyCallback,
         });
+    }
+
+    public void Dispose()
+    {
+        if (IsDisposed || IsDisposing) return;
+        IsDisposing = true;
+        Native.Lui_Destroy(Runtime);
+        IsDisposed = true;
+        IsDisposing = false;
+    }
+
+    public void ConfigureManifest(AppManifest Manifest)
+    {
+        Native.CapabilityDeclaration Declaration = new()
+        {
+            StructSize = (uint)Marshal.SizeOf<Native.CapabilityDeclaration>(),
+            AbiVersion = 1,
+            GrantedCapabilities = Manifest.AllowNativeExtensions ? 1UL : 0UL,
+        };
+        if (Native.Lui_DeclareCapabilities(Runtime, ref Declaration) != 1)
+            throw new InvalidOperationException("Capability declaration failed: " + LastError);
+        foreach (string ExtensionPath in Manifest.ExtensionPaths)
+        {
+            if (Native.Lui_LoadExtension(Runtime, ExtensionPath) != 1)
+                throw new InvalidOperationException("Extension load failed: " + LastError);
+        }
     }
 
     public bool RunFile(string Path)
@@ -186,6 +217,13 @@ internal sealed class WinUIBackend
                     NewView.Window = new Microsoft.UI.Xaml.Window();
                     NewView.Container = new Canvas();
                     NewView.Window.Content = NewView.Container;
+                    NewView.Window.Closed += (_, _) =>
+                    {
+                        if (IsDisposing || !NewView.IsAlive) return;
+                        NewView.NativeClosed = true;
+                        if (Views.Values.Where(View => View.Window is not null).All(View => View.NativeClosed || !View.IsAlive))
+                            AllWindowsClosed?.Invoke();
+                    };
                     break;
                 case "Frame":
                     NewView.Container = new Canvas();
@@ -597,7 +635,7 @@ internal sealed class WinUIBackend
             if (FocusedViewId == Id) FocusedViewId = 0;
             if (Target.ParentId != 0 && Target.Element is not null && Views.TryGetValue(Target.ParentId, out View? Parent))
                 Parent.Container?.Children.Remove(Target.Element);
-            Target.Window?.Close();
+            if (!Target.NativeClosed) Target.Window?.Close();
             return 1;
         }
         catch (Exception Error) { return ReportBackendFailure("Destroy", Error); }
@@ -605,6 +643,13 @@ internal sealed class WinUIBackend
 
     private static class Native
     {
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct CapabilityDeclaration
+        {
+            internal uint StructSize;
+            internal uint AbiVersion;
+            internal ulong GrantedCapabilities;
+        }
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int CreateCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string ClassName);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -631,6 +676,12 @@ internal sealed class WinUIBackend
 
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr Lui_Create();
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void Lui_Destroy(IntPtr Runtime);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_DeclareCapabilities(IntPtr Runtime, ref CapabilityDeclaration Declaration);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_LoadExtension(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Path);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackend(IntPtr Runtime, BackendCallbacks Callbacks);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

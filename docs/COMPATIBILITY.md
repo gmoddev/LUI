@@ -1,6 +1,6 @@
 # Public compatibility policy
 
-LUI is currently experimental at version `0.0.1`. The implemented API is listed in [API.md](API.md); the broader [specification](SPEC.md) is a design target. No stable public package or extension ABI is published yet.
+LUI is currently experimental at version `0.0.1`. The implemented API is listed in [API.md](API.md); the broader [specification](SPEC.md) is a design target. No stable public package is published. The version 1 extension ABI exists for Foundation 2 development but is still experimental until a stable release.
 
 ## Semantic contract
 
@@ -15,6 +15,7 @@ LUI is currently experimental at version `0.0.1`. The implemented API is listed 
 - The CMake project version tracks the experimental application framework. Until a stable release, incompatible changes are permitted but must be recorded in the roadmap or a decision document.
 - `schemaVersion` in `types/schema.json` versions the generated metadata format. It is separate from the LUI framework version and must change when metadata consumers need a new parser.
 - Schema version 2 replaces name-only method and signal lists with typed entries and adds parent and container metadata. Consumers of version 1 must update their parser before using version 2.
-- `native/abi/LuiRuntime.h` is the current internal host callback boundary. Its functions are not the stable extension ABI planned for Foundation 2.
+- `native/abi/LuiRuntime.h` is the current internal host callback boundary. Its functions are not the separate extension ABI in `LuiExtension.h`.
+- `native/abi/LuiExtension.h` is the separate version 1 C extension contract. The loader requires an exact ABI version and checks structure sizes; an incompatible library is rejected before initialization. Extension-specific services appear in runtime reflection, not the static built-in type/schema files.
 
-Foundation 1 exits only after the shared semantic tests and the expanded Windows controls have been qualified. Future backend implementations must pass the same semantic expectations before claiming support.
+Foundation 1 passed its shared semantic tests and Windows desktop qualification on 2026-10-01. Future backend implementations must pass the same semantic expectations before claiming support.

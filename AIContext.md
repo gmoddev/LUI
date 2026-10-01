@@ -1,6 +1,6 @@
 # AI context for LUI
 
-Read this before making changes. **Foundations 0 and 1 are complete**: the native Luau runtime, Instance model, WinUI host, portable layout/control/input semantics, and headless conformance tests build. The user verified Foundation 0 interactive behavior on 2026-09-29; the native Foundation 1 mapping and input matrix passed on Windows on 2026-10-01. No CLI, production package, or other platform backend exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
+Read this before making changes. **Foundations 0 and 1 are complete**: the native Luau runtime, Instance model, WinUI host, portable layout/control/input semantics, and headless conformance tests build. The user verified Foundation 0 interactive behavior on 2026-09-29; the native Foundation 1 mapping and input matrix passed on Windows on 2026-10-01. Foundation 2 is in progress with a versioned experimental extension ABI, host capability grant, and WinUI manifest. No CLI, production package, or other platform backend exists. The [full specification](docs/SPEC.md) states the intended design; [ROADMAP.md](ROADMAP.md) gives milestone order and acceptance criteria.
 
 ## Project intent
 
@@ -25,6 +25,8 @@ Build a native desktop framework where ordinary Luau application code uses Roblo
 5. State exactly what was built and verified, including platform and tooling limitations.
 
 Foundation 0's internal C host callbacks are in `native/abi/LuiRuntime.h`. They are not the stable extension ABI described for Foundation 2. The runtime reflection table in `runtime/reflection/Schema.cpp` gates implemented classes, properties, methods, signals, and parenting, and generates `types/LUI.d.luau`, `types/schema.json`, and `docs/API.md`. See [Foundation 1 progress](docs/FOUNDATION-1.md) for current scope and remaining qualification.
+
+Foundation 2's experimental extension contract is [native/abi/LuiExtension.h](native/abi/LuiExtension.h). `LuiRuntime.h` remains the internal host interface and now exposes host-only capability declaration, extension loading, and runtime-specific extension reflection. Extension service methods are registered before the first script and do not appear in the static built-in type file. See [Foundation 2 notes](docs/FOUNDATION-2.md).
 
 The Windows build checks the generated definitions with the pinned Luau type checker. Direct constructor property tables currently use `any` in overloads; annotate a table with a generated `ClassNameInit` type to statically check its fields.
 

@@ -26,6 +26,8 @@ Backend contract
 
 The canonical input and focus state machine is in [runtime/input/Input.cpp](../runtime/input/Input.cpp). It validates backend notifications and fires signals through the runtime's scheduler boundary. Backends only map native events into the internal host callback contract.
 
+The experimental version 1 [extension ABI](../native/abi/LuiExtension.h) is separate from that internal contract. The host declares capabilities before loading any extension, then registers extension service methods through a C function table. These services appear in runtime-specific reflection; the built-in generated schema stays backend independent. Native worker completion marshaling remains a Foundation 2 task.
+
 ## Testing contract
 
 The shared conformance suite should cover parenting, destruction, properties, signals, layout, visibility, focus, activation, disabled state, lifecycle, scheduler behavior, and testable accessibility mappings. Native backend qualification supplements headless tests.

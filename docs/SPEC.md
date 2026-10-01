@@ -964,6 +964,8 @@ This enables extensions written in:
 - Zig;
 - other languages capable of implementing a C ABI.
 
+Foundation 2's initial implementation uses [LuiExtension.h](../native/abi/LuiExtension.h) with version 1 query, init, and shutdown exports. The query reports required capabilities before initialization. A host must explicitly grant `NativeExtensions` before loading a DLL; normal Luau code cannot grant it. The current implementation registers primitive service methods and reflects them per runtime. Object handles and additional registration kinds remain design targets.
+
 ---
 
 # 30. Extension registration
@@ -993,6 +995,8 @@ log
 The C ABI should be versioned explicitly.
 
 Internal C++ types must never cross the stable ABI boundary.
+
+The version 1 implemented host table currently offers method registration, structured logging, error reporting, and bounded owner-thread completion scheduling. The broader registration list above is future work. Failed initialization rolls back registered methods and unloads the library; compatible extensions load before the first application script.
 
 ---
 

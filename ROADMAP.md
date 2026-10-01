@@ -25,6 +25,8 @@ Define and test property defaults and validation, lifecycle, layout, input, focu
 
 ## Foundation 2 — Native integration and production Windows
 
+**Status:** in progress. The [Foundation 2 notes](docs/FOUNDATION-2.md) track the experimental version 1 C extension ABI, explicit native-code grant, safe loader rollback, dynamic service reflection, owner-thread worker completions, and versioned WinUI application manifest. Windows extension and manifest tests pass; production services and desktop qualification remain.
+
 Add the C++ host API, versioned C extension ABI, capability declaration, worker completion marshaling, dialogs, clipboard, assets, accessibility and DPI qualification, Windows packaging, and deliberate platform interop.
 
 Include basic system theming (light, dark, high contrast, and change notifications) and capability enforcement for trusted and sandboxed applications, including execution and memory limits and restrictions on services, filesystem access, and native extensions.
@@ -49,4 +51,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Begin Foundation 2 with a versioned C extension ABI and capability declaration at the native host boundary. Keep the portable Foundation 1 semantics and shared conformance suite as the baseline for each integration step.
+Extend the manifest capability model and Windows services, starting with clipboard and dialogs, while preserving the shared Foundation 1 conformance baseline. Add higher-level async Luau results on top of the new owner-thread completion queue.

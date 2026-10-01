@@ -3,6 +3,7 @@
 #include "internal/State.h"
 #include "internal/Dispatch.h"
 #include "internal/Input.h"
+#include "internal/Extensions.h"
 #include "internal/Diagnostics.h"
 #include "../ui/layout/Layout.h"
 
@@ -970,21 +971,25 @@ static int WindowServiceGetWindows(lua_State* State) {
 }
 
 static int PlatformServiceSupports(lua_State* State) {
-    luaL_checkstring(State, 2);
-    lua_pushboolean(State, false);
+    const char* Capability = luaL_checkstring(State, 2);
+    auto* Runtime = GetRuntime(State);
+    lua_pushboolean(State, std::string(Capability) == "NativeExtensions" &&
+        (Runtime->GrantedCapabilities & LUI_CAPABILITY_NATIVE_EXTENSIONS) != 0);
     return 1;
 }
 
 static int AppGetService(lua_State* State) {
     const std::string Name = luaL_checkstring(State, 2);
-    if (!LuiSchema::FindService(Name)) luaL_error(State, "unknown service '%s'", Name.c_str());
     auto* Runtime = GetRuntime(State);
+    if (!LuiSchema::FindService(Name) && !HasExtensionService(Runtime, Name))
+        luaL_error(State, "unknown service '%s'", Name.c_str());
     auto Found = Runtime->ServiceRefs.find(Name);
     if (Found != Runtime->ServiceRefs.end()) {
         lua_getref(State, Found->second);
         return 1;
     }
-    lua_newtable(State);
+    if (HasExtensionService(Runtime, Name)) PushExtensionService(State, Runtime, Name);
+    else lua_newtable(State);
     if (Name == "WindowService") {
         lua_pushcfunction(State, WindowServiceGetWindows, "WindowService.GetWindows");
         lua_setfield(State, -2, "GetWindows");
@@ -1090,11 +1095,12 @@ extern "C" LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* C
 extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* Source, const char* ChunkName) {
     if (!CheckOwner(Runtime) || !Source) return 0;
     if (Runtime->BackendFailed) return 0;
-    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) {
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) {
         Runtime->LastError = "[LUI:Scheduler] Cannot run a script during an active dispatch";
         EmitLog(Runtime, "Error", Runtime->LastError);
         return 0;
     }
+    Runtime->ApplicationStarted = true;
     try {
         const std::string Bytecode = Luau::compile(Source);
         int Status = luau_load(Runtime->State, ChunkName ? ChunkName : "LUI", Bytecode.data(), Bytecode.size(), 0);
@@ -1254,12 +1260,12 @@ static void DrainBackendEvents(LuiRuntime* Runtime) {
 extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return 0;
     if (Runtime->BackendFailed) return 0;
-    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) {
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) {
         Runtime->LastError = "[LUI:Scheduler] Cannot pump during an active dispatch";
         EmitLog(Runtime, "Error", Runtime->LastError);
         return 0;
     }
-    int Count = 0;
+    int Count = DrainUiCompletions(Runtime);
     const auto Now = std::chrono::steady_clock::now();
     std::vector<ScheduledCall> Pending;
     Pending.swap(Runtime->Tasks);
@@ -1291,10 +1297,15 @@ extern "C" LUI_API const char* LUI_CALL Lui_GetSchemaJson(void) {
 
 extern "C" LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return;
-    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) {
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) {
         Runtime->LastError = "[LUI:Scheduler] Cannot destroy the runtime during an active dispatch";
         EmitLog(Runtime, "Error", Runtime->LastError);
         return;
+    }
+    {
+        std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex);
+        Runtime->ShuttingDown = true;
+        Runtime->PendingUiCompletions.clear();
     }
     for (auto& Pair : Runtime->Nodes) {
         if (!Pair.second->Destroyed && Pair.second->ClassName == "Window") DestroyNode(Runtime, Pair.second.get());
@@ -1303,5 +1314,6 @@ extern "C" LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime) {
     for (const auto& Call : Runtime->Tasks) lua_unref(Runtime->State, Call.Reference);
     for (const auto& Pair : Runtime->ServiceRefs) lua_unref(Runtime->State, Pair.second);
     lua_close(Runtime->State);
+    CloseExtensions(Runtime);
     delete Runtime;
 }

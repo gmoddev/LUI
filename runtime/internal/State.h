@@ -3,8 +3,10 @@
 #include "LuiRuntime.h"
 
 #include <chrono>
+#include <atomic>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -124,6 +126,27 @@ struct BackendEvent {
     std::string Text;
 };
 
+struct ExtensionMethod {
+    std::string ExtensionName;
+    std::string ServiceName;
+    std::string Name;
+    std::string Type;
+    LuiExtensionMethodV1 Callback = nullptr;
+    void* Context = nullptr;
+};
+
+struct LoadedExtension {
+    std::string Name;
+    void* Library = nullptr;
+    LuiExtensionShutdownV1 Shutdown = nullptr;
+    void* Context = nullptr;
+};
+
+struct PendingUiCompletion {
+    LuiUiCompletionV1 Callback = nullptr;
+    void* Context = nullptr;
+};
+
 struct LuiRuntime {
     lua_State* State = nullptr;
     std::thread::id Owner;
@@ -131,6 +154,19 @@ struct LuiRuntime {
     void* LogContext = nullptr;
     LuiLogCallback LogCallback = nullptr;
     std::string BackendName = "headless";
+    uint64_t GrantedCapabilities = 0;
+    bool CapabilitiesDeclared = false;
+    bool ApplicationStarted = false;
+    bool InitializingExtension = false;
+    bool UiCompletionRunning = false;
+    std::atomic<bool> ShuttingDown{false};
+    std::mutex CompletionMutex;
+    std::deque<PendingUiCompletion> PendingUiCompletions;
+    std::string InitializingExtensionName;
+    std::string ExtensionError;
+    std::string ExtensionSchemaJson;
+    std::vector<std::unique_ptr<ExtensionMethod>> ExtensionMethods;
+    std::vector<LoadedExtension> Extensions;
     std::unordered_map<std::string, int> ServiceRefs;
     std::unordered_map<int, std::unique_ptr<Node>> Nodes;
     std::unordered_map<int, Listener> Listeners;
