@@ -19,3 +19,6 @@ CMakeCache.txt
 *.log
 .DS_Store
 Thumbs.db
+
+# Local source archives
+LUI.zip
