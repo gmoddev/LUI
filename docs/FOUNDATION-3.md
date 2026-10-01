@@ -54,4 +54,4 @@ On Windows, run **LUI: Open Native Preview** to launch the same manifest with th
 
 The runtime headless suite checks source compilation, provenance, and authoritative preview snapshots. CLI tests cover scaffolding, shared manifest validation, syntax diagnostics, Windows package staging, and launch argument construction. The preview process test covers the versioned protocol, resolved layout, provenance, activation, generation reset, stale and invalid commands, viewport resize, and cancellation of a delayed callback from an old generation. Node tests validate editor tree, reflection, source locations, native launcher process lifecycle, and error recovery through the real preview host. Windows and Linux CI run these tests with their native runtimes. The user visually confirmed the initial VS Code Explorer and layout view on 2026-10-01; the source controls and native launch command still need visual qualification.
 
-Next: add Luau type diagnostics.
+Next within Foundation 3: add Luau type diagnostics. The newly planned Networking Foundation A takes the [current roadmap priority](../ROADMAP.md#current-next-step) before that editor work.

@@ -25,13 +25,25 @@ Define and test property defaults and validation, lifecycle, layout, input, focu
 
 ## Foundation 2 — Native integration and production Windows
 
-**Status:** complete for the defined Windows exit criteria. The [Foundation 2 exit audit](docs/FOUNDATION-2.md#exit-audit) records the version 1 primitive C extension ABI, C++ host facade, owner-thread signals, VM sandbox quotas, capability-gated Windows services, themes, assets, self-contained folder, and passing desktop qualification on 2026-10-01. Opaque native objects and raw window handles require a later ABI design; broader DPI, high-contrast, and assistive-technology checks remain qualification follow-up.
+**Status:** complete for the defined Windows exit criteria. The [Foundation 2 exit audit](docs/FOUNDATION-2.md#exit-audit) records the version 1 primitive C extension ABI, C++ host facade, owner-thread signals, VM sandbox quotas, capability-gated Windows services, themes, assets, self-contained folder, and passing desktop qualification on 2026-10-01. Networking Foundation A is an added Foundation 2 follow-on, not part of that completed audit. Opaque native objects and raw window handles require a later ABI design; broader DPI, high-contrast, and assistive-technology checks remain qualification follow-up.
 
 Add the C++ host API, versioned C extension ABI, capability declaration, worker completion marshaling, dialogs, clipboard, assets, accessibility and DPI qualification, Windows packaging, and deliberate platform interop.
 
 Include basic system theming (light, dark, high contrast, and change notifications) and capability enforcement for trusted and sandboxed applications, including execution and memory limits and restrictions on services, filesystem access, and native extensions.
 
 **Exit criteria:** a standalone Windows application can bind a native service, ship with only declared capabilities, handle extension load failure safely, and pass the Windows conformance suite.
+
+### Networking Foundation A — async runtime and TCP (planned Foundation 2 follow-on)
+
+Define a shared owner-thread async completion and coroutine-resumption contract, then implement runtime-owned TCP listening, connecting, accept, read, write, shutdown, cancellation, and bounded backpressure. Use an internal, pinned transport library after dependency review. The public Luau service must not expose native socket handles or depend on a UI backend. Add `network.client`, `network.server`, and `network.raw` grants before enabling access. Qualify the same semantics with Windows and Linux headless tests; this does not require a Linux UI backend. See [networking specification](docs/SPEC.md#53-networking-and-hosted-endpoints-planned) and [proposal](docs/proposals/NETWORKING-ARCHITECTURE.md).
+
+### Networking Foundation B — HTTP (planned)
+
+Build outbound `HttpService` and a loopback-default `HttpServerService` on the proven transport. Include strict HTTP/1.1 framing, bounded requests and responses, ordered persistent connections, scheduler-thread route handlers, timeouts, and malformed-request regression tests.
+
+### Networking Foundation C — UDP and TLS (planned)
+
+Add bounded UDP datagrams and a portable TLS provider contract with validated client certificates and explicit server credentials. Qualify shutdown, cancellation, and resource limits on both platforms. WebSocket, HTTP/2, HTTP/3, and streaming bodies remain later work.
 
 ## Foundation 3 — Developer experience
 
@@ -53,4 +65,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Continue Foundation 3 with Luau type diagnostics. Keep higher-level async Luau results and the future native object ABI in separately versioned designs.
+Begin Networking Foundation A with the shared async operation and scheduler-resumption contract, then the TCP transport and cross-platform headless tests. Continue Foundation 3's Luau type diagnostics after that. Keep the future native object ABI separately versioned.

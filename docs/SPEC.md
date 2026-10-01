@@ -2254,3 +2254,39 @@ The canonical design rule remains:
 > **Simple Luau surface. Rigorous native machinery underneath.**
 
 LUI succeeds when an application developer can build ordinary desktop software without needing to learn the underlying desktop UI stack, while still having deliberate routes into native code when the abstraction genuinely needs to be crossed.
+
+---
+
+# 53. Networking and hosted endpoints (planned)
+
+LUI should support ordinary desktop networking without requiring an application native extension. The public surfaces are planned as `app:GetService("HttpService")` for outbound HTTP and JSON/URL helpers, `app:GetService("HttpServerService")` for hosted endpoints, and `app:GetService("NetworkService")` for raw TCP/UDP. These services, their methods, and their types are **not implemented**. Their design input is preserved in the [networking proposal](proposals/NETWORKING-ARCHITECTURE.md); [decision 0022](decisions/0022-networking-scope.md) records the current scope and unresolved contracts.
+
+## Placement and async boundary
+
+Networking belongs to the portable runtime and platform-services layer. WinUI, GTK, and the preview renderer must not define network semantics. An internal transport library may use IOCP, epoll, or another platform mechanism; no native socket handle, file descriptor, completion port, or transport-library object reaches ordinary Luau. Standalone Asio is the leading candidate and must be pinned and qualified before use. LUI owns the public address, error, resource, and lifecycle contracts.
+
+Async operations must suspend only the calling Luau task. A network worker may resolve DNS or perform I/O, but may not enter Luau, mutate an Instance, or synchronously reenter the VM. It posts a bounded result to the authoritative scheduler, which resumes the task. This requires a common operation state with exactly one terminal completion, failure, or cancellation, plus teardown on runtime destruction. The current callback-style platform completion path does not yet provide this yielding contract.
+
+## Access and binding
+
+The host declares network grants before scripts. Planned grants are `network.client` for outbound HTTP and connections, `network.server` for listeners and HTTP hosting, and `network.raw` in addition to the relevant direction grant for direct TCP/UDP primitives. The default grant set remains empty. Host policy may further restrict destinations, bind addresses, and ports. The headless preview must deny networking unless an explicitly designed preview policy grants it. Neither a Luau script nor a native backend may grant itself more access.
+
+The initial listener address defaults to `loopback`. `any` and a specific non-loopback numeric local IP are explicit bind choices. Listener binding accepts semantic tokens or numeric local addresses, not DNS hostnames. Outbound connection APIs may resolve hostnames. No bind failure silently falls back to another interface. Port zero asks the OS for an ephemeral port, exposed through the resulting listener's read-only `Port` and `BoundEndpoints` values. `IPv4`, `IPv6`, and `DualStack` are the planned family choices; numeric literals imply their family and reject a contradictory choice. Dual-family binding must set IPv6-only behavior explicitly and make partial-bind rollback and shared-port selection deterministic. Behavior when one address family is unavailable must be settled and tested before this API is stable. LUI never modifies firewall rules on its own.
+
+## Raw transport semantics
+
+`NetworkService` should expose `ListenTcp`, `ConnectTcp`, and later `BindUdp`. A TCP listener offers `AcceptAsync` and an idempotent `Close`. A TCP connection offers `ReadAsync`, `ReadExactAsync`, ordered `WriteAsync`, `Shutdown`, and idempotent `Close`. TCP is a byte stream: reads return 1..N bytes up to a bounded request size, or `nil` after clean EOF; they do not preserve writes as messages. A reset or other failure uses a portable `NetworkError` code. One connection rejects concurrent reads and bounds queued write bytes. A local close cancels pending operations and resumes waiting tasks once. Writes complete the supplied byte sequence or fail; completion does not promise peer application consumption. Binary reads use Luau `buffer`, while writes may accept `string` or `buffer`.
+
+UDP retains datagram boundaries with `ReceiveFromAsync` and `SendToAsync`. It must bound message sizes and reject oversize sends rather than split a datagram. The address-family and path MTU can reduce the actual sendable payload below any policy ceiling. DNS and multi-address outbound connection selection should avoid long serial IPv4/IPv6 stalls, informed by Happy Eyeballs v2.
+
+Every transport resource has hard limits on connections, pending accepts, reads, writes, completions, and memory. Slow peers apply backpressure. Exceeding a limit yields a portable error, never an unbounded queue. Worker and scheduler errors must not surface as modal UI or remote stack traces.
+
+## HTTP and TLS layering
+
+`HttpServerService` should default to loopback, accept exact method/path routes initially, and dispatch handlers as scheduler tasks after complete bounded request parsing. Initial HTTP/1.1 support should reject ambiguous or malformed framing before application code, including requests that combine `Transfer-Encoding` and `Content-Length`. Persistent connections must consume or reject each request body fully and process responses in deterministic order. Limits cover request line, header count and bytes, body, active requests, queued responses, and timeouts. Unhandled handler failures produce a generic remote response and a local structured diagnostic. `HttpService` should share the transport, capability, timeout, and TLS policy with hosted HTTP rather than becoming an unrelated HTTP stack.
+
+TLS is a later provider boundary for both client and server use. Server credentials are opaque LUI objects or host configuration; ordinary Luau never receives a native credential handle. Certificate validation is on by default and cannot be silently disabled. WebSocket, HTTP/2, HTTP/3, streaming bodies, multipart, proxy support, and local IPC are later extensions.
+
+## Delivery order and qualification
+
+Networking Foundation A is a Foundation 2 follow-on: first the scheduler's yielding async operation, then TCP and its capability checks, then the same headless conformance on Windows and Linux. Foundation B adds outbound and hosted HTTP plus malformed-request and request-smuggling regressions. Foundation C adds UDP and TLS. Existing Foundation 2 Windows exit criteria remain complete; this new track does not imply those audits tested networking. Only implemented services enter reflection metadata, generated Luau definitions, API documentation, and the editor schema.
