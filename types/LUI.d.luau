@@ -152,7 +152,47 @@ export type AssetService = {
     read Has: (Self: AssetService, Name: string) -> boolean,
 }
 
-export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) }
+export type NetworkService = {
+    read ListenTcp: (Self: NetworkService, Options: NetworkListenOptions) -> TcpListener,
+    read ConnectTcp: (Self: NetworkService, Options: NetworkConnectOptions) -> TcpConnection,
+}
+
+export type NetworkEndpoint = {
+    read Address: string,
+    read Port: number,
+}
+
+export type NetworkListenOptions = {
+    Address: string?,
+    Family: ("IPv4" | "IPv6")?,
+    Port: number,
+}
+
+export type NetworkConnectOptions = {
+    Address: string?,
+    Port: number,
+}
+
+export type TcpListener = {
+    read IsListening: boolean,
+    read Port: number,
+    read BoundEndpoints: {NetworkEndpoint},
+    read AcceptAsync: (Self: TcpListener) -> TcpConnection,
+    read Close: (Self: TcpListener) -> (),
+}
+
+export type TcpConnection = {
+    read IsOpen: boolean,
+    read LocalEndpoint: NetworkEndpoint,
+    read RemoteEndpoint: NetworkEndpoint,
+    read ReadAsync: (Self: TcpConnection, MaxBytes: number?) -> buffer?,
+    read ReadExactAsync: (Self: TcpConnection, Bytes: number) -> buffer,
+    read WriteAsync: (Self: TcpConnection, Data: string | buffer) -> (),
+    read Shutdown: (Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> (),
+    read Close: (Self: TcpConnection) -> (),
+}
+
+export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) & ((Self: App, Name: "NetworkService") -> NetworkService) }
 
 export type WindowInit = {
     Name: string?,

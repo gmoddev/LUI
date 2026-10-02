@@ -493,7 +493,8 @@ extern "C" LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime,
     if (!Declaration || Declaration->StructSize < sizeof(LuiCapabilityDeclarationV1) ||
         Declaration->AbiVersion != LUI_EXTENSION_ABI_VERSION ||
         (Declaration->GrantedCapabilities & ~(LUI_CAPABILITY_NATIVE_EXTENSIONS | LUI_CAPABILITY_HOST_SERVICES |
-            LUI_CAPABILITY_CLIPBOARD | LUI_CAPABILITY_DIALOGS)))
+            LUI_CAPABILITY_CLIPBOARD | LUI_CAPABILITY_DIALOGS | LUI_CAPABILITY_NETWORK_CLIENT |
+            LUI_CAPABILITY_NETWORK_SERVER | LUI_CAPABILITY_NETWORK_RAW)))
         return Fail(Runtime, "invalid capability declaration");
     if (Runtime->CapabilitiesDeclared || Runtime->ApplicationStarted || !Runtime->Extensions.empty())
         return Fail(Runtime, "capabilities must be declared once before scripts or extensions");

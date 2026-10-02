@@ -6,6 +6,8 @@
 #include "internal/Extensions.h"
 #include "internal/Platform.h"
 #include "internal/Diagnostics.h"
+#include "internal/Scheduler.h"
+#include "internal/Network.h"
 #include "../ui/layout/Layout.h"
 
 #include "Luau/Compiler.h"
@@ -966,7 +968,12 @@ static int UDim2FromScale(lua_State* State) {
 static int TaskSchedule(lua_State* State) {
     luaL_checktype(State, 1, LUA_TFUNCTION);
     auto* Runtime = GetRuntime(State);
-    int Reference = lua_ref(State, 1);
+    lua_State* Thread = lua_newthread(State);
+    if (Runtime->Sandboxed) luaL_sandboxthread(Thread);
+    int Reference = lua_ref(State, -1);
+    lua_pop(State, 1);
+    lua_pushvalue(State, 1);
+    lua_xmove(State, Thread, 1);
     Runtime->Tasks.push_back({Reference, std::chrono::steady_clock::now()});
     return 0;
 }
@@ -976,7 +983,12 @@ static int TaskDelay(lua_State* State) {
     luaL_checktype(State, 2, LUA_TFUNCTION);
     if (!std::isfinite(Seconds) || Seconds < 0) luaL_error(State, "delay must be finite and nonnegative");
     auto* Runtime = GetRuntime(State);
-    int Reference = lua_ref(State, 2);
+    lua_State* Thread = lua_newthread(State);
+    if (Runtime->Sandboxed) luaL_sandboxthread(Thread);
+    int Reference = lua_ref(State, -1);
+    lua_pop(State, 1);
+    lua_pushvalue(State, 2);
+    lua_xmove(State, Thread, 1);
     Runtime->Tasks.push_back({Reference, std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(Seconds * 1000))});
     return 0;
 }
@@ -1051,7 +1063,10 @@ static int PlatformServiceSupports(lua_State* State) {
         (Name == "HostServices" &&
         (!Runtime->Sandboxed || (Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES) != 0)) ||
         (Name == "Clipboard" && PlatformServiceAvailable(Runtime, "ClipboardService")) ||
-        (Name == "Dialogs" && PlatformServiceAvailable(Runtime, "DialogService")));
+        (Name == "Dialogs" && PlatformServiceAvailable(Runtime, "DialogService")) ||
+        (Name == "network.client" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT) != 0) ||
+        (Name == "network.server" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) != 0) ||
+        (Name == "network.raw" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW) != 0));
     return 1;
 }
 
@@ -1113,6 +1128,9 @@ static int AppGetService(lua_State* State) {
     if ((Name == "ClipboardService" || Name == "DialogService") &&
         !PlatformServiceAvailable(Runtime, Name))
         luaL_error(State, "%s capability was not granted or backend is unavailable", Name.c_str());
+    if (Name == "NetworkService" &&
+        !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW))
+        luaL_error(State, "network.raw capability was not granted");
     auto Found = Runtime->ServiceRefs.find(Name);
     if (Found != Runtime->ServiceRefs.end()) {
         lua_getref(State, Found->second);
@@ -1121,6 +1139,7 @@ static int AppGetService(lua_State* State) {
     if (HasExtensionService(Runtime, Name)) PushExtensionService(State, Runtime, Name);
     else if (Name == "ClipboardService" || Name == "DialogService")
         PushPlatformService(State, Runtime, Name);
+    else if (Name == "NetworkService") PushNetworkService(State);
     else if (Name == "ThemeService") {
         lua_newuserdata(State, 1);
         lua_getfield(State, LUA_REGISTRYINDEX, "LuiThemeServiceMeta");
@@ -1150,6 +1169,7 @@ static void RegisterGlobals(lua_State* State) {
     RegisterMeta(State, "LuiSignalMeta", SignalIndex);
     RegisterMeta(State, "LuiConnectionMeta", ConnectionIndex);
     RegisterMeta(State, "LuiThemeServiceMeta", ThemeServiceIndex, ThemeServiceNewIndex);
+    RegisterNetworkTypes(State);
     lua_newtable(State);
     lua_pushcfunction(State, InstanceNew, "Instance.new");
     lua_setfield(State, -2, "new");
@@ -1477,6 +1497,44 @@ static void DrainBackendEvents(LuiRuntime* Runtime) {
     Runtime->DrainingBackendEvents = false;
 }
 
+void ResumeScheduledTask(LuiRuntime* Runtime, int Reference, int ArgumentCount, bool AsError) {
+    lua_getref(Runtime->State, Reference);
+    lua_State* Thread = lua_tothread(Runtime->State, -1);
+    lua_pop(Runtime->State, 1);
+    if (!Thread) {
+        Runtime->LastError = "[LUI:Scheduler] scheduled coroutine is missing";
+        EmitLog(Runtime, "Error", Runtime->LastError);
+        lua_unref(Runtime->State, Reference);
+        return;
+    }
+    const int PreviousReference = Runtime->ActiveTaskReference;
+    lua_State* PreviousThread = Runtime->ActiveTaskThread;
+    const bool PreviousWaiter = Runtime->ActiveTaskHasWaiter;
+    Runtime->ActiveTaskReference = Reference;
+    Runtime->ActiveTaskThread = Thread;
+    Runtime->ActiveTaskHasWaiter = false;
+    int Status;
+    {
+        DepthGuard Guard(Runtime->VmDepth, Runtime);
+        Status = AsError ? lua_resumeerror(Thread, Runtime->State)
+            : lua_resume(Thread, Runtime->State, ArgumentCount);
+    }
+    const bool HasWaiter = Runtime->ActiveTaskHasWaiter;
+    Runtime->ActiveTaskReference = PreviousReference;
+    Runtime->ActiveTaskThread = PreviousThread;
+    Runtime->ActiveTaskHasWaiter = PreviousWaiter;
+    if (Status == LUA_YIELD && HasWaiter) return;
+    if (Status != LUA_OK) {
+        const char* Message = Status == LUA_YIELD
+            ? "[LUI:Scheduler] task yielded without a registered async operation"
+            : lua_tostring(Thread, -1);
+        Runtime->LastError = Message ? Message : "[LUI:Scheduler] scheduled task failed";
+        EmitLog(Runtime, "Error", "Scheduler: " + Runtime->LastError);
+    }
+    lua_settop(Thread, 0);
+    lua_unref(Runtime->State, Reference);
+}
+
 extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return 0;
     if (Runtime->BackendFailed) return 0;
@@ -1486,22 +1544,14 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         return 0;
     }
     DeliverTheme(Runtime);
-    int Count = DrainUiCompletions(Runtime) + DrainPlatformRequests(Runtime);
+    int Count = DrainUiCompletions(Runtime) + DrainPlatformRequests(Runtime) + DrainNetworkCompletions(Runtime);
     const auto Now = std::chrono::steady_clock::now();
     std::vector<ScheduledCall> Pending;
     Pending.swap(Runtime->Tasks);
     for (const auto& Call : Pending) {
         if (Runtime->BackendFailed) break;
         if (Call.Due > Now) { Runtime->Tasks.push_back(Call); continue; }
-        lua_getref(Runtime->State, Call.Reference);
-        DepthGuard Guard(Runtime->VmDepth, Runtime);
-        if (lua_pcall(Runtime->State, 0, 0, 0) != LUA_OK) {
-            const char* Message = lua_tostring(Runtime->State, -1);
-            Runtime->LastError = Message ? Message : "scheduled callback failed";
-            EmitLog(Runtime, "Error", "Scheduler: " + Runtime->LastError);
-            lua_pop(Runtime->State, 1);
-        }
-        lua_unref(Runtime->State, Call.Reference);
+        ResumeScheduledTask(Runtime, Call.Reference, 0);
         ++Count;
     }
     FlushLayout(Runtime);
@@ -1543,6 +1593,7 @@ extern "C" LUI_API void LUI_CALL Lui_Destroy(LuiRuntime* Runtime) {
         Runtime->ShuttingDown = true;
         Runtime->PendingUiCompletions.clear();
     }
+    CloseNetwork(Runtime);
     for (auto& Pair : Runtime->Nodes) {
         if (!Pair.second->Destroyed && Pair.second->ClassName == "Window") DestroyNode(Runtime, Pair.second.get());
     }

@@ -113,7 +113,10 @@ internal sealed class WinUIBackend : IDisposable
             GrantedCapabilities = (Manifest.AllowNativeExtensions ? 1UL : 0UL) |
                 (Manifest.AllowHostServices ? 2UL : 0UL) |
                 (Manifest.AllowClipboard ? 4UL : 0UL) |
-                (Manifest.AllowDialogs ? 8UL : 0UL),
+                (Manifest.AllowDialogs ? 8UL : 0UL) |
+                (Manifest.AllowNetworkClient ? 16UL : 0UL) |
+                (Manifest.AllowNetworkServer ? 32UL : 0UL) |
+                (Manifest.AllowNetworkRaw ? 64UL : 0UL),
         };
         if (Native.Lui_DeclareCapabilities(Runtime, ref Declaration) != 1)
             throw new InvalidOperationException("Capability declaration failed: " + LastError);

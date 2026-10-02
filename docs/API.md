@@ -214,3 +214,41 @@ Base: `UIComponent`. Creatable: `true`.
 - `ClipboardService`: WriteText, ReadText
 - `DialogService`: OpenFile
 - `AssetService`: Has
+- `NetworkService`: ListenTcp, ConnectTcp
+
+## Networking value and resource types
+
+### NetworkEndpoint
+
+- `Address`: `string`
+- `Port`: `number`
+
+### NetworkListenOptions
+
+- `Address`: `string?`
+- `Family`: `("IPv4" | "IPv6")?`
+- `Port`: `number`
+
+### NetworkConnectOptions
+
+- `Address`: `string?`
+- `Port`: `number`
+
+### TcpListener
+
+- `IsListening`: `boolean`
+- `Port`: `number`
+- `BoundEndpoints`: `{NetworkEndpoint}`
+- `AcceptAsync`: `(Self: TcpListener) -> TcpConnection`
+- `Close`: `(Self: TcpListener) -> ()`
+
+### TcpConnection
+
+- `IsOpen`: `boolean`
+- `LocalEndpoint`: `NetworkEndpoint`
+- `RemoteEndpoint`: `NetworkEndpoint`
+- `ReadAsync`: `(Self: TcpConnection, MaxBytes: number?) -> buffer?`
+- `ReadExactAsync`: `(Self: TcpConnection, Bytes: number) -> buffer`
+- `WriteAsync`: `(Self: TcpConnection, Data: string | buffer) -> ()`
+- `Shutdown`: `(Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> ()`
+- `Close`: `(Self: TcpConnection) -> ()`

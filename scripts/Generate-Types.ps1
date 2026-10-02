@@ -59,6 +59,18 @@ foreach ($Service in $Schema.services) {
     $Types.Add('}')
     $Types.Add('')
 }
+foreach ($Object in $Schema.objects) {
+    $Types.Add("export type $($Object.name) = {")
+    foreach ($Property in $Object.properties) {
+        $Access = if ($Object.name.EndsWith('Options')) { '' } else { 'read ' }
+        $Types.Add("    $Access$($Property.name): $($Property.type),")
+    }
+    foreach ($Method in $Object.methods) {
+        $Types.Add("    read $($Method.name): $($Method.type),")
+    }
+    $Types.Add('}')
+    $Types.Add('')
+}
 $ServiceOverloads = @($Schema.services | ForEach-Object { "((Self: App, Name: `"$($_.name)`") -> $($_.name))" })
 $Types.Add("export type App = { read GetService: $($ServiceOverloads -join ' & ') }")
 $Types.Add('')
@@ -160,6 +172,19 @@ $Docs.Add('')
 foreach ($Service in $Schema.services) {
     $Names = @($Service.methods | ForEach-Object name) + @($Service.signals | ForEach-Object name)
     $Docs.Add("- ``$($Service.name)``: $($Names -join ', ')")
+}
+$Docs.Add('')
+$Docs.Add('## Networking value and resource types')
+$Docs.Add('')
+foreach ($Object in $Schema.objects) {
+    $Docs.Add("### $($Object.name)")
+    $Docs.Add('')
+    foreach ($Property in $Object.properties) { $Docs.Add("- ``$($Property.name)``: ``$($Property.type)``") }
+    foreach ($Method in $Object.methods) { $Docs.Add("- ``$($Method.name)``: ``$($Method.type)``") }
+    $Docs.Add('')
+}
+if ($Docs.Count -gt 0 -and $Docs[$Docs.Count - 1] -eq '') {
+    $Docs.RemoveAt($Docs.Count - 1)
 }
 
 $Encoding = [System.Text.UTF8Encoding]::new($false)

@@ -2259,7 +2259,9 @@ LUI succeeds when an application developer can build ordinary desktop software w
 
 # 53. Networking and hosted endpoints (planned)
 
-LUI should support ordinary desktop networking without requiring an application native extension. The public surfaces are planned as `app:GetService("HttpService")` for outbound HTTP and JSON/URL helpers, `app:GetService("HttpServerService")` for hosted endpoints, and `app:GetService("NetworkService")` for raw TCP/UDP. These services, their methods, and their types are **not implemented**. Their design input is preserved in the [networking proposal](proposals/NETWORKING-ARCHITECTURE.md); [decision 0022](decisions/0022-networking-scope.md) records the current scope and unresolved contracts.
+LUI should support ordinary desktop networking without requiring an application native extension. The first Foundation A slice implements `app:GetService("NetworkService")` for TCP. `HttpService`, `HttpServerService`, UDP, TLS, and the remaining contract below are planned. The [networking proposal](proposals/NETWORKING-ARCHITECTURE.md) is design input; [decision 0022](decisions/0022-networking-scope.md) records scope, and [decision 0023](decisions/0023-tcp-first-slice.md) records the initial implementation and its limits.
+
+The implemented TCP service has `ListenTcp` and `ConnectTcp`; a listener has `Port`, `BoundEndpoints`, `IsListening`, `AcceptAsync`, and `Close`; a connection has `LocalEndpoint`, `RemoteEndpoint`, `IsOpen`, `ReadAsync`, `ReadExactAsync`, `WriteAsync`, `Shutdown`, and `Close`. Async methods may be called from a `task.spawn` or `task.defer` coroutine and resume on the owner scheduler thread. Network errors are thrown as strings with stable `[LUI:Network] Code` prefixes. [Foundation A notes](NETWORKING-FOUNDATION-A.md) state the exact shipped behavior and limitations.
 
 ## Placement and async boundary
 

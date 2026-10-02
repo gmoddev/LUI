@@ -34,7 +34,7 @@ if ($LuauSourceDir) {
 
 & $Cmake @Options
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CMake configure failed' }
-& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension --parallel 8
+& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension --parallel 8
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native build failed' }
 & (Join-Path $Build "$Configuration/LuiHeadlessTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Headless tests failed' }
@@ -59,6 +59,8 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Theme tests failed' }
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Platform service tests failed' }
 & (Join-Path $Build "$Configuration/LuiAssetTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Asset tests failed' }
+& (Join-Path $Build "$Configuration/LuiNetworkTests.exe")
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Network tests failed' }
 & (Join-Path $Root 'scripts/Generate-Types.ps1') -SchemaDump (Join-Path $Build "$Configuration/LuiSchemaDump.exe") -Root $Root
 & (Join-Path $Build "$Configuration/LuiTypeTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Generated type validation failed' }

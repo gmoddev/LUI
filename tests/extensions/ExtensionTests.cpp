@@ -34,7 +34,7 @@ int main(int Count, char** Arguments) {
     Failures += Check(Lui_DeclareCapabilities(Runtime, &Invalid) == 0,
         "incompatible capability declaration was accepted");
     Invalid = Declaration;
-    Invalid.GrantedCapabilities |= UINT64_C(16);
+    Invalid.GrantedCapabilities |= UINT64_C(128);
     Failures += Check(Lui_DeclareCapabilities(Runtime, &Invalid) == 0,
         "unknown capability bit was accepted");
     Failures += Check(Lui_DeclareCapabilities(Runtime, &Declaration) == 1,

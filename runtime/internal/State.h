@@ -115,6 +115,17 @@ struct ScheduledCall {
     std::chrono::steady_clock::time_point Due;
 };
 
+struct NetworkContext;
+struct NetworkConnection;
+
+struct NetworkCompletion {
+    enum class Kind { None, Bytes, EndOfStream, Connection } Type = Kind::None;
+    int Reference = 0;
+    std::string Bytes;
+    std::string Error;
+    std::shared_ptr<NetworkConnection> Connection;
+};
+
 struct BackendChange {
     enum class Kind { Property, Parent } Type;
     int Id = 0;
@@ -218,6 +229,12 @@ struct LuiRuntime {
     std::string CurrentTheme = "Light";
     std::string PendingTheme;
     std::vector<ScheduledCall> Tasks;
+    int ActiveTaskReference = 0;
+    lua_State* ActiveTaskThread = nullptr;
+    bool ActiveTaskHasWaiter = false;
+    NetworkContext* Network = nullptr;
+    std::deque<NetworkCompletion> NetworkCompletions;
+    std::unordered_set<int> PendingAsyncReferences;
     std::vector<BackendChange> PendingChanges;
     std::deque<BackendEvent> PendingBackendEvents;
     std::string LastError;

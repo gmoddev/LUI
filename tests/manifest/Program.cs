@@ -57,6 +57,11 @@ try
     AppManifest Platform = AppManifest.Load(ManifestPath);
     if (!Platform.AllowClipboard || !Platform.AllowDialogs)
         throw new Exception("[LUI:ManifestTest] Platform capability manifest did not resolve");
+    File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"network.client\",\"network.server\",\"network.raw\"]}");
+    AppManifest Network = AppManifest.Load(ManifestPath);
+    if (!Network.AllowNetworkClient || !Network.AllowNetworkServer || !Network.AllowNetworkRaw)
+        throw new Exception("[LUI:ManifestTest] Network capability manifest did not resolve");
+    Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"NetworkClient\"]}");
     File.WriteAllBytes(Path.Combine(TempRoot, "logo.png"), new byte[] { 1, 2, 3 });
     File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Assets\":[\"logo.png\"]}");
     if (!AppManifest.Load(ManifestPath).AssetPaths.ContainsKey("logo.png"))

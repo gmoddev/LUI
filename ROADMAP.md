@@ -33,7 +33,9 @@ Include basic system theming (light, dark, high contrast, and change notificatio
 
 **Exit criteria:** a standalone Windows application can bind a native service, ship with only declared capabilities, handle extension load failure safely, and pass the Windows conformance suite.
 
-### Networking Foundation A — async runtime and TCP (planned Foundation 2 follow-on)
+### Networking Foundation A — async runtime and TCP (in progress Foundation 2 follow-on)
+
+The first TCP slice has a coroutine resumption bridge, a pinned Asio transport, capability-gated `NetworkService`, loopback-default IPv4/IPv6 listeners, outbound connections, byte-stream reads/writes, shutdown/close, bounded queues, and headless TCP tests. See [Foundation A notes](docs/NETWORKING-FOUNDATION-A.md). Dual-family binding, parallel client dialing, connection signals, and configurable host network policy remain before this foundation is complete.
 
 Define a shared owner-thread async completion and coroutine-resumption contract, then implement runtime-owned TCP listening, connecting, accept, read, write, shutdown, cancellation, and bounded backpressure. Use an internal, pinned transport library after dependency review. The public Luau service must not expose native socket handles or depend on a UI backend. Add `network.client`, `network.server`, and `network.raw` grants before enabling access. Qualify the same semantics with Windows and Linux headless tests; this does not require a Linux UI backend. See [networking specification](docs/SPEC.md#53-networking-and-hosted-endpoints-planned) and [proposal](docs/proposals/NETWORKING-ARCHITECTURE.md).
 
@@ -65,4 +67,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Begin Networking Foundation A with the shared async operation and scheduler-resumption contract, then the TCP transport and cross-platform headless tests. Continue Foundation 3's Luau type diagnostics after that. Keep the future native object ABI separately versioned.
+Qualify the TCP first slice on Windows and Linux, then complete Networking Foundation A's dual-family and host-policy contracts. Continue Foundation 3's Luau type diagnostics after that. Keep the future native object ABI separately versioned.

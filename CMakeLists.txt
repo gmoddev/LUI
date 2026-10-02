@@ -19,9 +19,25 @@ else()
     FetchContent_MakeAvailable(Luau)
 endif()
 
-add_library(LuiRuntime SHARED runtime/LuiRuntime.cpp runtime/preview/Snapshot.cpp runtime/input/Input.cpp runtime/extensions/Extensions.cpp runtime/platform/Services.cpp runtime/reflection/Schema.cpp ui/layout/Layout.cpp)
+include(FetchContent)
+FetchContent_Declare(Asio
+    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+    GIT_TAG 231cb29bab30f82712fcd54faaea42424cc6e710
+    GIT_SHALLOW FALSE)
+FetchContent_MakeAvailable(Asio)
+
+add_library(LuiRuntime SHARED runtime/LuiRuntime.cpp runtime/preview/Snapshot.cpp runtime/input/Input.cpp runtime/extensions/Extensions.cpp runtime/platform/Services.cpp runtime/network/Network.cpp runtime/reflection/Schema.cpp ui/layout/Layout.cpp)
 target_include_directories(LuiRuntime PUBLIC native/abi)
+target_include_directories(LuiRuntime PRIVATE "${asio_SOURCE_DIR}/asio/include")
+target_compile_definitions(LuiRuntime PRIVATE ASIO_STANDALONE)
 target_link_libraries(LuiRuntime PRIVATE Luau.Compiler Luau.VM)
+if(WIN32)
+    target_compile_definitions(LuiRuntime PRIVATE _WIN32_WINNT=0x0A00)
+    target_link_libraries(LuiRuntime PRIVATE ws2_32 mswsock)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(LuiRuntime PRIVATE Threads::Threads)
+endif()
 target_compile_definitions(LuiRuntime PRIVATE LUI_BUILD)
 if(UNIX AND NOT APPLE)
     target_link_libraries(LuiRuntime PRIVATE dl)
@@ -112,6 +128,10 @@ add_test(NAME LuiThemeTests COMMAND LuiThemeTests)
 add_executable(LuiPlatformTests tests/platform/Services.cpp)
 target_link_libraries(LuiPlatformTests PRIVATE LuiRuntime)
 add_test(NAME LuiPlatformTests COMMAND LuiPlatformTests)
+
+add_executable(LuiNetworkTests tests/network/Tcp.cpp)
+target_link_libraries(LuiNetworkTests PRIVATE LuiRuntime)
+add_test(NAME LuiNetworkTests COMMAND LuiNetworkTests)
 
 add_executable(LuiAssetTests tests/assets/Assets.cpp)
 target_link_libraries(LuiAssetTests PRIVATE LuiRuntime)

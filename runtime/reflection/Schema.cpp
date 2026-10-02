@@ -105,6 +105,7 @@ static constexpr ServiceDefinition Services[] = {
     {"ClipboardService"},
     {"DialogService"},
     {"AssetService"},
+    {"NetworkService"},
 };
 
 static constexpr ServiceMethodDefinition ServiceMethods[] = {
@@ -114,6 +115,8 @@ static constexpr ServiceMethodDefinition ServiceMethods[] = {
     {"ClipboardService", "ReadText", "(Self: ClipboardService, Callback: (Text: string?, Error: string?) -> ()) -> ()"},
     {"DialogService", "OpenFile", "(Self: DialogService, Callback: (Path: string?, Error: string?) -> ()) -> ()"},
     {"AssetService", "Has", "(Self: AssetService, Name: string) -> boolean"},
+    {"NetworkService", "ListenTcp", "(Self: NetworkService, Options: NetworkListenOptions) -> TcpListener"},
+    {"NetworkService", "ConnectTcp", "(Self: NetworkService, Options: NetworkConnectOptions) -> TcpConnection"},
 };
 
 static constexpr ServicePropertyDefinition ServiceProperties[] = {
@@ -123,6 +126,40 @@ static constexpr ServicePropertyDefinition ServiceProperties[] = {
 
 static constexpr ServiceSignalDefinition ServiceSignals[] = {
     {"ThemeService", "ThemeChanged", "ThemeSignal"},
+};
+
+static constexpr ServiceDefinition Objects[] = {
+    {"NetworkEndpoint"},
+    {"NetworkListenOptions"},
+    {"NetworkConnectOptions"},
+    {"TcpListener"},
+    {"TcpConnection"},
+};
+
+static constexpr ServicePropertyDefinition ObjectProperties[] = {
+    {"NetworkEndpoint", "Address", "string"},
+    {"NetworkEndpoint", "Port", "number"},
+    {"NetworkListenOptions", "Address", "string?"},
+    {"NetworkListenOptions", "Family", "(\"IPv4\" | \"IPv6\")?"},
+    {"NetworkListenOptions", "Port", "number"},
+    {"NetworkConnectOptions", "Address", "string?"},
+    {"NetworkConnectOptions", "Port", "number"},
+    {"TcpListener", "IsListening", "boolean"},
+    {"TcpListener", "Port", "number"},
+    {"TcpListener", "BoundEndpoints", "{NetworkEndpoint}"},
+    {"TcpConnection", "IsOpen", "boolean"},
+    {"TcpConnection", "LocalEndpoint", "NetworkEndpoint"},
+    {"TcpConnection", "RemoteEndpoint", "NetworkEndpoint"},
+};
+
+static constexpr ServiceMethodDefinition ObjectMethods[] = {
+    {"TcpListener", "AcceptAsync", "(Self: TcpListener) -> TcpConnection"},
+    {"TcpListener", "Close", "(Self: TcpListener) -> ()"},
+    {"TcpConnection", "ReadAsync", "(Self: TcpConnection, MaxBytes: number?) -> buffer?"},
+    {"TcpConnection", "ReadExactAsync", "(Self: TcpConnection, Bytes: number) -> buffer"},
+    {"TcpConnection", "WriteAsync", "(Self: TcpConnection, Data: string | buffer) -> ()"},
+    {"TcpConnection", "Shutdown", "(Self: TcpConnection, Direction: \"Read\" | \"Write\" | \"Both\") -> ()"},
+    {"TcpConnection", "Close", "(Self: TcpConnection) -> ()"},
 };
 
 const ClassDefinition* FindClass(const std::string& Name) {
@@ -252,6 +289,16 @@ const std::string& GetJson() {
             Output << ",\"methods\":"; AppendDefinitions(Output, ServiceMethods, Service.Name);
             Output << ",\"properties\":"; AppendDefinitions(Output, ServiceProperties, Service.Name);
             Output << ",\"signals\":"; AppendDefinitions(Output, ServiceSignals, Service.Name);
+            Output << '}';
+        }
+        Output << "],\"objects\":[";
+        bool FirstObject = true;
+        for (const auto& Object : Objects) {
+            if (!FirstObject) Output << ',';
+            FirstObject = false;
+            Output << "{\"name\":"; AppendQuoted(Output, Object.Name);
+            Output << ",\"methods\":"; AppendDefinitions(Output, ObjectMethods, Object.Name);
+            Output << ",\"properties\":"; AppendDefinitions(Output, ObjectProperties, Object.Name);
             Output << '}';
         }
         Output << "]}";

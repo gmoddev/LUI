@@ -24,6 +24,9 @@ internal sealed class AppManifest
     public bool AllowHostServices { get; private set; }
     public bool AllowClipboard { get; private set; }
     public bool AllowDialogs { get; private set; }
+    public bool AllowNetworkClient { get; private set; }
+    public bool AllowNetworkServer { get; private set; }
+    public bool AllowNetworkRaw { get; private set; }
 
     public static AppManifest Load(string PathValue)
     {
@@ -41,13 +44,17 @@ internal sealed class AppManifest
         foreach (string Capability in Manifest.Capabilities)
         {
             if (!SeenCapabilities.Add(Capability) || Capability is not
-                ("NativeExtensions" or "HostServices" or "Clipboard" or "Dialogs"))
+                ("NativeExtensions" or "HostServices" or "Clipboard" or "Dialogs" or
+                 "network.client" or "network.server" or "network.raw"))
                 throw new InvalidDataException("Unknown or duplicate application capability");
         }
         Manifest.AllowNativeExtensions = SeenCapabilities.Contains("NativeExtensions");
         Manifest.AllowHostServices = SeenCapabilities.Contains("HostServices");
         Manifest.AllowClipboard = SeenCapabilities.Contains("Clipboard");
         Manifest.AllowDialogs = SeenCapabilities.Contains("Dialogs");
+        Manifest.AllowNetworkClient = SeenCapabilities.Contains("network.client");
+        Manifest.AllowNetworkServer = SeenCapabilities.Contains("network.server");
+        Manifest.AllowNetworkRaw = SeenCapabilities.Contains("network.raw");
         if (Manifest.Sandbox is not null &&
             (Manifest.Sandbox.MaxMemoryBytes < 1024 * 1024 || Manifest.Sandbox.MaxInterrupts == 0 ||
              Manifest.AllowNativeExtensions))

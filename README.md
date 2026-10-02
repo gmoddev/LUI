@@ -33,7 +33,7 @@ The [launcher dashboard demo](examples/dashboard/README.md) is an interactive Wi
 
 Foundation 3 includes the [developer CLI, isolated preview host, and VS Code development extension](docs/FOUNDATION-3.md): scaffold a project, check its manifest and Luau syntax without running it, launch the Windows host, stage a package, and inspect a versioned preview tree, layout map, properties, Luau source locations, and runtime diagnostics. The extension can also open the real Windows host as a native preview. The user visually confirmed the initial editor view. Type diagnostics remain planned.
 
-The [networking design](docs/SPEC.md#53-networking-and-hosted-endpoints-planned) plans outbound HTTP, hosted HTTP endpoints, and raw TCP/UDP as runtime services. It is a Foundation 2 follow-on and is not implemented yet. The [full proposal](docs/proposals/NETWORKING-ARCHITECTURE.md) is retained as planning input.
+The [Networking Foundation A TCP slice](docs/NETWORKING-FOUNDATION-A.md) adds a capability-gated `NetworkService` with asynchronous TCP on Windows and Linux headless runtimes. HTTP, UDP, TLS, and dual-family listening remain planned in the [networking design](docs/SPEC.md#53-networking-and-hosted-endpoints-planned); the [full proposal](docs/proposals/NETWORKING-ARCHITECTURE.md) remains planning input.
 
 ## Design
 
