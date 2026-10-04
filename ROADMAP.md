@@ -49,7 +49,7 @@ Add bounded UDP datagrams and a portable TLS provider contract with validated cl
 
 ## Foundation 3 — Developer experience
 
-**Status:** in progress. The CLI and separate preview host provide versioned tree and layout snapshots with generation-based reload. The VS Code development extension displays an Instance Explorer, a layout map, reflection-backed properties, Luau creation/change locations, source navigation, and source-linked runtime diagnostics. It also launches the real Windows host as a separate native preview. Type diagnostics and richer visual/input tools remain. The user visually confirmed the initial editor view on 2026-10-01. See [Foundation 3 notes](docs/FOUNDATION-3.md).
+**Status:** in progress. The CLI and separate preview host provide versioned tree and layout snapshots with generation-based reload. The VS Code development extension displays an Instance Explorer, a layout map, reflection-backed properties, Luau creation/change locations, source navigation, and source-linked runtime diagnostics. It also launches the real Windows host as a separate native preview. The CLI and editor statically check saved entry-script types in an isolated pinned Luau analyzer against generated definitions. Richer visual/input tools, autocomplete, and unsaved-buffer analysis remain. The user visually confirmed the initial editor view on 2026-10-01; type Problems still need visual qualification. See [Foundation 3 notes](docs/FOUNDATION-3.md).
 
 Add the CLI, project manifest, preview host and versioned protocol, VS Code Explorer and inspector, source provenance, native preview, and generation-based hot reload.
 
@@ -67,4 +67,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Continue Foundation 3's Luau type diagnostics. Networking Foundation B follows with HTTP on the qualified TCP transport. Keep the future native object ABI separately versioned.
+Begin Networking Foundation B with bounded HTTP/1.1 parsing and framing tests on the qualified TCP transport, then add outbound and hosted services. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.

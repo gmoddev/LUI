@@ -25,10 +25,10 @@ local DetailIndex = 1
 local MemoryGb = 6
 local AutoUpdate = true
 local Pending = {}
-local CurrentPage = nil
+local CurrentPage: Frame? = nil
 local RenderPending = false
-local RenderPage
-local Notice
+local RenderPage: () -> ()
+local Notice: TextLabel
 
 local Window = Instance.new("Window", {
     Name = "DashboardWindow",

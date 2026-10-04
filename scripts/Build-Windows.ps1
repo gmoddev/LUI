@@ -34,7 +34,7 @@ if ($LuauSourceDir) {
 
 & $Cmake @Options
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CMake configure failed' }
-& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension --parallel 8
+& $Cmake --build $Build --config $Configuration --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiTypeCheck LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension --parallel 8
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native build failed' }
 & (Join-Path $Build "$Configuration/LuiHeadlessTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Headless tests failed' }
@@ -69,10 +69,13 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Application manifest validation fa
 & dotnet run --project (Join-Path $Root 'tests/packaging/PackagingTests.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Package staging tests failed' }
 $Dll = Join-Path $Build "$Configuration/LuiRuntime.dll"
-& dotnet run --project (Join-Path $Root 'tests/cli/CliTests.csproj') --configuration $Configuration -- $Dll
+$TypeChecker = Join-Path $Build "$Configuration/LuiTypeCheck.exe"
+& dotnet run --project (Join-Path $Root 'tests/cli/CliTests.csproj') --configuration $Configuration -- $Dll $TypeChecker
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CLI tests failed' }
 & dotnet build (Join-Path $Root 'tools/cli/Lui.Cli.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CLI build failed' }
+& dotnet (Join-Path $Root "tools/cli/bin/$Configuration/net9.0/lui.dll") check (Join-Path $Root 'examples/dashboard/dashboard.manifest.json') --checker $TypeChecker
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Dashboard type check failed' }
 & dotnet build (Join-Path $Root 'tools/preview-host/Lui.PreviewHost.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Preview host build failed' }
 $PreviewHost = Join-Path $Root "tools/preview-host/bin/$Configuration/net9.0/lui-preview-host.dll"
@@ -80,7 +83,9 @@ $PreviewHost = Join-Path $Root "tools/preview-host/bin/$Configuration/net9.0/lui
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Preview protocol tests failed' }
 $env:LUI_TEST_PREVIEW_HOST = $PreviewHost
 $env:LUI_TEST_RUNTIME = $Dll
-& node --test (Join-Path $Root 'tests/editor/EditorTests.js')
+$env:LUI_TEST_CLI = Join-Path $Root "tools/cli/bin/$Configuration/net9.0/lui.dll"
+$env:LUI_TEST_TYPECHECK = $TypeChecker
+& node --test (Join-Path $Root 'tests/editor/EditorTests.js') (Join-Path $Root 'tests/editor/TypeTests.js')
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] VS Code preview client tests failed' }
 
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"

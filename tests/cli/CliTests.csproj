@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="../../tools/cli/CliProgram.cs" Link="CliProgram.cs" />
     <Compile Include="../../tools/cli/NativeScriptChecker.cs" Link="NativeScriptChecker.cs" />
+    <Compile Include="../../tools/cli/NativeTypeChecker.cs" Link="NativeTypeChecker.cs" />
     <Compile Include="../../backends/winui3/AppManifest.cs" Link="AppManifest.cs" />
     <Compile Include="../../tools/packaging/PackageBuilder.cs" Link="PackageBuilder.cs" />
   </ItemGroup>

@@ -2,14 +2,14 @@
   "name": "lui-vscode",
   "displayName": "LUI Preview",
   "description": "Instance Explorer and layout inspector for LUI applications",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "gmoddev",
   "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
   "private": true,
   "engines": { "vscode": "^1.90.0" },
   "main": "./Extension.js",
-  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview", "onCommand:lui.openNativePreview"],
-  "scripts": { "test": "node --test ../tests/editor/EditorTests.js" },
+  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview", "onCommand:lui.openNativePreview", "onLanguage:luau", "workspaceContains:lui.json"],
+  "scripts": { "test": "node --test ../tests/editor/EditorTests.js ../tests/editor/TypeTests.js" },
   "contributes": {
     "viewsContainers": {
       "activitybar": [{ "id": "lui", "title": "LUI", "icon": "media/icon.svg" }]
@@ -26,6 +26,7 @@
       { "command": "lui.stopPreview", "title": "LUI: Stop Preview", "icon": "$(debug-stop)" },
       { "command": "lui.openNativePreview", "title": "LUI: Open Native Preview", "icon": "$(window)" },
       { "command": "lui.stopNativePreview", "title": "LUI: Stop Native Preview", "icon": "$(close)" },
+      { "command": "lui.checkTypes", "title": "LUI: Check Types", "icon": "$(check)" },
       { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" },
       { "command": "lui.openSource", "title": "LUI: Open Instance Source", "icon": "$(go-to-file)" }
     ],
@@ -44,6 +45,22 @@
     "configuration": {
       "title": "LUI Preview",
       "properties": {
+        "lui.cliPath": {
+          "type": "string", "default": "",
+          "description": "Built lui.dll or CLI executable for type checking. If empty, discover a repository build."
+        },
+        "lui.checkerPath": {
+          "type": "string", "default": "",
+          "description": "LuiTypeCheck executable. If empty, discover a repository build or use LUI_TYPECHECK."
+        },
+        "lui.definitionsPath": {
+          "type": "string", "default": "",
+          "description": "Generated LUI.d.luau. If empty, use the copy beside LuiTypeCheck."
+        },
+        "lui.autoCheck": {
+          "type": "boolean", "default": true,
+          "description": "Check the saved manifest entry script on open and save. Clears outdated errors on edit."
+        },
         "lui.manifestPath": {
           "type": "string", "default": "lui.json",
           "description": "Application manifest path, absolute or relative to the workspace folder."

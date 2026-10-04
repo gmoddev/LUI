@@ -70,6 +70,15 @@ target_link_libraries(LuiTypeTests PRIVATE Luau.Analysis)
 target_compile_definitions(LuiTypeTests PRIVATE LUI_TYPES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/types/LUI.d.luau")
 add_test(NAME LuiTypeTests COMMAND LuiTypeTests)
 
+add_executable(LuiTypeCheck tools/typecheck/Main.cpp)
+target_link_libraries(LuiTypeCheck PRIVATE Luau.Analysis)
+# Keep the reflected definitions beside the checker for CLI/editor discovery.
+add_custom_target(LuiTypeDefinitions
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LuiTypeCheck>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/types/LUI.d.luau" "$<TARGET_FILE_DIR:LuiTypeCheck>/LUI.d.luau")
+add_dependencies(LuiTypeCheck LuiTypeDefinitions)
+
 add_library(LuiSampleExtension SHARED tests/extensions/Sample.c)
 target_include_directories(LuiSampleExtension PRIVATE native/abi)
 target_compile_definitions(LuiSampleExtension PRIVATE LUI_EXTENSION_BUILD)

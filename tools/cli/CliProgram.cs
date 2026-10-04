@@ -19,11 +19,12 @@ internal static class CliProgram
             {
                 Output.WriteLine("LUI developer CLI\n" +
                     "  lui new <directory>\n" +
-                    "  lui check [manifest] --runtime <LuiRuntime library>\n" +
+                    "  lui check [manifest] --checker <LuiTypeCheck executable> [--definitions <LUI.d.luau>] [--format text|json]\n" +
+                    "  lui check [manifest] --mode syntax --runtime <LuiRuntime library>\n" +
                     "  lui run [manifest] --host <WinUI host directory or exe>\n" +
                     "  lui preview [manifest] --host <preview-host dll or exe> --runtime <LuiRuntime library>\n" +
                     "  lui build [manifest] --host <published WinUI host directory> --output <empty directory> [--extensions <directory>]\n" +
-                    "Default manifest: lui.json. Check compiles syntax without running the script; it does not typecheck yet.");
+                    "Default manifest: lui.json. Check analyzes entry-script types without running application code.");
                 return 0;
             }
 
@@ -39,12 +40,50 @@ internal static class CliProgram
                     return 0;
                 case "check":
                 {
-                    RequireOptions(Options, "--runtime");
+                    RequireOptions(Options, "--runtime", "--checker", "--definitions", "--format", "--mode");
                     AppManifest Manifest = AppManifest.Load(Position ?? "lui.json");
-                    string Runtime = ResolveRuntime(Options.GetValueOrDefault("--runtime"));
-                    CheckSource(Manifest, Runtime);
-                    Output.WriteLine("[LUI:CLI] Manifest and Luau syntax valid (types not checked)");
-                    return 0;
+                    string Mode = Options.GetValueOrDefault("--mode", "types");
+                    string Format = Options.GetValueOrDefault("--format", "text");
+                    if (Mode is not ("types" or "syntax") || Format is not ("text" or "json"))
+                        throw new ArgumentException("Check mode must be types or syntax; format must be text or json");
+                    if (Mode == "syntax")
+                    {
+                        if (Format != "text" || Options.ContainsKey("--checker") || Options.ContainsKey("--definitions"))
+                            throw new ArgumentException("Syntax mode accepts only --runtime and text output");
+                        CheckSource(Manifest, ResolveRuntime(Options.GetValueOrDefault("--runtime")));
+                        Output.WriteLine("[LUI:CLI] Manifest and Luau syntax valid (types not checked)");
+                        return 0;
+                    }
+                    if (Options.ContainsKey("--runtime"))
+                        throw new ArgumentException("--runtime requires --mode syntax; type checks use --checker");
+                    string Checker = Path.GetFullPath(Options.GetValueOrDefault("--checker") ??
+                        Environment.GetEnvironmentVariable("LUI_TYPECHECK") ?? Path.Combine(AppContext.BaseDirectory,
+                            OperatingSystem.IsWindows() ? "LuiTypeCheck.exe" : "LuiTypeCheck"));
+                    if (!File.Exists(Checker)) throw new FileNotFoundException("Luau type checker not found; pass --checker or set LUI_TYPECHECK");
+                    string Definitions = Path.GetFullPath(Options.GetValueOrDefault("--definitions") ??
+                        Path.Combine(Path.GetDirectoryName(Checker)!, "LUI.d.luau"));
+                    if (!File.Exists(Definitions)) throw new FileNotFoundException("Generated LUI definitions were not found; pass --definitions");
+                    JsonElement Result = NativeTypeChecker.Check(Checker, Definitions, ReadSource(Manifest));
+                    JsonElement Diagnostics = Result.GetProperty("diagnostics");
+                    string SourceName = Manifest.Script.Replace('\\', '/');
+                    if (Format == "json")
+                        Output.WriteLine(JsonSerializer.Serialize(new Dictionary<string, object>
+                        {
+                            ["version"] = 1, ["source"] = SourceName, ["diagnostics"] = Diagnostics,
+                            ["truncated"] = Result.GetProperty("truncated").GetBoolean(),
+                        }));
+                    else
+                    {
+                        foreach (JsonElement Diagnostic in Diagnostics.EnumerateArray())
+                        {
+                            JsonElement Start = Diagnostic.GetProperty("range").GetProperty("start");
+                            Errors.WriteLine($"[LUI:CLI] {SourceName}:{Start.GetProperty("line").GetInt32() + 1}:{Start.GetProperty("column").GetInt32() + 1}: " +
+                                Diagnostic.GetProperty("message").GetString());
+                        }
+                        if (Result.GetProperty("truncated").GetBoolean()) Errors.WriteLine("[LUI:CLI] Diagnostics were truncated");
+                        if (Diagnostics.GetArrayLength() == 0) Output.WriteLine("[LUI:CLI] Manifest and Luau types valid");
+                    }
+                    return Diagnostics.GetArrayLength() == 0 ? 0 : 1;
                 }
                 case "run":
                 {
@@ -197,14 +236,27 @@ internal static class CliProgram
     private static void CheckSource(AppManifest Manifest, string RuntimePath)
     {
         string Runtime = ResolveRuntime(RuntimePath);
-        FileInfo Script = new(Manifest.ScriptPath);
-        if (Script.Length > MaxScriptBytes)
-            throw new InvalidDataException("Application script exceeds the CLI's 8 MiB check limit");
-        string Source = File.ReadAllText(Manifest.ScriptPath, new UTF8Encoding(false, true));
-        if (Source.Contains('\0'))
-            throw new InvalidDataException("Application script contains a NUL character");
+        string Source = ReadSource(Manifest);
         string? Error = NativeScriptChecker.Check(Runtime, Source);
         if (Error is not null) throw new InvalidDataException(Error);
+    }
+
+    private static string ReadSource(AppManifest Manifest)
+    {
+        using FileStream File = System.IO.File.OpenRead(Manifest.ScriptPath);
+        using MemoryStream Bytes = new();
+        byte[] Block = new byte[8192];
+        int Count;
+        while ((Count = File.Read(Block)) != 0)
+        {
+            if (Bytes.Length + Count > MaxScriptBytes)
+                throw new InvalidDataException("Application script exceeds the CLI's 8 MiB check limit");
+            Bytes.Write(Block, 0, Count);
+        }
+        string Source = new UTF8Encoding(false, true).GetString(Bytes.ToArray());
+        if (Source.StartsWith('\uFEFF')) Source = Source[1..];
+        if (Source.Contains('\0')) throw new InvalidDataException("Application script contains a NUL character");
+        return Source;
     }
 
     internal static ProcessStartInfo CreateRunStartInfo(string Host, string ManifestPath)

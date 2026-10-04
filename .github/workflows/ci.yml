@@ -38,11 +38,14 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/linux-x64 -DCMAKE_BUILD_TYPE=Debug
       - name: Build
-        run: cmake --build build/linux-x64 --parallel 2 --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension
+        run: cmake --build build/linux-x64 --parallel 2 --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiTypeCheck LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension
       - name: Test
         run: ctest --test-dir build/linux-x64 --output-on-failure
       - name: CLI tests
-        run: dotnet run --project tests/cli/CliTests.csproj --configuration Release -- build/linux-x64/libLuiRuntime.so
+        run: |
+          dotnet build tools/cli/Lui.Cli.csproj --configuration Release
+          dotnet run --project tests/cli/CliTests.csproj --configuration Release -- build/linux-x64/libLuiRuntime.so build/linux-x64/LuiTypeCheck
+          dotnet tools/cli/bin/Release/net9.0/lui.dll check examples/dashboard/dashboard.manifest.json --checker build/linux-x64/LuiTypeCheck
       - name: Preview protocol tests
         run: |
           dotnet build tools/preview-host/Lui.PreviewHost.csproj --configuration Release
@@ -51,7 +54,9 @@ jobs:
         env:
           LUI_TEST_PREVIEW_HOST: tools/preview-host/bin/Release/net9.0/lui-preview-host.dll
           LUI_TEST_RUNTIME: build/linux-x64/libLuiRuntime.so
-        run: node --test tests/editor/EditorTests.js
+          LUI_TEST_CLI: tools/cli/bin/Release/net9.0/lui.dll
+          LUI_TEST_TYPECHECK: build/linux-x64/LuiTypeCheck
+        run: node --test tests/editor/EditorTests.js tests/editor/TypeTests.js
       - name: Check generated schema
         run: |
           build/linux-x64/LuiSchemaDump > build/linux-x64/schema.json

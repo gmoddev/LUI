@@ -6,6 +6,7 @@ const Vscode = require('vscode');
 const { PreviewClient } = require('./PreviewClient');
 const { InspectorProvider } = require('./InspectorProvider');
 const { NativePreview, ResolveNativeHost } = require('./NativePreview');
+const { TypeDiagnostics } = require('./TypeDiagnostics');
 
 function GetFolder() {
     const ActivePath = Vscode.window.activeTextEditor?.document.uri.fsPath;
@@ -116,6 +117,7 @@ class EditorController {
         this.Context = Context;
         this.Output = Vscode.window.createOutputChannel('LUI Preview');
         this.Diagnostics = Vscode.languages.createDiagnosticCollection('LUI Preview');
+        this.Types = new TypeDiagnostics(Vscode, this.Output);
         this.Explorer = new ExplorerProvider();
         this.Inspector = new InspectorProvider(Message => this.OnInspectorAction(Message));
         this.TreeView = Vscode.window.createTreeView('lui.explorer', { treeDataProvider: this.Explorer });
@@ -138,10 +140,17 @@ class EditorController {
             Vscode.commands.registerCommand('lui.stopPreview', () => this.Stop()),
             Vscode.commands.registerCommand('lui.openNativePreview', () => this.OpenNative()),
             Vscode.commands.registerCommand('lui.stopNativePreview', () => this.StopNative()),
+            Vscode.commands.registerCommand('lui.checkTypes', () => this.Types.Check(GetFolder(), true)),
             Vscode.commands.registerCommand('lui.activateNode', Item => this.Activate(Item?.Id)),
             Vscode.commands.registerCommand('lui.openSource', Item => this.OpenSource(Item?.Id, 'created')),
             Vscode.workspace.onDidSaveTextDocument(Document => this.OnSave(Document)),
+            Vscode.workspace.onDidOpenTextDocument(Document => this.Types.OnDocument(Document)),
+            Vscode.workspace.onDidChangeTextDocument(Event => this.Types.OnChange(Event.document)),
+            Vscode.workspace.onDidChangeConfiguration(Event => {
+                if (Event.affectsConfiguration('lui')) this.Types.Check(GetFolder());
+            }),
             this.TreeView.onDidChangeSelection(Event => this.Select(Event.selection[0]?.Id || 0)));
+        for (const Document of Vscode.workspace.textDocuments) this.Types.OnDocument(Document);
     }
 
     Log(Message) { this.Output.appendLine('[LUI:Editor] ' + Message); }
@@ -330,6 +339,7 @@ class EditorController {
     }
 
     OnSave(Document) {
+        this.Types.OnDocument(Document);
         if (!this.Client) return;
         if (Path.resolve(Document.uri.fsPath) === Path.resolve(this.ManifestPath)) {
             this.Start(this.Folder);
@@ -343,6 +353,7 @@ class EditorController {
     }
 
     Dispose() {
+        this.Types.Dispose();
         this.Native?.removeAllListeners();
         this.StopNative();
         this.Native = null;

@@ -1285,6 +1285,8 @@ Foundation 2 can publish a self-contained Windows folder with the WinUI host and
 
 # 39. VS Code integration
 
+The implemented initial type diagnostic tool statically checks the saved manifest entry script in a separate pinned Luau analyzer against reflection-generated LUI definitions. `lui check` defaults to types; `--mode syntax` explicitly requests compiler-only checking. The version 1 result carries manifest-relative source identity, syntax/type messages, bounded truncation, and zero-based UTF-16 ranges. The editor requires workspace trust, checks on open/save or command, clears outdated errors on edit, cancels the owned checker process tree, and keeps type Problems separate from preview runtime errors. Application code is never executed by static checking. Module graphs, unsaved-buffer analysis, dynamic extension types, and language-server features remain planned. See [decision 0026](decisions/0026-isolated-luau-type-diagnostics.md) for protocol and limits.
+
 The LUI extension should provide:
 
 - Luau diagnostics;
