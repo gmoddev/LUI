@@ -42,7 +42,7 @@ DNS destinations, connected UDP, multicast/broadcast configuration, IPv4-mapped 
 
 ## Qualification
 
-The incremental Windows worker build and all 12 native suites passed on 2026-10-04, including UDP and generated type checks. UDP tests cover packet boundaries, empty/binary/maximum payloads, both oversized receive paths and recovery, IPv6, buffer ownership, cancellation, bind failure, quotas, grants, host policy, and teardown. Windows/Linux CI qualification is pending for this revision. This is headless networking qualification and makes no Linux UI claim.
+The incremental Windows worker build and all 12 native suites passed on 2026-10-04, including UDP and generated type checks. [Windows and Linux CI](https://github.com/gmoddev/LUI/actions/runs/37189268030) passed at `7fbbe5d03ecf82e70f8efef61eefec7c1882c3d7` on the same date. CI also passed CLI, preview/editor checks, and generated API/schema consistency. UDP tests cover packet boundaries, empty/binary/maximum payloads, both oversized receive paths and recovery, IPv6, buffer ownership, cancellation, bind failure, quotas, grants, host policy, and teardown. This is headless networking qualification and makes no Linux UI claim. This UDP audit does not complete Foundation C's TLS requirements.
 
 ## Remaining Foundation C work
 
