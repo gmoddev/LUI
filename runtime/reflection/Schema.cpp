@@ -107,6 +107,7 @@ static constexpr ServiceDefinition Services[] = {
     {"AssetService"},
     {"NetworkService"},
     {"HttpService"},
+    {"HttpServerService"},
 };
 
 static constexpr ServiceMethodDefinition ServiceMethods[] = {
@@ -121,6 +122,7 @@ static constexpr ServiceMethodDefinition ServiceMethods[] = {
     {"HttpService", "RequestAsync", "(Self: HttpService, Options: HttpRequestOptions) -> HttpResponse"},
     {"HttpService", "GetAsync", "(Self: HttpService, Url: string) -> HttpResponse"},
     {"HttpService", "CancelAll", "(Self: HttpService) -> ()"},
+    {"HttpServerService", "CreateServer", "(Self: HttpServerService, Options: HttpServerOptions) -> HttpServer"},
 };
 
 static constexpr ServicePropertyDefinition ServiceProperties[] = {
@@ -141,9 +143,36 @@ static constexpr ServiceDefinition Objects[] = {
     {"HttpHeader"},
     {"HttpRequestOptions"},
     {"HttpResponse"},
+    {"HttpServerOptions"},
+    {"HttpReplyOptions"},
+    {"HttpRequest"},
+    {"HttpServer"},
 };
 
 static constexpr ServicePropertyDefinition ObjectProperties[] = {
+    {"HttpServerOptions", "Address", "string?"},
+    {"HttpServerOptions", "Family", "(\"IPv4\" | \"IPv6\" | \"DualStack\")?"},
+    {"HttpServerOptions", "Port", "number"},
+    {"HttpServerOptions", "TimeoutMs", "number?"},
+    {"HttpServerOptions", "MaxConnections", "number?"},
+    {"HttpServerOptions", "MaxRequestBytes", "number?"},
+    {"HttpServerOptions", "MaxResponseBytes", "number?"},
+    {"HttpReplyOptions", "StatusCode", "number?"},
+    {"HttpReplyOptions", "StatusMessage", "string?"},
+    {"HttpReplyOptions", "Headers", "{HttpHeader}?"},
+    {"HttpReplyOptions", "Body", "(string | buffer)?"},
+    {"HttpRequest", "Method", "string"},
+    {"HttpRequest", "Path", "string"},
+    {"HttpRequest", "RawTarget", "string"},
+    {"HttpRequest", "HttpVersion", "string"},
+    {"HttpRequest", "Headers", "{HttpHeader}"},
+    {"HttpRequest", "Trailers", "{HttpHeader}"},
+    {"HttpRequest", "Body", "string"},
+    {"HttpRequest", "LocalEndpoint", "NetworkEndpoint"},
+    {"HttpRequest", "RemoteEndpoint", "NetworkEndpoint"},
+    {"HttpServer", "Port", "number"},
+    {"HttpServer", "IsListening", "boolean"},
+    {"HttpServer", "BoundEndpoints", "{NetworkEndpoint}"},
     {"HttpHeader", "Name", "string"},
     {"HttpHeader", "Value", "string"},
     {"HttpRequestOptions", "Url", "string"},
@@ -174,6 +203,9 @@ static constexpr ServicePropertyDefinition ObjectProperties[] = {
 };
 
 static constexpr ServiceMethodDefinition ObjectMethods[] = {
+    {"HttpServer", "Route", "(Self: HttpServer, Method: string, Path: string, Handler: (Request: HttpRequest) -> HttpReplyOptions) -> ()"},
+    {"HttpServer", "Start", "(Self: HttpServer) -> ()"},
+    {"HttpServer", "Close", "(Self: HttpServer) -> ()"},
     {"TcpListener", "AcceptAsync", "(Self: TcpListener) -> TcpConnection"},
     {"TcpListener", "Close", "(Self: TcpListener) -> ()"},
     {"TcpConnection", "ReadAsync", "(Self: TcpConnection, MaxBytes: number?) -> buffer?"},

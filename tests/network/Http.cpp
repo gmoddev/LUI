@@ -306,6 +306,7 @@ static void TcpTransport() {
 }
 
 int HttpClientTests();
+int HttpServerTests();
 int main() {
     Requests();
     ChunksAndLimits();
@@ -313,6 +314,7 @@ int main() {
     CorruptionAndEof();
     TcpTransport();
     Failures += HttpClientTests();
+    Failures += HttpServerTests();
     if (!Failures) std::puts("[LUI:HttpTest] HTTP framing, fragmentation, limits, and TCP transport passed");
     return Failures ? 1 : 0;
 }

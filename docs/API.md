@@ -216,6 +216,7 @@ Base: `UIComponent`. Creatable: `true`.
 - `AssetService`: Has
 - `NetworkService`: ListenTcp, ConnectTcp
 - `HttpService`: RequestAsync, GetAsync, CancelAll
+- `HttpServerService`: CreateServer
 
 ## Networking value and resource types
 
@@ -277,3 +278,41 @@ Base: `UIComponent`. Creatable: `true`.
 - `Body`: `string`
 - `Headers`: `{HttpHeader}`
 - `Trailers`: `{HttpHeader}`
+
+### HttpServerOptions
+
+- `Address`: `string?`
+- `Family`: `("IPv4" | "IPv6" | "DualStack")?`
+- `Port`: `number`
+- `TimeoutMs`: `number?`
+- `MaxConnections`: `number?`
+- `MaxRequestBytes`: `number?`
+- `MaxResponseBytes`: `number?`
+
+### HttpReplyOptions
+
+- `StatusCode`: `number?`
+- `StatusMessage`: `string?`
+- `Headers`: `{HttpHeader}?`
+- `Body`: `(string | buffer)?`
+
+### HttpRequest
+
+- `Method`: `string`
+- `Path`: `string`
+- `RawTarget`: `string`
+- `HttpVersion`: `string`
+- `Headers`: `{HttpHeader}`
+- `Trailers`: `{HttpHeader}`
+- `Body`: `string`
+- `LocalEndpoint`: `NetworkEndpoint`
+- `RemoteEndpoint`: `NetworkEndpoint`
+
+### HttpServer
+
+- `Port`: `number`
+- `IsListening`: `boolean`
+- `BoundEndpoints`: `{NetworkEndpoint}`
+- `Route`: `(Self: HttpServer, Method: string, Path: string, Handler: (Request: HttpRequest) -> HttpReplyOptions) -> ()`
+- `Start`: `(Self: HttpServer) -> ()`
+- `Close`: `(Self: HttpServer) -> ()`

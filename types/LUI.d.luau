@@ -163,6 +163,10 @@ export type HttpService = {
     read CancelAll: (Self: HttpService) -> (),
 }
 
+export type HttpServerService = {
+    read CreateServer: (Self: HttpServerService, Options: HttpServerOptions) -> HttpServer,
+}
+
 export type NetworkEndpoint = {
     read Address: string,
     read Port: number,
@@ -222,7 +226,45 @@ export type HttpResponse = {
     read Trailers: {HttpHeader},
 }
 
-export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) & ((Self: App, Name: "NetworkService") -> NetworkService) & ((Self: App, Name: "HttpService") -> HttpService) }
+export type HttpServerOptions = {
+    Address: string?,
+    Family: ("IPv4" | "IPv6" | "DualStack")?,
+    Port: number,
+    TimeoutMs: number?,
+    MaxConnections: number?,
+    MaxRequestBytes: number?,
+    MaxResponseBytes: number?,
+}
+
+export type HttpReplyOptions = {
+    StatusCode: number?,
+    StatusMessage: string?,
+    Headers: {HttpHeader}?,
+    Body: (string | buffer)?,
+}
+
+export type HttpRequest = {
+    read Method: string,
+    read Path: string,
+    read RawTarget: string,
+    read HttpVersion: string,
+    read Headers: {HttpHeader},
+    read Trailers: {HttpHeader},
+    read Body: string,
+    read LocalEndpoint: NetworkEndpoint,
+    read RemoteEndpoint: NetworkEndpoint,
+}
+
+export type HttpServer = {
+    read Port: number,
+    read IsListening: boolean,
+    read BoundEndpoints: {NetworkEndpoint},
+    read Route: (Self: HttpServer, Method: string, Path: string, Handler: (Request: HttpRequest) -> HttpReplyOptions) -> (),
+    read Start: (Self: HttpServer) -> (),
+    read Close: (Self: HttpServer) -> (),
+}
+
+export type App = (((({ read GetService: (Self: App, Name: "WindowService") -> WindowService } & { read GetService: (Self: App, Name: "PlatformService") -> PlatformService }) & ({ read GetService: (Self: App, Name: "ThemeService") -> ThemeService } & { read GetService: (Self: App, Name: "ClipboardService") -> ClipboardService })) & (({ read GetService: (Self: App, Name: "DialogService") -> DialogService } & { read GetService: (Self: App, Name: "AssetService") -> AssetService }) & ({ read GetService: (Self: App, Name: "NetworkService") -> NetworkService } & { read GetService: (Self: App, Name: "HttpService") -> HttpService }))) & { read GetService: (Self: App, Name: "HttpServerService") -> HttpServerService })
 
 export type WindowInit = {
     Name: string?,

@@ -34,6 +34,11 @@ static int Raise(lua_State* State, const char* Format, Arguments... Values) {
 
 struct NetworkConnection;
 struct HttpOperation;
+struct HostedServer;
+struct HostedSession;
+static void RegisterHostedTypes(lua_State* State);
+static void DispatchHosted(LuiRuntime* Runtime, const std::shared_ptr<HostedSession>& Session);
+static void ReleaseHosted(LuiRuntime* Runtime);
 struct NetworkListener {
     explicit NetworkListener(asio::io_context& Io) : Io(Io) {}
     asio::io_context& Io;
@@ -82,6 +87,11 @@ struct NetworkContext {
     std::unordered_map<int, std::shared_ptr<HttpOperation>> HttpOperations; // Network worker only.
     std::unordered_map<int, std::shared_ptr<NetworkListener>> Listeners;
     std::unordered_map<int, std::shared_ptr<NetworkConnection>> Connections;
+    std::unordered_map<int, std::shared_ptr<HostedServer>> Servers; // Scheduler owner only.
+    std::unordered_map<int, std::shared_ptr<HostedSession>> HandlerTasks; // Scheduler owner only.
+    std::unordered_map<uint64_t, std::shared_ptr<HostedSession>> Sessions; // Network worker only.
+    std::shared_ptr<std::atomic<size_t>> HostedSlots = std::make_shared<std::atomic<size_t>>(0);
+    uint64_t NextSession = 1; // Network worker only.
 };
 
 static LuiRuntime* GetRuntime(lua_State* State) {
@@ -222,10 +232,10 @@ static void PushConnection(lua_State* State, const std::shared_ptr<NetworkConnec
     Network->Connections.emplace(Id, Connection);
 }
 
-static int ListenTcp(lua_State* State) {
+static int BindTcp(lua_State* State, bool Raw) {
     auto* Runtime = GetRuntime(State);
-    if ((Runtime->GrantedCapabilities & (LUI_CAPABILITY_NETWORK_SERVER | LUI_CAPABILITY_NETWORK_RAW)) !=
-        (LUI_CAPABILITY_NETWORK_SERVER | LUI_CAPABILITY_NETWORK_RAW))
+    if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) ||
+        (Raw && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW)))
         return Raise(State, "[LUI:Network] network.server and network.raw grants are required");
     luaL_checktype(State, 2, LUA_TTABLE);
     std::string Address = OptionString(State, 2, "Address", "loopback");
@@ -249,7 +259,7 @@ static int ListenTcp(lua_State* State) {
         (Port < Runtime->ServerPortMin || Port > Runtime->ServerPortMax))
         return Raise(State, "[LUI:Network] PolicyDenied");
     auto* Network = Context(Runtime);
-    if (Network->Listeners.size() >= 16) return Raise(State, "[LUI:Network] TooManyListeners");
+    if (Network->Listeners.size() + Network->Servers.size() >= 16) return Raise(State, "[LUI:Network] TooManyListeners");
     auto Listener = std::make_shared<NetworkListener>(Network->Io);
     std::vector<asio::ip::address> Addresses;
     if (Family == "DualStack" || Family == "IPv6")
@@ -294,6 +304,8 @@ static int ListenTcp(lua_State* State) {
     lua_setmetatable(State, -2);
     return 1;
 }
+
+static int ListenTcp(lua_State* State) { return BindTcp(State, true); }
 
 struct DialOperation {
     DialOperation(asio::io_context& Io, LuiRuntime* Owner, int TaskReference)
@@ -1082,6 +1094,7 @@ static int ConnectionGc(lua_State* State) {
 static int MaterializeResult(lua_State* State);
 
 void RegisterNetworkTypes(lua_State* State) {
+    RegisterHostedTypes(State);
     lua_pushcfunction(State, MaterializeResult, "NetworkResult");
     lua_setfield(State, LUA_REGISTRYINDEX, "LuiNetworkMaterialize");
     luaL_newmetatable(State, "LuiTcpListenerMeta");
@@ -1132,6 +1145,9 @@ static void PushHttpFields(lua_State* State, const std::vector<Lui::Http::Field>
     lua_setreadonly(State, -1, true);
 }
 
+// Shares the private worker and TCP binding path; no backend or raw API exposure.
+#include "http/Server.inl"
+
 static int MaterializeResult(lua_State* State) {
     auto* Completion = static_cast<NetworkCompletion*>(lua_touserdata(State, 1));
     if (!Completion->Error.empty()) {
@@ -1174,6 +1190,11 @@ int DrainNetworkCompletions(LuiRuntime* Runtime) {
             ++Count;
             continue;
         }
+        if (Completion.Type == NetworkCompletion::Kind::HostedRequest) {
+            DispatchHosted(Runtime, Completion.Session);
+            ++Count;
+            continue;
+        }
         if (Completion.Type == NetworkCompletion::Kind::HttpResponse && Runtime->Network->HttpOutstanding)
             --Runtime->Network->HttpOutstanding;
         if (Runtime->PendingAsyncReferences.erase(Completion.Reference) == 0) continue;
@@ -1194,6 +1215,7 @@ int DrainNetworkCompletions(LuiRuntime* Runtime) {
             } else if (!lua_checkstack(Thread, 1)) {
                 Runtime->LastError = "[LUI:Network] OutOfMemory while resuming network task";
                 if (Runtime->LogCallback) Runtime->LogCallback(Runtime->LogContext, "Error", Runtime->LastError.c_str());
+                CompleteNetworkTask(Runtime, Completion.Reference, nullptr, LUA_ERRMEM);
                 lua_unref(Runtime->State, Completion.Reference);
             } else {
                 lua_getfield(Runtime->State, LUA_REGISTRYINDEX, "LuiNetworkMaterialize");
@@ -1217,6 +1239,7 @@ void CloseNetwork(LuiRuntime* Runtime) {
     Network->Io.stop();
     if (Network->Worker.joinable()) Network->Worker.join();
     Runtime->NetworkCompletions.clear();
+    ReleaseHosted(Runtime);
     for (const auto& Pair : Network->Connections)
         ReleaseClosedListeners(Runtime, Pair.second);
     Runtime->Network = nullptr;

@@ -41,7 +41,7 @@ Define a shared owner-thread async completion and coroutine-resumption contract,
 
 ### Networking Foundation B — HTTP (in progress)
 
-The parser, validated request/response serializers, and outbound Luau `HttpService` are implemented. The client uses `network.client` without `network.raw`, shared paced dialing and host policy, bounded binary bodies, informational replies, deadlines, cancellation, and scheduler-owned completions. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md) state the supported HTTP/1.1 profile and tests. The hosted service remains planned.
+The parser, validated serializers, outbound `HttpService`, and hosted `HttpServerService` are implemented; hosted Windows/Linux headless qualification is in progress. HTTP requires its direction grant without `network.raw`, shares the transport and host policy, and bounds bodies, requests, connections, deadlines, and completions. Hosted exact routes run as yielding scheduler tasks; persistent responses are ordered, handler failures produce generic replies, and close/expiry prevents late dispatch/resume. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md) state the HTTP/1.1 profile and exit audit.
 
 Build outbound `HttpService` and a loopback-default `HttpServerService` on the proven transport. Include strict HTTP/1.1 framing, bounded requests and responses, ordered persistent connections, scheduler-thread route handlers, timeouts, and malformed-request regression tests.
 
@@ -69,4 +69,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Continue Networking Foundation B with loopback-default hosted routes, ordered scheduler handlers, response queues, deadlines, and shutdown tests. Parsing, serialization, and the outbound HTTP service are implemented. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.
+Finish hosted HTTP Windows/Linux headless qualification, then begin Networking Foundation C with bounded UDP datagrams and a portable TLS provider design. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.

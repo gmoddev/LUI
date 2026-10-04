@@ -74,8 +74,17 @@ foreach ($Object in $Schema.objects) {
     $Types.Add('}')
     $Types.Add('')
 }
-$ServiceOverloads = @($Schema.services | ForEach-Object { "((Self: App, Name: `"$($_.name)`") -> $($_.name))" })
-$Types.Add("export type App = { read GetService: $($ServiceOverloads -join ' & ') }")
+$ServiceOverloads = @($Schema.services | ForEach-Object { "{ read GetService: (Self: App, Name: `"$($_.name)`") -> $($_.name) }" })
+while ($ServiceOverloads.Count -gt 1) {
+    $Pairs = [System.Collections.Generic.List[string]]::new()
+    for ($Index = 0; $Index -lt $ServiceOverloads.Count; $Index += 2) {
+        if ($Index + 1 -lt $ServiceOverloads.Count) {
+            $Pairs.Add("($($ServiceOverloads[$Index]) & $($ServiceOverloads[$Index + 1]))")
+        } else { $Pairs.Add($ServiceOverloads[$Index]) }
+    }
+    $ServiceOverloads = @($Pairs)
+}
+$Types.Add("export type App = $($ServiceOverloads[0])")
 $Types.Add('')
 
 $ContainerTypes = @($Schema.classes | Where-Object acceptsChildren | ForEach-Object name) -join ' | '

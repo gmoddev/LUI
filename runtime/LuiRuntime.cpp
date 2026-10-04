@@ -1133,6 +1133,8 @@ static int AppGetService(lua_State* State) {
         luaL_error(State, "network.raw capability was not granted");
     if (Name == "HttpService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
         luaL_error(State, "network.client capability was not granted");
+    if (Name == "HttpServerService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER))
+        luaL_error(State, "network.server capability was not granted");
     auto Found = Runtime->ServiceRefs.find(Name);
     if (Found != Runtime->ServiceRefs.end()) {
         lua_getref(State, Found->second);
@@ -1143,6 +1145,7 @@ static int AppGetService(lua_State* State) {
         PushPlatformService(State, Runtime, Name);
     else if (Name == "NetworkService") PushNetworkService(State);
     else if (Name == "HttpService") PushHttpService(State);
+    else if (Name == "HttpServerService") PushHttpServerService(State);
     else if (Name == "ThemeService") {
         lua_newuserdata(State, 1);
         lua_getfield(State, LUA_REGISTRYINDEX, "LuiThemeServiceMeta");
@@ -1527,12 +1530,18 @@ static void DrainBackendEvents(LuiRuntime* Runtime) {
 }
 
 void ResumeScheduledTask(LuiRuntime* Runtime, int Reference, int ArgumentCount, bool AsError) {
+    if (!NetworkTaskReady(Runtime, Reference)) {
+        CompleteNetworkTask(Runtime, Reference, nullptr, LUA_ERRRUN);
+        lua_unref(Runtime->State, Reference);
+        return;
+    }
     lua_getref(Runtime->State, Reference);
     lua_State* Thread = lua_tothread(Runtime->State, -1);
     lua_pop(Runtime->State, 1);
     if (!Thread) {
         Runtime->LastError = "[LUI:Scheduler] scheduled coroutine is missing";
         EmitLog(Runtime, "Error", Runtime->LastError);
+        CompleteNetworkTask(Runtime, Reference, nullptr, LUA_ERRRUN);
         lua_unref(Runtime->State, Reference);
         return;
     }
@@ -1553,7 +1562,8 @@ void ResumeScheduledTask(LuiRuntime* Runtime, int Reference, int ArgumentCount, 
     Runtime->ActiveTaskThread = PreviousThread;
     Runtime->ActiveTaskHasWaiter = PreviousWaiter;
     if (Status == LUA_YIELD && HasWaiter) return;
-    if (Status != LUA_OK) {
+    const bool Handled = CompleteNetworkTask(Runtime, Reference, Thread, Status);
+    if (Status != LUA_OK && !Handled) {
         const char* Message = Status == LUA_YIELD
             ? "[LUI:Scheduler] task yielded without a registered async operation"
             : lua_tostring(Thread, -1);
@@ -1580,7 +1590,7 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
     for (const auto& Call : Pending) {
         if (Runtime->BackendFailed) break;
         if (Call.Due > Now) { Runtime->Tasks.push_back(Call); continue; }
-        ResumeScheduledTask(Runtime, Call.Reference, 0);
+        ResumeScheduledTask(Runtime, Call.Reference, Call.ArgumentCount);
         ++Count;
     }
     FlushLayout(Runtime);

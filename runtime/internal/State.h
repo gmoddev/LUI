@@ -113,19 +113,22 @@ struct Listener {
 struct ScheduledCall {
     int Reference = 0;
     std::chrono::steady_clock::time_point Due;
+    int ArgumentCount = 0;
 };
 
 struct NetworkContext;
 struct NetworkConnection;
+struct HostedSession;
 namespace Lui::Http { struct Message; }
 
 struct NetworkCompletion {
-    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse } Type = Kind::None;
+    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse, HostedRequest } Type = Kind::None;
     int Reference = 0;
     std::string Bytes;
     std::string Error;
     std::shared_ptr<NetworkConnection> Connection;
     std::shared_ptr<Lui::Http::Message> HttpResponse;
+    std::shared_ptr<HostedSession> Session;
 };
 
 struct BackendChange {

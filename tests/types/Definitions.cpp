@@ -46,6 +46,16 @@ int main() {
         local Windows = app:GetService("WindowService"):GetWindows()
         local BackendName: string = app:GetService("PlatformService").BackendName
         local Http = app:GetService("HttpService")
+        local Hosted = app:GetService("HttpServerService"):CreateServer({Port = 0, Family = "IPv4", MaxConnections = 4})
+        Hosted:Route("POST", "/typed", function(Request: HttpRequest): HttpReplyOptions
+            local Target: string = Request.RawTarget
+            local Body: string = Request.Body
+            return {StatusCode = 200, Body = Body, Headers = {{Name = "X-Target", Value = Target}}}
+        end)
+        Hosted:Start()
+        local Port: number = Hosted.Port
+        assert(Port >= 0)
+        Hosted:Close()
         task.spawn(function()
             local Options: HttpRequestOptions = {Url = "http://localhost/", Method = "POST",
                 Headers = {{Name = "Content-Type", Value = "application/octet-stream"}},
@@ -84,6 +94,22 @@ int main() {
         local Response = app:GetService("HttpService"):GetAsync("http://localhost/")
         Response.Body = "changed"
         Response.Headers[1].Value = "changed"
+    )");
+    Resolver.Scripts.emplace("hostedReadOnly", R"(
+        --!strict
+        local Server = app:GetService("HttpServerService"):CreateServer({Port=0})
+        Server:Route("POST", "/", function(Request)
+            Request.Body = "changed"
+            return {Body="OK"}
+        end)
+    )");
+    Resolver.Scripts.emplace("unknownService", R"(
+        --!strict
+        app:GetService("MissingService")
+    )");
+    Resolver.Scripts.emplace("wrongService", R"(
+        --!strict
+        app:GetService("HttpServerService"):GetAsync("http://localhost/")
     )");
     Resolver.Scripts.emplace("httpInvalidOptions", R"(
         --!strict
@@ -167,6 +193,9 @@ int main() {
     Failures += Check(!Frontend.check("invalidGridInit").errors.empty(), "invalid grid layout properties typechecked");
     Failures += Check(!Frontend.check("httpReadOnly").errors.empty(), "HTTP response mutation typechecked");
     Failures += Check(!Frontend.check("httpInvalidOptions").errors.empty(), "invalid HTTP options typechecked");
+    Failures += Check(!Frontend.check("hostedReadOnly").errors.empty(), "hosted request mutation typechecked");
+    Failures += Check(!Frontend.check("unknownService").errors.empty(), "unknown service typechecked");
+    Failures += Check(!Frontend.check("wrongService").errors.empty(), "service overload returned an unrelated service type");
     if (!Failures) std::puts("[LUI:Types] Generated definitions passed Luau type checks");
     return Failures ? 1 : 0;
 }
