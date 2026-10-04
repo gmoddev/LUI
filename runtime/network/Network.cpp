@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -45,6 +46,8 @@ struct NetworkListener {
 
 struct NetworkConnection {
     explicit NetworkConnection(asio::io_context& Io) : Socket(Io) {}
+    int Id = 0; // Scheduler owner only.
+    bool GcPending = false; // Scheduler owner only.
     Tcp::socket Socket;
     std::atomic<bool> Open{true};
     std::atomic<bool> ReadPending{false};
@@ -56,6 +59,8 @@ struct NetworkConnection {
     struct WriteEntry { int Reference; std::shared_ptr<std::string> Bytes; };
     std::deque<WriteEntry> Writes; // Network worker only.
     bool Writing = false; // Network worker only.
+    struct SignalListener { int Id; int Reference; bool Active; };
+    std::vector<SignalListener> ClosedListeners; // Scheduler owner only.
 };
 
 struct NetworkContext {
@@ -66,6 +71,7 @@ struct NetworkContext {
     asio::executor_work_guard<asio::io_context::executor_type> Work;
     std::thread Worker;
     int NextId = 1;
+    int NextSignalId = 1;
     std::unordered_map<int, std::shared_ptr<NetworkListener>> Listeners;
     std::unordered_map<int, std::shared_ptr<NetworkConnection>> Connections;
 };
@@ -104,6 +110,12 @@ static std::string NetworkError(const ErrorCode& Error) {
 static void Queue(LuiRuntime* Runtime, NetworkCompletion Completion) {
     std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex);
     if (!Runtime->ShuttingDown) Runtime->NetworkCompletions.push_back(std::move(Completion));
+}
+
+static bool QueueClosed(LuiRuntime* Runtime, const std::shared_ptr<NetworkConnection>& Connection) {
+    if (!Connection->Open.exchange(false)) return false;
+    Queue(Runtime, {NetworkCompletion::Kind::ClosedSignal, 0, {}, "", Connection});
+    return true;
 }
 
 static void CaptureEndpoints(NetworkConnection* Connection) {
@@ -195,6 +207,7 @@ static void PushConnection(lua_State* State, const std::shared_ptr<NetworkConnec
         luaL_error(State, "[LUI:Network] TooManyConnections");
     }
     int Id = Network->NextId++;
+    Connection->Id = Id;
     *static_cast<int*>(lua_newuserdata(State, sizeof(int))) = Id;
     lua_getfield(State, LUA_REGISTRYINDEX, "LuiTcpConnectionMeta");
     lua_setmetatable(State, -2);
@@ -274,6 +287,78 @@ static int ListenTcp(lua_State* State) {
     return 1;
 }
 
+struct DialOperation {
+    DialOperation(asio::io_context& Io, LuiRuntime* Owner, int TaskReference)
+        : Runtime(Owner), Reference(TaskReference), Resolver(Io), Deadline(Io), Pace(Io), Io(Io) {}
+    LuiRuntime* Runtime;
+    int Reference;
+    Tcp::resolver Resolver;
+    asio::steady_timer Deadline;
+    asio::steady_timer Pace;
+    asio::io_context& Io;
+    std::vector<Tcp::endpoint> Endpoints;
+    std::vector<std::shared_ptr<NetworkConnection>> Attempts;
+    size_t Next = 0;
+    size_t Active = 0;
+    bool Done = false;
+    bool PacePending = false;
+    std::string LastError;
+};
+
+static void FinishDial(const std::shared_ptr<DialOperation>& Operation,
+    const std::shared_ptr<NetworkConnection>& Winner, const std::string& Error) {
+    if (Operation->Done) return;
+    Operation->Done = true;
+    Operation->Deadline.cancel();
+    Operation->Pace.cancel();
+    Operation->Resolver.cancel();
+    for (const auto& Attempt : Operation->Attempts) {
+        if (Attempt == Winner) continue;
+        ErrorCode CloseError;
+        Attempt->Socket.close(CloseError);
+    }
+    if (Winner) CaptureEndpoints(Winner.get());
+    Queue(Operation->Runtime, {Winner ? NetworkCompletion::Kind::Connection : NetworkCompletion::Kind::None,
+        Operation->Reference, {}, Error, Winner});
+}
+
+static void StartDial(const std::shared_ptr<DialOperation>& Operation);
+
+static void ScheduleDialPace(const std::shared_ptr<DialOperation>& Operation) {
+    if (Operation->Done || Operation->PacePending || Operation->Next >= Operation->Endpoints.size() ||
+        Operation->Active >= 2) return;
+    Operation->PacePending = true;
+    Operation->Pace.expires_after(std::chrono::milliseconds(250));
+    Operation->Pace.async_wait([Operation](const ErrorCode& Error) {
+        Operation->PacePending = false;
+        if (!Error) StartDial(Operation);
+    });
+}
+
+static void StartDial(const std::shared_ptr<DialOperation>& Operation) {
+    if (Operation->Done || Operation->Active >= 2 || Operation->Next >= Operation->Endpoints.size()) return;
+    auto Endpoint = Operation->Endpoints[Operation->Next++];
+    auto Connection = std::make_shared<NetworkConnection>(Operation->Io);
+    Operation->Attempts.push_back(Connection);
+    ++Operation->Active;
+    Connection->Socket.async_connect(Endpoint,
+        [Operation, Connection](const ErrorCode& Error) {
+            if (Operation->Done) return;
+            --Operation->Active;
+            if (!Error) {
+                FinishDial(Operation, Connection, "");
+                return;
+            }
+            ErrorCode CloseError;
+            Connection->Socket.close(CloseError);
+            Operation->LastError = NetworkError(Error);
+            if (Operation->Next >= Operation->Endpoints.size() && Operation->Active == 0)
+                FinishDial(Operation, {}, Operation->LastError);
+            else ScheduleDialPace(Operation);
+        });
+    ScheduleDialPace(Operation);
+}
+
 static int ConnectTcp(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     if ((Runtime->GrantedCapabilities & (LUI_CAPABILITY_NETWORK_CLIENT | LUI_CAPABILITY_NETWORK_RAW)) !=
@@ -299,52 +384,49 @@ static int ConnectTcp(lua_State* State) {
     CheckAwait(State);
     auto* Network = Context(Runtime);
     if (Network->Connections.size() >= 64) return Raise(State, "[LUI:Network] TooManyConnections");
-    auto Connection = std::make_shared<NetworkConnection>(Network->Io);
-    auto Resolver = std::make_shared<Tcp::resolver>(Network->Io);
-    auto Timer = std::make_shared<asio::steady_timer>(Network->Io);
-    auto Done = std::make_shared<std::atomic<bool>>(false);
     int Reference = BeginAwait(State);
-    asio::post(Network->Io, [Runtime, Reference, Resolver, Connection, Timer, Done, Host, Port, LoopbackOnly] {
-    Timer->expires_after(std::chrono::seconds(10));
-    Timer->async_wait([Runtime, Reference, Resolver, Connection, Done](const ErrorCode& Error) {
-        if (Error || Done->exchange(true)) return;
-        Resolver->cancel();
-        ErrorCode CloseError;
-        Connection->Socket.close(CloseError);
-        Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {}, "[LUI:Network] TimedOut", {}});
-    });
-    Resolver->async_resolve(Host, std::to_string(Port),
-        [Runtime, Reference, Resolver, Connection, Timer, Done, LoopbackOnly](const ErrorCode& Error, Tcp::resolver::results_type Results) {
-            if (Done->load()) return;
-            if (Error) {
-                if (!Done->exchange(true)) {
-                    Timer->cancel();
-                    Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {}, NetworkError(Error), {}});
-                }
-                return;
-            }
-            std::vector<Tcp::endpoint> Endpoints;
-            for (const auto& Result : Results) {
-                if (!LoopbackOnly || Result.endpoint().address().is_loopback())
-                    Endpoints.push_back(Result.endpoint());
-            }
-            if (Endpoints.empty()) {
-                if (!Done->exchange(true)) {
-                    Timer->cancel();
-                    Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {},
-                        "[LUI:Network] PolicyDenied", {}});
-                }
-                return;
-            }
-            asio::async_connect(Connection->Socket, Endpoints,
-                [Runtime, Reference, Connection, Timer, Done](const ErrorCode& ConnectError, const Tcp::endpoint&) {
-                    if (Done->exchange(true)) return;
-                    Timer->cancel();
-                    if (!ConnectError) CaptureEndpoints(Connection.get());
-                    Queue(Runtime, {ConnectError ? NetworkCompletion::Kind::None : NetworkCompletion::Kind::Connection,
-                        Reference, {}, ConnectError ? NetworkError(ConnectError) : "", Connection});
-                });
+    auto Operation = std::make_shared<DialOperation>(Network->Io, Runtime, Reference);
+    asio::post(Network->Io, [Operation, Host, Port, LoopbackOnly] {
+        Operation->Deadline.expires_after(std::chrono::seconds(10));
+        Operation->Deadline.async_wait([Operation](const ErrorCode& Error) {
+            if (!Error) FinishDial(Operation, {}, "[LUI:Network] TimedOut");
         });
+        Operation->Resolver.async_resolve(Host, std::to_string(Port),
+            [Operation, LoopbackOnly](const ErrorCode& Error, Tcp::resolver::results_type Results) {
+                if (Operation->Done) return;
+                if (Error) {
+                    FinishDial(Operation, {}, NetworkError(Error));
+                    return;
+                }
+                std::vector<Tcp::endpoint> IPv4;
+                std::vector<Tcp::endpoint> IPv6;
+                bool FirstIPv6 = false;
+                bool FirstSet = false;
+                for (const auto& Result : Results) {
+                    const auto Endpoint = Result.endpoint();
+                    if (LoopbackOnly && !Endpoint.address().is_loopback()) continue;
+                    if (!FirstSet) {
+                        FirstIPv6 = Endpoint.address().is_v6();
+                        FirstSet = true;
+                    }
+                    auto& Family = Endpoint.address().is_v6() ? IPv6 : IPv4;
+                    if (Family.size() < 16) Family.push_back(Endpoint);
+                }
+                for (size_t Index = 0; Operation->Endpoints.size() < 16 &&
+                    (Index < IPv4.size() || Index < IPv6.size()); ++Index) {
+                    const auto& First = FirstIPv6 ? IPv6 : IPv4;
+                    const auto& Second = FirstIPv6 ? IPv4 : IPv6;
+                    if (Index < First.size()) Operation->Endpoints.push_back(First[Index]);
+                    if (Operation->Endpoints.size() < 16 && Index < Second.size())
+                        Operation->Endpoints.push_back(Second[Index]);
+                }
+                if (Operation->Endpoints.empty()) {
+                    FinishDial(Operation, {}, LoopbackOnly ? "[LUI:Network] PolicyDenied" :
+                        "[LUI:Network] NameNotFound");
+                    return;
+                }
+                StartDial(Operation);
+            });
     });
     return lua_yield(State, 0);
 }
@@ -457,16 +539,21 @@ static int Read(lua_State* State, bool Exact) {
     int Reference = BeginAwait(State);
     auto Handler = [Runtime, Reference, Connection, Bytes, Exact](const ErrorCode& Error, size_t Count) {
         Connection->ReadPending = false;
+        const bool WasOpen = Connection->Open.load();
         NetworkCompletion Completion;
         Completion.Reference = Reference;
         if (Error == asio::error::eof && !Exact && Count == 0) Completion.Type = NetworkCompletion::Kind::EndOfStream;
-        else if (Error) Completion.Error = !Connection->Open ? "[LUI:Network] Canceled" :
+        else if (Error) Completion.Error = !WasOpen ? "[LUI:Network] Canceled" :
             (Error == asio::error::eof && Exact ? "[LUI:Network] UnexpectedEof" : NetworkError(Error));
         else {
             Completion.Type = NetworkCompletion::Kind::Bytes;
             Completion.Bytes.assign(Bytes->data(), Count);
         }
         Queue(Runtime, std::move(Completion));
+        if (Error && WasOpen && QueueClosed(Runtime, Connection)) {
+            ErrorCode CloseError;
+            Connection->Socket.close(CloseError);
+        }
     };
     auto* Network = Context(Runtime);
     asio::post(Network->Io, [Connection, Bytes, Exact, Handler = std::move(Handler)]() mutable {
@@ -490,6 +577,10 @@ static void StartWrite(LuiRuntime* Runtime, std::shared_ptr<NetworkConnection> C
             Connection->Writing = false;
             Queue(Runtime, {NetworkCompletion::Kind::None, Entry.Reference, {}, Error
                 ? (!Connection->Open ? "[LUI:Network] Canceled" : NetworkError(Error)) : "", {}});
+            if (Error && QueueClosed(Runtime, Connection)) {
+                ErrorCode CloseError;
+                Connection->Socket.close(CloseError);
+            }
             StartWrite(Runtime, Connection);
         });
 }
@@ -521,8 +612,9 @@ static int WriteAsync(lua_State* State) {
 
 static int ConnectionClose(lua_State* State) {
     auto Connection = GetConnection(State);
-    if (Connection->Open.exchange(false)) {
-        auto* Network = Context(GetRuntime(State));
+    auto* Runtime = GetRuntime(State);
+    if (QueueClosed(Runtime, Connection)) {
+        auto* Network = Context(Runtime);
         asio::post(Network->Io, [Connection] { ErrorCode Error; Connection->Socket.close(Error); });
     }
     return 0;
@@ -540,6 +632,104 @@ static int Shutdown(lua_State* State) {
     auto* Network = Context(GetRuntime(State));
     asio::post(Network->Io, [Connection, Value] { ErrorCode Error; Connection->Socket.shutdown(Value, Error); });
     return 0;
+}
+
+struct NetworkSignalValue { int ConnectionId; };
+struct NetworkSubscriptionValue { int ConnectionId; int ListenerId; };
+
+static int NetworkSignalConnect(lua_State* State) {
+    if (!HasMeta(State, 1, "LuiNetworkSignalMeta"))
+        return Raise(State, "[LUI:Network] expected Closed signal");
+    luaL_checktype(State, 2, LUA_TFUNCTION);
+    auto* Runtime = GetRuntime(State);
+    int ConnectionId = static_cast<NetworkSignalValue*>(lua_touserdata(State, 1))->ConnectionId;
+    if (!Runtime->Network) return Raise(State, "[LUI:Network] Closed");
+    auto Found = Runtime->Network->Connections.find(ConnectionId);
+    if (Found == Runtime->Network->Connections.end() || !Found->second->Open)
+        return Raise(State, "[LUI:Network] Closed");
+    auto& Listeners = Found->second->ClosedListeners;
+    Listeners.erase(std::remove_if(Listeners.begin(), Listeners.end(),
+        [](const NetworkConnection::SignalListener& Listener) { return !Listener.Active; }),
+        Listeners.end());
+    if (Listeners.size() >= 64) return Raise(State, "[LUI:Network] TooManyListeners");
+    int Reference = lua_ref(State, 2);
+    int ListenerId = Runtime->Network->NextSignalId++;
+    Listeners.push_back({ListenerId, Reference, true});
+    *static_cast<NetworkSubscriptionValue*>(lua_newuserdata(State, sizeof(NetworkSubscriptionValue))) =
+        {ConnectionId, ListenerId};
+    lua_getfield(State, LUA_REGISTRYINDEX, "LuiNetworkSubscriptionMeta");
+    lua_setmetatable(State, -2);
+    return 1;
+}
+
+static int NetworkSignalDisconnect(lua_State* State) {
+    if (!HasMeta(State, 1, "LuiNetworkSubscriptionMeta"))
+        return Raise(State, "[LUI:Network] expected signal connection");
+    auto* Runtime = GetRuntime(State);
+    if (!Runtime->Network) return 0;
+    auto* Value = static_cast<NetworkSubscriptionValue*>(lua_touserdata(State, 1));
+    auto Found = Runtime->Network->Connections.find(Value->ConnectionId);
+    if (Found == Runtime->Network->Connections.end()) return 0;
+    for (auto& Listener : Found->second->ClosedListeners) {
+        if (Listener.Id == Value->ListenerId && Listener.Active) {
+            Listener.Active = false;
+            lua_unref(State, Listener.Reference);
+            Listener.Reference = 0;
+            break;
+        }
+    }
+    return 0;
+}
+
+static int NetworkSignalIndex(lua_State* State) {
+    const char* Key = luaL_checkstring(State, 2);
+    if (std::strcmp(Key, "Connect") == 0)
+        lua_pushcfunction(State, NetworkSignalConnect, "TcpConnection.Closed.Connect");
+    else lua_pushnil(State);
+    return 1;
+}
+
+static int NetworkSubscriptionIndex(lua_State* State) {
+    const char* Key = luaL_checkstring(State, 2);
+    if (std::strcmp(Key, "Disconnect") == 0)
+        lua_pushcfunction(State, NetworkSignalDisconnect, "TcpConnection.Closed.Disconnect");
+    else lua_pushnil(State);
+    return 1;
+}
+
+static void ReleaseClosedListeners(LuiRuntime* Runtime,
+    const std::shared_ptr<NetworkConnection>& Connection) {
+    for (auto& Listener : Connection->ClosedListeners) {
+        if (Listener.Active) lua_unref(Runtime->State, Listener.Reference);
+        Listener.Active = false;
+        Listener.Reference = 0;
+    }
+    Connection->ClosedListeners.clear();
+}
+
+static void FireClosedSignal(LuiRuntime* Runtime, const std::shared_ptr<NetworkConnection>& Connection) {
+    const size_t Count = Connection->ClosedListeners.size();
+    for (size_t Index = 0; Index < Count; ++Index) {
+        auto& Listener = Connection->ClosedListeners[Index];
+        if (!Listener.Active) continue;
+        lua_getref(Runtime->State, Listener.Reference);
+        if (!Runtime->VmDepth) Runtime->InterruptCount = 0;
+        ++Runtime->VmDepth;
+        int Status = lua_pcall(Runtime->State, 0, 0, 0);
+        --Runtime->VmDepth;
+        if (Status != LUA_OK) {
+            const char* Message = lua_tostring(Runtime->State, -1);
+            Runtime->LastError = std::string("[LUI:Network] Closed callback failed: ") +
+                (Message ? Message : "unknown error");
+            if (Runtime->LogCallback)
+                Runtime->LogCallback(Runtime->LogContext, "Error", Runtime->LastError.c_str());
+            else std::fprintf(stderr, "%s\n", Runtime->LastError.c_str());
+            lua_pop(Runtime->State, 1);
+        }
+    }
+    ReleaseClosedListeners(Runtime, Connection);
+    if (Connection->GcPending && Runtime->Network)
+        Runtime->Network->Connections.erase(Connection->Id);
 }
 
 static int ListenerIndex(lua_State* State) {
@@ -570,6 +760,12 @@ static int ConnectionIndex(lua_State* State) {
         PushEndpoint(State, Connection->LocalAddress, Connection->LocalPort);
     else if (std::strcmp(Key, "RemoteEndpoint") == 0)
         PushEndpoint(State, Connection->RemoteAddress, Connection->RemotePort);
+    else if (std::strcmp(Key, "Closed") == 0) {
+        int ConnectionId = *static_cast<int*>(lua_touserdata(State, 1));
+        *static_cast<NetworkSignalValue*>(lua_newuserdata(State, sizeof(NetworkSignalValue))) = {ConnectionId};
+        lua_getfield(State, LUA_REGISTRYINDEX, "LuiNetworkSignalMeta");
+        lua_setmetatable(State, -2);
+    }
     else if (std::strcmp(Key, "ReadAsync") == 0) lua_pushcfunction(State, ReadAsync, "TcpConnection.ReadAsync");
     else if (std::strcmp(Key, "ReadExactAsync") == 0) lua_pushcfunction(State, ReadExactAsync, "TcpConnection.ReadExactAsync");
     else if (std::strcmp(Key, "WriteAsync") == 0) lua_pushcfunction(State, WriteAsync, "TcpConnection.WriteAsync");
@@ -602,11 +798,13 @@ static int ConnectionGc(lua_State* State) {
     int Id = *static_cast<int*>(lua_touserdata(State, 1));
     auto Found = Runtime->Network->Connections.find(Id);
     if (Found != Runtime->Network->Connections.end()) {
-        if (Found->second->Open.exchange(false)) {
-            auto Connection = Found->second;
+        auto Connection = Found->second;
+        if (Connection->Open.exchange(false)) {
+            ReleaseClosedListeners(Runtime, Connection);
             asio::post(Runtime->Network->Io, [Connection] { ErrorCode Error; Connection->Socket.close(Error); });
         }
-        Runtime->Network->Connections.erase(Found);
+        if (!Connection->ClosedListeners.empty()) Connection->GcPending = true;
+        else Runtime->Network->Connections.erase(Found);
     }
     return 0;
 }
@@ -625,6 +823,14 @@ void RegisterNetworkTypes(lua_State* State) {
     lua_pushcfunction(State, ConnectionIndex, "TcpConnection.__index"); lua_setfield(State, -2, "__index");
     lua_pushcfunction(State, ReadOnly, "TcpConnection.__newindex"); lua_setfield(State, -2, "__newindex");
     lua_pushcfunction(State, ConnectionGc, "TcpConnection.__gc"); lua_setfield(State, -2, "__gc");
+    lua_pop(State, 1);
+    luaL_newmetatable(State, "LuiNetworkSignalMeta");
+    lua_pushcfunction(State, NetworkSignalIndex, "TcpConnection.Closed.__index");
+    lua_setfield(State, -2, "__index");
+    lua_pop(State, 1);
+    luaL_newmetatable(State, "LuiNetworkSubscriptionMeta");
+    lua_pushcfunction(State, NetworkSubscriptionIndex, "TcpConnection.Closed.Subscription.__index");
+    lua_setfield(State, -2, "__index");
     lua_pop(State, 1);
 }
 
@@ -661,6 +867,11 @@ int DrainNetworkCompletions(LuiRuntime* Runtime) {
             if (Runtime->NetworkCompletions.empty()) break;
             Completion = std::move(Runtime->NetworkCompletions.front());
             Runtime->NetworkCompletions.pop_front();
+        }
+        if (Completion.Type == NetworkCompletion::Kind::ClosedSignal) {
+            FireClosedSignal(Runtime, Completion.Connection);
+            ++Count;
+            continue;
         }
         if (Runtime->PendingAsyncReferences.erase(Completion.Reference) == 0) continue;
         lua_getref(Runtime->State, Completion.Reference);
@@ -703,6 +914,8 @@ void CloseNetwork(LuiRuntime* Runtime) {
     Network->Io.stop();
     if (Network->Worker.joinable()) Network->Worker.join();
     Runtime->NetworkCompletions.clear();
+    for (const auto& Pair : Network->Connections)
+        ReleaseClosedListeners(Runtime, Pair.second);
     Runtime->Network = nullptr;
     for (int Reference : Runtime->PendingAsyncReferences) lua_unref(Runtime->State, Reference);
     Runtime->PendingAsyncReferences.clear();

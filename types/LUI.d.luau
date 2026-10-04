@@ -190,6 +190,7 @@ export type TcpConnection = {
     read WriteAsync: (Self: TcpConnection, Data: string | buffer) -> (),
     read Shutdown: (Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> (),
     read Close: (Self: TcpConnection) -> (),
+    read Closed: Signal,
 }
 
 export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) & ((Self: App, Name: "NetworkService") -> NetworkService) }

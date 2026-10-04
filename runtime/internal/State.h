@@ -119,7 +119,7 @@ struct NetworkContext;
 struct NetworkConnection;
 
 struct NetworkCompletion {
-    enum class Kind { None, Bytes, EndOfStream, Connection } Type = Kind::None;
+    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal } Type = Kind::None;
     int Reference = 0;
     std::string Bytes;
     std::string Error;

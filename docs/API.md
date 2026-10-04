@@ -252,3 +252,4 @@ Base: `UIComponent`. Creatable: `true`.
 - `WriteAsync`: `(Self: TcpConnection, Data: string | buffer) -> ()`
 - `Shutdown`: `(Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> ()`
 - `Close`: `(Self: TcpConnection) -> ()`
+- `Closed`: `Signal`

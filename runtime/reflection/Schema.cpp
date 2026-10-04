@@ -162,6 +162,10 @@ static constexpr ServiceMethodDefinition ObjectMethods[] = {
     {"TcpConnection", "Close", "(Self: TcpConnection) -> ()"},
 };
 
+static constexpr ServiceSignalDefinition ObjectSignals[] = {
+    {"TcpConnection", "Closed", "Signal"},
+};
+
 const ClassDefinition* FindClass(const std::string& Name) {
     for (const auto& Class : Classes) if (Name == Class.Name) return &Class;
     return nullptr;
@@ -299,6 +303,7 @@ const std::string& GetJson() {
             Output << "{\"name\":"; AppendQuoted(Output, Object.Name);
             Output << ",\"methods\":"; AppendDefinitions(Output, ObjectMethods, Object.Name);
             Output << ",\"properties\":"; AppendDefinitions(Output, ObjectProperties, Object.Name);
+            Output << ",\"signals\":"; AppendDefinitions(Output, ObjectSignals, Object.Name);
             Output << '}';
         }
         Output << "]}";

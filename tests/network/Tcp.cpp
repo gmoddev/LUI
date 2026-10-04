@@ -14,6 +14,9 @@ struct Results {
     bool DualCanceled = false;
     bool PolicyDenied = false;
     bool PolicyAllowed = false;
+    bool LocalClosed = false;
+    bool RemoteClosed = false;
+    bool DialFallback = false;
     std::string Error;
 };
 
@@ -28,6 +31,9 @@ static void LUI_CALL OnLog(void* Context, const char* Level, const char* Message
     if (std::string(Message) == "[LUI:NetworkTest] TCP_DUAL_CANCELED") Result->DualCanceled = true;
     if (std::string(Message) == "[LUI:NetworkTest] TCP_POLICY_DENIED") Result->PolicyDenied = true;
     if (std::string(Message) == "[LUI:NetworkTest] TCP_POLICY_ALLOWED") Result->PolicyAllowed = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_LOCAL_CLOSED") Result->LocalClosed = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_REMOTE_CLOSED") Result->RemoteClosed = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_DIAL_FALLBACK") Result->DialFallback = true;
 }
 
 static int Check(bool Condition, const char* Message) {
@@ -281,6 +287,88 @@ int main() {
     Failures += Check(AllowedResult.Error.empty(), AllowedResult.Error.c_str());
     Lui_Destroy(Allowed);
 
+    LuiRuntime* Signals = Lui_Create();
+    Results SignalResult;
+    Lui_SetLogCallback(Signals, &SignalResult, OnLog);
+    Failures += Check(Lui_DeclareCapabilities(Signals, &Grant) == 1,
+        "signal test grants rejected");
+    Failures += Check(Lui_RunScript(Signals, R"(
+        local Network = app:GetService('NetworkService')
+        local Listener = Network:ListenTcp({Port = 0})
+        task.spawn(function()
+            local Peer = Listener:AcceptAsync()
+            Peer:Close()
+            Listener:Close()
+        end)
+        task.spawn(function()
+            local Client = Network:ConnectTcp({Port = Listener.Port})
+            local Subscriptions = {}
+            for Index = 1, 64 do
+                Subscriptions[Index] = Client.Closed:Connect(function() end)
+            end
+            local TooMany, LimitError = pcall(function() Client.Closed:Connect(function() end) end)
+            assert(not TooMany and string.find(LimitError, 'TooManyListeners'))
+            for _, Subscription in ipairs(Subscriptions) do Subscription:Disconnect() end
+            local Count = 0
+            Client.Closed:Connect(function(...)
+                assert(select('#', ...) == 0 and not Client.IsOpen)
+                Count += 1
+            end)
+            local Removed = Client.Closed:Connect(function() error('disconnected callback ran') end)
+            Removed:Disconnect()
+            Removed:Disconnect()
+            Client:Close()
+            Client:Close()
+            assert(not pcall(function() Client.Closed:Connect(function() end) end))
+            task.defer(function()
+                assert(Count == 1)
+                print('[LUI:NetworkTest] TCP_LOCAL_CLOSED')
+            end)
+        end)
+    )", "TcpLocalClosed") == 1, Lui_GetLastError(Signals));
+    Failures += Check(PumpUntil(Signals, SignalResult.LocalClosed),
+        "local close signal did not fire once");
+    Failures += Check(SignalResult.Error.empty(), SignalResult.Error.c_str());
+    Failures += Check(Lui_RunScript(Signals, R"(
+        local Network = app:GetService('NetworkService')
+        local Listener = Network:ListenTcp({Port = 0})
+        task.spawn(function()
+            local Peer = Listener:AcceptAsync()
+            Peer:Shutdown('Write')
+            Listener:Close()
+        end)
+        task.spawn(function()
+            local Client = Network:ConnectTcp({Port = Listener.Port})
+            Client.Closed:Connect(function()
+                assert(not Client.IsOpen)
+                print('[LUI:NetworkTest] TCP_REMOTE_CLOSED')
+            end)
+            assert(Client:ReadAsync(1) == nil)
+        end)
+    )", "TcpRemoteClosed") == 1, Lui_GetLastError(Signals));
+    Failures += Check(PumpUntil(Signals, SignalResult.RemoteClosed),
+        "remote EOF close signal did not fire");
+    Failures += Check(SignalResult.Error.empty(), SignalResult.Error.c_str());
+    Failures += Check(Lui_RunScript(Signals, R"(
+        local Network = app:GetService('NetworkService')
+        local Listener = Network:ListenTcp({Family = 'IPv4', Port = 0})
+        task.spawn(function()
+            local Peer = Listener:AcceptAsync()
+            Peer:Close()
+            Listener:Close()
+        end)
+        task.spawn(function()
+            local Client = Network:ConnectTcp({Address = 'localhost', Port = Listener.Port})
+            assert(Client.RemoteEndpoint.Address == '127.0.0.1')
+            Client:Close()
+            print('[LUI:NetworkTest] TCP_DIAL_FALLBACK')
+        end)
+    )", "TcpDialFallback") == 1, Lui_GetLastError(Signals));
+    Failures += Check(PumpUntil(Signals, SignalResult.DialFallback),
+        "localhost dial did not reach available address family");
+    Failures += Check(SignalResult.Error.empty(), SignalResult.Error.c_str());
+    Lui_Destroy(Signals);
+
     LuiRuntime* Teardown = Lui_Create();
     Failures += Check(Lui_DeclareCapabilities(Teardown, &Grant) == 1 &&
         Lui_RunScript(Teardown,
@@ -291,6 +379,6 @@ int main() {
     Lui_Pump(Teardown);
     Lui_Destroy(Teardown);
 
-    if (!Failures) std::puts("[LUI:NetworkTest] TCP grants, round trip, EOF, cancellation, dual-family binding, host policy, and teardown passed");
+    if (!Failures) std::puts("[LUI:NetworkTest] TCP grants, round trip, EOF, cancellation, dual-family binding, host policy, paced dialing, close signals, and teardown passed");
     return Failures ? 1 : 0;
 }

@@ -68,6 +68,9 @@ foreach ($Object in $Schema.objects) {
     foreach ($Method in $Object.methods) {
         $Types.Add("    read $($Method.name): $($Method.type),")
     }
+    foreach ($Signal in $Object.signals) {
+        $Types.Add("    read $($Signal.name): $($Signal.type),")
+    }
     $Types.Add('}')
     $Types.Add('')
 }
@@ -181,6 +184,7 @@ foreach ($Object in $Schema.objects) {
     $Docs.Add('')
     foreach ($Property in $Object.properties) { $Docs.Add("- ``$($Property.name)``: ``$($Property.type)``") }
     foreach ($Method in $Object.methods) { $Docs.Add("- ``$($Method.name)``: ``$($Method.type)``") }
+    foreach ($Signal in $Object.signals) { $Docs.Add("- ``$($Signal.name)``: ``$($Signal.type)``") }
     $Docs.Add('')
 }
 if ($Docs.Count -gt 0 -and $Docs[$Docs.Count - 1] -eq '') {
