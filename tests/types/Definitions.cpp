@@ -46,6 +46,15 @@ int main() {
         local Windows = app:GetService("WindowService"):GetWindows()
         local BackendName: string = app:GetService("PlatformService").BackendName
         local Http = app:GetService("HttpService")
+        local Socket: UdpSocket = app:GetService("NetworkService"):BindUdp({Port = 0, Family = "IPv6", MaxDatagramBytes = 4096})
+        task.spawn(function()
+            local Datagram: UdpDatagram = Socket:ReceiveFromAsync()
+            local Bytes: buffer = Datagram.Data
+            local Endpoint: NetworkEndpoint = Datagram.RemoteEndpoint
+            Socket:SendToAsync(Endpoint, Bytes)
+            Socket:SendToAsync(Endpoint, "reply")
+            Socket:Close()
+        end)
         local Hosted = app:GetService("HttpServerService"):CreateServer({Port = 0, Family = "IPv4", MaxConnections = 4})
         Hosted:Route("POST", "/typed", function(Request: HttpRequest): HttpReplyOptions
             local Target: string = Request.RawTarget
@@ -94,6 +103,16 @@ int main() {
         local Response = app:GetService("HttpService"):GetAsync("http://localhost/")
         Response.Body = "changed"
         Response.Headers[1].Value = "changed"
+    )");
+    Resolver.Scripts.emplace("udpReadOnly", R"(
+        --!strict
+        local Datagram = app:GetService("NetworkService"):BindUdp({Port = 0}):ReceiveFromAsync()
+        Datagram.Data = buffer.create(0)
+        Datagram.RemoteEndpoint.Port = 42
+    )");
+    Resolver.Scripts.emplace("udpInvalidOptions", R"(
+        --!strict
+        app:GetService("NetworkService"):BindUdp({Port = "invalid", Family = "DualStack"})
     )");
     Resolver.Scripts.emplace("hostedReadOnly", R"(
         --!strict
@@ -192,6 +211,8 @@ int main() {
     Failures += Check(!Frontend.check("invalidSizeInit").errors.empty(), "invalid size constraint properties typechecked");
     Failures += Check(!Frontend.check("invalidGridInit").errors.empty(), "invalid grid layout properties typechecked");
     Failures += Check(!Frontend.check("httpReadOnly").errors.empty(), "HTTP response mutation typechecked");
+    Failures += Check(!Frontend.check("udpReadOnly").errors.empty(), "UDP datagram mutation typechecked");
+    Failures += Check(!Frontend.check("udpInvalidOptions").errors.empty(), "invalid UDP options typechecked");
     Failures += Check(!Frontend.check("httpInvalidOptions").errors.empty(), "invalid HTTP options typechecked");
     Failures += Check(!Frontend.check("hostedReadOnly").errors.empty(), "hosted request mutation typechecked");
     Failures += Check(!Frontend.check("unknownService").errors.empty(), "unknown service typechecked");

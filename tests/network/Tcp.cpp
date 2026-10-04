@@ -5,6 +5,8 @@
 #include <string>
 #include <thread>
 
+int TestUdp();
+
 struct Results {
     bool Done = false;
     bool Canceled = false;
@@ -380,5 +382,6 @@ int main() {
     Lui_Destroy(Teardown);
 
     if (!Failures) std::puts("[LUI:NetworkTest] TCP grants, round trip, EOF, cancellation, dual-family binding, host policy, paced dialing, close signals, and teardown passed");
+    Failures += TestUdp();
     return Failures ? 1 : 0;
 }

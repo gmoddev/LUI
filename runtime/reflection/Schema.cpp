@@ -119,6 +119,7 @@ static constexpr ServiceMethodDefinition ServiceMethods[] = {
     {"AssetService", "Has", "(Self: AssetService, Name: string) -> boolean"},
     {"NetworkService", "ListenTcp", "(Self: NetworkService, Options: NetworkListenOptions) -> TcpListener"},
     {"NetworkService", "ConnectTcp", "(Self: NetworkService, Options: NetworkConnectOptions) -> TcpConnection"},
+    {"NetworkService", "BindUdp", "(Self: NetworkService, Options: UdpBindOptions) -> UdpSocket"},
     {"HttpService", "RequestAsync", "(Self: HttpService, Options: HttpRequestOptions) -> HttpResponse"},
     {"HttpService", "GetAsync", "(Self: HttpService, Url: string) -> HttpResponse"},
     {"HttpService", "CancelAll", "(Self: HttpService) -> ()"},
@@ -140,6 +141,9 @@ static constexpr ServiceDefinition Objects[] = {
     {"NetworkConnectOptions"},
     {"TcpListener"},
     {"TcpConnection"},
+    {"UdpBindOptions"},
+    {"UdpSocket"},
+    {"UdpDatagram"},
     {"HttpHeader"},
     {"HttpRequestOptions"},
     {"HttpResponse"},
@@ -200,6 +204,14 @@ static constexpr ServicePropertyDefinition ObjectProperties[] = {
     {"TcpConnection", "IsOpen", "boolean"},
     {"TcpConnection", "LocalEndpoint", "NetworkEndpoint"},
     {"TcpConnection", "RemoteEndpoint", "NetworkEndpoint"},
+    {"UdpBindOptions", "Address", "string?"},
+    {"UdpBindOptions", "Family", "(\"IPv4\" | \"IPv6\")?"},
+    {"UdpBindOptions", "Port", "number"},
+    {"UdpBindOptions", "MaxDatagramBytes", "number?"},
+    {"UdpSocket", "IsOpen", "boolean"},
+    {"UdpSocket", "LocalEndpoint", "NetworkEndpoint"},
+    {"UdpDatagram", "Data", "buffer"},
+    {"UdpDatagram", "RemoteEndpoint", "NetworkEndpoint"},
 };
 
 static constexpr ServiceMethodDefinition ObjectMethods[] = {
@@ -213,6 +225,9 @@ static constexpr ServiceMethodDefinition ObjectMethods[] = {
     {"TcpConnection", "WriteAsync", "(Self: TcpConnection, Data: string | buffer) -> ()"},
     {"TcpConnection", "Shutdown", "(Self: TcpConnection, Direction: \"Read\" | \"Write\" | \"Both\") -> ()"},
     {"TcpConnection", "Close", "(Self: TcpConnection) -> ()"},
+    {"UdpSocket", "ReceiveFromAsync", "(Self: UdpSocket) -> UdpDatagram"},
+    {"UdpSocket", "SendToAsync", "(Self: UdpSocket, Endpoint: NetworkEndpoint, Data: string | buffer) -> ()"},
+    {"UdpSocket", "Close", "(Self: UdpSocket) -> ()"},
 };
 
 static constexpr ServiceSignalDefinition ObjectSignals[] = {

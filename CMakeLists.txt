@@ -138,7 +138,7 @@ add_executable(LuiPlatformTests tests/platform/Services.cpp)
 target_link_libraries(LuiPlatformTests PRIVATE LuiRuntime)
 add_test(NAME LuiPlatformTests COMMAND LuiPlatformTests)
 
-add_executable(LuiNetworkTests tests/network/Tcp.cpp)
+add_executable(LuiNetworkTests tests/network/Tcp.cpp tests/network/Udp.cpp)
 target_link_libraries(LuiNetworkTests PRIVATE LuiRuntime)
 add_test(NAME LuiNetworkTests COMMAND LuiNetworkTests)
 

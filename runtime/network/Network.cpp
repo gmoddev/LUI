@@ -33,6 +33,7 @@ static int Raise(lua_State* State, const char* Format, Arguments... Values) {
 }
 
 struct NetworkConnection;
+struct NetworkDatagramSocket;
 struct HttpOperation;
 struct HostedServer;
 struct HostedSession;
@@ -87,6 +88,7 @@ struct NetworkContext {
     std::unordered_map<int, std::shared_ptr<HttpOperation>> HttpOperations; // Network worker only.
     std::unordered_map<int, std::shared_ptr<NetworkListener>> Listeners;
     std::unordered_map<int, std::shared_ptr<NetworkConnection>> Connections;
+    std::unordered_map<int, std::shared_ptr<NetworkDatagramSocket>> Datagrams; // Scheduler owner only.
     std::unordered_map<int, std::shared_ptr<HostedServer>> Servers; // Scheduler owner only.
     std::unordered_map<int, std::shared_ptr<HostedSession>> HandlerTasks; // Scheduler owner only.
     std::unordered_map<uint64_t, std::shared_ptr<HostedSession>> Sessions; // Network worker only.
@@ -122,6 +124,7 @@ static std::string NetworkError(const ErrorCode& Error) {
     if (Error == asio::error::address_in_use) return "[LUI:Network] AddressInUse";
     if (Error == asio::error::access_denied) return "[LUI:Network] PermissionDenied";
     if (Error == asio::error::host_not_found) return "[LUI:Network] NameNotFound";
+    if (Error == asio::error::message_size) return "[LUI:Network] MessageTooLarge";
     return "[LUI:Network] IoError: " + Error.message();
 }
 
@@ -1093,8 +1096,12 @@ static int ConnectionGc(lua_State* State) {
 
 static int MaterializeResult(lua_State* State);
 
+// Uses the same private worker, capability policy, and scheduler completion bridge.
+#include "Udp.inl"
+
 void RegisterNetworkTypes(lua_State* State) {
     RegisterHostedTypes(State);
+    RegisterUdpTypes(State);
     lua_pushcfunction(State, MaterializeResult, "NetworkResult");
     lua_setfield(State, LUA_REGISTRYINDEX, "LuiNetworkMaterialize");
     luaL_newmetatable(State, "LuiTcpListenerMeta");
@@ -1121,6 +1128,7 @@ void PushNetworkService(lua_State* State) {
     lua_newtable(State);
     lua_pushcfunction(State, ListenTcp, "NetworkService.ListenTcp"); lua_setfield(State, -2, "ListenTcp");
     lua_pushcfunction(State, ConnectTcp, "NetworkService.ConnectTcp"); lua_setfield(State, -2, "ConnectTcp");
+    lua_pushcfunction(State, BindUdp, "NetworkService.BindUdp"); lua_setfield(State, -2, "BindUdp");
     lua_setreadonly(State, -1, true);
 }
 
@@ -1161,6 +1169,14 @@ static int MaterializeResult(lua_State* State) {
         lua_pushlstring(State, Response.Body.data(), Response.Body.size()); lua_setfield(State, -2, "Body");
         PushHttpFields(State, Response.Headers); lua_setfield(State, -2, "Headers");
         PushHttpFields(State, Response.Trailers); lua_setfield(State, -2, "Trailers");
+        lua_setreadonly(State, -1, true);
+    } else if (Completion->Type == NetworkCompletion::Kind::Datagram) {
+        lua_createtable(State, 0, 2);
+        void* Buffer = lua_newbuffer(State, Completion->Bytes.size());
+        std::memcpy(Buffer, Completion->Bytes.data(), Completion->Bytes.size());
+        lua_setfield(State, -2, "Data");
+        PushEndpoint(State, Completion->RemoteAddress, Completion->RemotePort);
+        lua_setfield(State, -2, "RemoteEndpoint");
         lua_setreadonly(State, -1, true);
     } else if (Completion->Type == NetworkCompletion::Kind::Bytes) {
         void* Buffer = lua_newbuffer(State, Completion->Bytes.size());

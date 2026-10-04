@@ -155,6 +155,7 @@ export type AssetService = {
 export type NetworkService = {
     read ListenTcp: (Self: NetworkService, Options: NetworkListenOptions) -> TcpListener,
     read ConnectTcp: (Self: NetworkService, Options: NetworkConnectOptions) -> TcpConnection,
+    read BindUdp: (Self: NetworkService, Options: UdpBindOptions) -> UdpSocket,
 }
 
 export type HttpService = {
@@ -201,6 +202,26 @@ export type TcpConnection = {
     read Shutdown: (Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> (),
     read Close: (Self: TcpConnection) -> (),
     read Closed: Signal,
+}
+
+export type UdpBindOptions = {
+    Address: string?,
+    Family: ("IPv4" | "IPv6")?,
+    Port: number,
+    MaxDatagramBytes: number?,
+}
+
+export type UdpSocket = {
+    read IsOpen: boolean,
+    read LocalEndpoint: NetworkEndpoint,
+    read ReceiveFromAsync: (Self: UdpSocket) -> UdpDatagram,
+    read SendToAsync: (Self: UdpSocket, Endpoint: NetworkEndpoint, Data: string | buffer) -> (),
+    read Close: (Self: UdpSocket) -> (),
+}
+
+export type UdpDatagram = {
+    read Data: buffer,
+    read RemoteEndpoint: NetworkEndpoint,
 }
 
 export type HttpHeader = {

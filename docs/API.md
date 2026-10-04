@@ -214,7 +214,7 @@ Base: `UIComponent`. Creatable: `true`.
 - `ClipboardService`: WriteText, ReadText
 - `DialogService`: OpenFile
 - `AssetService`: Has
-- `NetworkService`: ListenTcp, ConnectTcp
+- `NetworkService`: ListenTcp, ConnectTcp, BindUdp
 - `HttpService`: RequestAsync, GetAsync, CancelAll
 - `HttpServerService`: CreateServer
 
@@ -255,6 +255,26 @@ Base: `UIComponent`. Creatable: `true`.
 - `Shutdown`: `(Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> ()`
 - `Close`: `(Self: TcpConnection) -> ()`
 - `Closed`: `Signal`
+
+### UdpBindOptions
+
+- `Address`: `string?`
+- `Family`: `("IPv4" | "IPv6")?`
+- `Port`: `number`
+- `MaxDatagramBytes`: `number?`
+
+### UdpSocket
+
+- `IsOpen`: `boolean`
+- `LocalEndpoint`: `NetworkEndpoint`
+- `ReceiveFromAsync`: `(Self: UdpSocket) -> UdpDatagram`
+- `SendToAsync`: `(Self: UdpSocket, Endpoint: NetworkEndpoint, Data: string | buffer) -> ()`
+- `Close`: `(Self: UdpSocket) -> ()`
+
+### UdpDatagram
+
+- `Data`: `buffer`
+- `RemoteEndpoint`: `NetworkEndpoint`
 
 ### HttpHeader
 

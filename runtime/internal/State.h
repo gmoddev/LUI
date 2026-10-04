@@ -122,13 +122,15 @@ struct HostedSession;
 namespace Lui::Http { struct Message; }
 
 struct NetworkCompletion {
-    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse, HostedRequest } Type = Kind::None;
+    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse, HostedRequest, Datagram } Type = Kind::None;
     int Reference = 0;
     std::string Bytes;
     std::string Error;
     std::shared_ptr<NetworkConnection> Connection;
     std::shared_ptr<Lui::Http::Message> HttpResponse;
     std::shared_ptr<HostedSession> Session;
+    std::string RemoteAddress;
+    unsigned short RemotePort = 0;
 };
 
 struct BackendChange {
