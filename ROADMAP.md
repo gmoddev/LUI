@@ -39,9 +39,9 @@ The TCP service has a coroutine resumption bridge, a pinned Asio transport, capa
 
 Define a shared owner-thread async completion and coroutine-resumption contract, then implement runtime-owned TCP listening, connecting, accept, read, write, shutdown, cancellation, and bounded backpressure. Use an internal, pinned transport library after dependency review. The public Luau service must not expose native socket handles or depend on a UI backend. Add `network.client`, `network.server`, and `network.raw` grants before enabling access. Qualify the same semantics with Windows and Linux headless tests; this does not require a Linux UI backend. See [networking specification](docs/SPEC.md#53-networking-and-hosted-endpoints-planned) and [proposal](docs/proposals/NETWORKING-ARCHITECTURE.md).
 
-### Networking Foundation B — HTTP (in progress)
+### Networking Foundation B — HTTP (complete)
 
-The parser, validated serializers, outbound `HttpService`, and hosted `HttpServerService` are implemented; hosted Windows/Linux headless qualification is in progress. HTTP requires its direction grant without `network.raw`, shares the transport and host policy, and bounds bodies, requests, connections, deadlines, and completions. Hosted exact routes run as yielding scheduler tasks; persistent responses are ordered, handler failures produce generic replies, and close/expiry prevents late dispatch/resume. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md) state the HTTP/1.1 profile and exit audit.
+The parser, validated serializers, outbound `HttpService`, and hosted `HttpServerService` passed [Windows and Linux CI](https://github.com/gmoddev/LUI/actions/runs/37187918045) at `3011c91` on 2026-10-04. HTTP requires its direction grant without `network.raw`, shares the transport and host policy, and bounds bodies, requests, connections, deadlines, and completions. Hosted exact routes run as yielding scheduler tasks; persistent responses are ordered, handler failures produce generic replies, and close/expiry prevents late dispatch/resume. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md#exit-audit) record the defined HTTP/1.1 scope and exit audit.
 
 Build outbound `HttpService` and a loopback-default `HttpServerService` on the proven transport. Include strict HTTP/1.1 framing, bounded requests and responses, ordered persistent connections, scheduler-thread route handlers, timeouts, and malformed-request regression tests.
 
@@ -69,4 +69,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Finish hosted HTTP Windows/Linux headless qualification, then begin Networking Foundation C with bounded UDP datagrams and a portable TLS provider design. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.
+Begin Networking Foundation C with bounded UDP datagrams and a portable TLS provider design. Networking Foundation B's defined HTTP/1.1 scope is complete and qualified on Windows/Linux headless runtimes. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.

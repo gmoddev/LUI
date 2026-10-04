@@ -1,6 +1,6 @@
 # Networking Foundation B — HTTP
 
-**Status:** HTTP scope implemented; Windows/Linux headless qualification is in progress. Bounded parsing, validated serialization, outbound `HttpService`, and hosted `HttpServerService` are available.
+**Status:** complete for the defined HTTP/1.1 scope. Bounded parsing, validated serialization, outbound `HttpService`, and hosted `HttpServerService` passed [Windows and Linux CI](https://github.com/gmoddev/LUI/actions/runs/37187918045) at `3011c91` on 2026-10-04.
 
 ## Implemented
 
@@ -93,8 +93,10 @@ This is headless verification. No application endpoint is opened persistently, n
 
 ## Next implementation
 
-Finish Windows/Linux qualification of this hosted slice, then start Foundation C with bounded UDP datagrams and the portable TLS provider design. HTTPS, streaming, proxies, broader HTTP profiles, JSON helpers, and outbound connection pooling remain follow-up.
+Start Foundation C with bounded UDP datagrams and the portable TLS provider design. HTTPS, streaming, proxies, broader HTTP profiles, JSON helpers, and outbound connection pooling remain follow-up.
 
 ## Exit audit
 
-The implementation covers outbound and hosted HTTP on the shared worker, independent direction grants, strict bounded framing, fixed response serialization, ordered persistence, yielding owner-thread handlers, deadlines, backpressure, generic failures, and safe shutdown. `LuiHttpTests` and type tests provide the headless gates. Hosted Windows/Linux CI qualification is pending; this audit makes no claim of a Linux UI backend, full HTTP interoperability, TLS, or physical desktop testing.
+The implementation covers outbound and hosted HTTP on the shared worker, independent direction grants, strict bounded framing, fixed response serialization, ordered persistence, yielding owner-thread handlers, deadlines, backpressure, generic failures, and safe shutdown. All 12 native tests passed on the cached Windows worker; [Windows and Linux CI](https://github.com/gmoddev/LUI/actions/runs/37187918045) passed at `3011c91`, including native/type tests, CLI, preview/editor tests, and generated-schema checks. This is the qualification baseline for the implemented runtime and test changes.
+
+The defined Foundation B HTTP scope is complete. The supported profile remains the deliberately bounded contract above; Linux UI, broader HTTP interoperability, TLS, and physical desktop qualification are outside this audit.
