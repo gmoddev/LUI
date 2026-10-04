@@ -305,12 +305,14 @@ static void TcpTransport() {
     Lui_Destroy(Runtime);
 }
 
+int HttpClientTests();
 int main() {
     Requests();
     ChunksAndLimits();
     ResponsesAndBoundaries();
     CorruptionAndEof();
     TcpTransport();
+    Failures += HttpClientTests();
     if (!Failures) std::puts("[LUI:HttpTest] HTTP framing, fragmentation, limits, and TCP transport passed");
     return Failures ? 1 : 0;
 }

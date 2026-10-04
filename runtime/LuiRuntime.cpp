@@ -1131,6 +1131,8 @@ static int AppGetService(lua_State* State) {
     if (Name == "NetworkService" &&
         !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW))
         luaL_error(State, "network.raw capability was not granted");
+    if (Name == "HttpService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
+        luaL_error(State, "network.client capability was not granted");
     auto Found = Runtime->ServiceRefs.find(Name);
     if (Found != Runtime->ServiceRefs.end()) {
         lua_getref(State, Found->second);
@@ -1140,6 +1142,7 @@ static int AppGetService(lua_State* State) {
     else if (Name == "ClipboardService" || Name == "DialogService")
         PushPlatformService(State, Runtime, Name);
     else if (Name == "NetworkService") PushNetworkService(State);
+    else if (Name == "HttpService") PushHttpService(State);
     else if (Name == "ThemeService") {
         lua_newuserdata(State, 1);
         lua_getfield(State, LUA_REGISTRYINDEX, "LuiThemeServiceMeta");

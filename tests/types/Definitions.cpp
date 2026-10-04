@@ -45,6 +45,18 @@ int main() {
         local Slider = Instance.new("Slider", {Parent = Root, Minimum = 0, Maximum = 10, Value = 5})
         local Windows = app:GetService("WindowService"):GetWindows()
         local BackendName: string = app:GetService("PlatformService").BackendName
+        local Http = app:GetService("HttpService")
+        task.spawn(function()
+            local Options: HttpRequestOptions = {Url = "http://localhost/", Method = "POST",
+                Headers = {{Name = "Content-Type", Value = "application/octet-stream"}},
+                Body = buffer.fromstring("data"), TimeoutMs = 5000, MaxResponseBytes = 1024}
+            local Response: HttpResponse = Http:RequestAsync(Options)
+            local Status: number = Response.StatusCode
+            local Bytes: string = Response.Body
+            local Headers: {HttpHeader} = Response.Headers
+            assert(Status > 0 and #Bytes >= 0 and #Headers >= 0)
+            Http:CancelAll()
+        end)
         Input.TextChanged:Connect(function() Slider.Value = 6 end)
         Input.InputBegan:Connect(function(Event)
             if Event.Device == "Keyboard" then
@@ -66,6 +78,16 @@ int main() {
         --!strict
         local Root = Instance.new("Frame", {})
         Root.AbsoluteSize = Vector2.new(1, 1)
+    )");
+    Resolver.Scripts.emplace("httpReadOnly", R"(
+        --!strict
+        local Response = app:GetService("HttpService"):GetAsync("http://localhost/")
+        Response.Body = "changed"
+        Response.Headers[1].Value = "changed"
+    )");
+    Resolver.Scripts.emplace("httpInvalidOptions", R"(
+        --!strict
+        local Options: HttpRequestOptions = {Url = "http://localhost/", TimeoutMs = "forever"}
     )");
     Resolver.Scripts.emplace("inputReadOnly", R"(
         --!strict
@@ -143,6 +165,8 @@ int main() {
     Failures += Check(!Frontend.check("invalidInit").errors.empty(), "invalid typed constructor properties typechecked");
     Failures += Check(!Frontend.check("invalidSizeInit").errors.empty(), "invalid size constraint properties typechecked");
     Failures += Check(!Frontend.check("invalidGridInit").errors.empty(), "invalid grid layout properties typechecked");
+    Failures += Check(!Frontend.check("httpReadOnly").errors.empty(), "HTTP response mutation typechecked");
+    Failures += Check(!Frontend.check("httpInvalidOptions").errors.empty(), "invalid HTTP options typechecked");
     if (!Failures) std::puts("[LUI:Types] Generated definitions passed Luau type checks");
     return Failures ? 1 : 0;
 }

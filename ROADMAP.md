@@ -41,7 +41,7 @@ Define a shared owner-thread async completion and coroutine-resumption contract,
 
 ### Networking Foundation B — HTTP (in progress)
 
-The first slice adds a bounded internal HTTP/1.1 request/response parser, strict framing checks, binary bodies, chunk decoding, persistent message boundaries, response exceptions, and malformed/fragmented input tests, including composition with the existing TCP service. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md) state the supported profile. The outbound and hosted Luau services are not implemented yet.
+The parser, validated request/response serializers, and outbound Luau `HttpService` are implemented. The client uses `network.client` without `network.raw`, shared paced dialing and host policy, bounded binary bodies, informational replies, deadlines, cancellation, and scheduler-owned completions. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md) state the supported HTTP/1.1 profile and tests. The hosted service remains planned.
 
 Build outbound `HttpService` and a loopback-default `HttpServerService` on the proven transport. Include strict HTTP/1.1 framing, bounded requests and responses, ordered persistent connections, scheduler-thread route handlers, timeouts, and malformed-request regression tests.
 
@@ -69,4 +69,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Continue Networking Foundation B with validated serialization and a bounded outbound HTTP service on the shared transport, then add hosted routes and ordered scheduler handlers. Its parser/framing slice is implemented. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.
+Continue Networking Foundation B with loopback-default hosted routes, ordered scheduler handlers, response queues, deadlines, and shutdown tests. Parsing, serialization, and the outbound HTTP service are implemented. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.

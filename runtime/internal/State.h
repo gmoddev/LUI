@@ -117,13 +117,15 @@ struct ScheduledCall {
 
 struct NetworkContext;
 struct NetworkConnection;
+namespace Lui::Http { struct Message; }
 
 struct NetworkCompletion {
-    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal } Type = Kind::None;
+    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse } Type = Kind::None;
     int Reference = 0;
     std::string Bytes;
     std::string Error;
     std::shared_ptr<NetworkConnection> Connection;
+    std::shared_ptr<Lui::Http::Message> HttpResponse;
 };
 
 struct BackendChange {

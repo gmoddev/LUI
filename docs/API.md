@@ -215,6 +215,7 @@ Base: `UIComponent`. Creatable: `true`.
 - `DialogService`: OpenFile
 - `AssetService`: Has
 - `NetworkService`: ListenTcp, ConnectTcp
+- `HttpService`: RequestAsync, GetAsync, CancelAll
 
 ## Networking value and resource types
 
@@ -253,3 +254,26 @@ Base: `UIComponent`. Creatable: `true`.
 - `Shutdown`: `(Self: TcpConnection, Direction: "Read" | "Write" | "Both") -> ()`
 - `Close`: `(Self: TcpConnection) -> ()`
 - `Closed`: `Signal`
+
+### HttpHeader
+
+- `Name`: `string`
+- `Value`: `string`
+
+### HttpRequestOptions
+
+- `Url`: `string`
+- `Method`: `string?`
+- `Headers`: `{HttpHeader}?`
+- `Body`: `(string | buffer)?`
+- `TimeoutMs`: `number?`
+- `MaxResponseBytes`: `number?`
+
+### HttpResponse
+
+- `StatusCode`: `number`
+- `StatusMessage`: `string`
+- `Success`: `boolean`
+- `Body`: `string`
+- `Headers`: `{HttpHeader}`
+- `Trailers`: `{HttpHeader}`

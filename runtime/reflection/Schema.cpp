@@ -106,6 +106,7 @@ static constexpr ServiceDefinition Services[] = {
     {"DialogService"},
     {"AssetService"},
     {"NetworkService"},
+    {"HttpService"},
 };
 
 static constexpr ServiceMethodDefinition ServiceMethods[] = {
@@ -117,6 +118,9 @@ static constexpr ServiceMethodDefinition ServiceMethods[] = {
     {"AssetService", "Has", "(Self: AssetService, Name: string) -> boolean"},
     {"NetworkService", "ListenTcp", "(Self: NetworkService, Options: NetworkListenOptions) -> TcpListener"},
     {"NetworkService", "ConnectTcp", "(Self: NetworkService, Options: NetworkConnectOptions) -> TcpConnection"},
+    {"HttpService", "RequestAsync", "(Self: HttpService, Options: HttpRequestOptions) -> HttpResponse"},
+    {"HttpService", "GetAsync", "(Self: HttpService, Url: string) -> HttpResponse"},
+    {"HttpService", "CancelAll", "(Self: HttpService) -> ()"},
 };
 
 static constexpr ServicePropertyDefinition ServiceProperties[] = {
@@ -134,9 +138,26 @@ static constexpr ServiceDefinition Objects[] = {
     {"NetworkConnectOptions"},
     {"TcpListener"},
     {"TcpConnection"},
+    {"HttpHeader"},
+    {"HttpRequestOptions"},
+    {"HttpResponse"},
 };
 
 static constexpr ServicePropertyDefinition ObjectProperties[] = {
+    {"HttpHeader", "Name", "string"},
+    {"HttpHeader", "Value", "string"},
+    {"HttpRequestOptions", "Url", "string"},
+    {"HttpRequestOptions", "Method", "string?"},
+    {"HttpRequestOptions", "Headers", "{HttpHeader}?"},
+    {"HttpRequestOptions", "Body", "(string | buffer)?"},
+    {"HttpRequestOptions", "TimeoutMs", "number?"},
+    {"HttpRequestOptions", "MaxResponseBytes", "number?"},
+    {"HttpResponse", "StatusCode", "number"},
+    {"HttpResponse", "StatusMessage", "string"},
+    {"HttpResponse", "Success", "boolean"},
+    {"HttpResponse", "Body", "string"},
+    {"HttpResponse", "Headers", "{HttpHeader}"},
+    {"HttpResponse", "Trailers", "{HttpHeader}"},
     {"NetworkEndpoint", "Address", "string"},
     {"NetworkEndpoint", "Port", "number"},
     {"NetworkListenOptions", "Address", "string?"},

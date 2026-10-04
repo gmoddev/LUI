@@ -157,6 +157,12 @@ export type NetworkService = {
     read ConnectTcp: (Self: NetworkService, Options: NetworkConnectOptions) -> TcpConnection,
 }
 
+export type HttpService = {
+    read RequestAsync: (Self: HttpService, Options: HttpRequestOptions) -> HttpResponse,
+    read GetAsync: (Self: HttpService, Url: string) -> HttpResponse,
+    read CancelAll: (Self: HttpService) -> (),
+}
+
 export type NetworkEndpoint = {
     read Address: string,
     read Port: number,
@@ -193,7 +199,30 @@ export type TcpConnection = {
     read Closed: Signal,
 }
 
-export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) & ((Self: App, Name: "NetworkService") -> NetworkService) }
+export type HttpHeader = {
+    read Name: string,
+    read Value: string,
+}
+
+export type HttpRequestOptions = {
+    Url: string,
+    Method: string?,
+    Headers: {HttpHeader}?,
+    Body: (string | buffer)?,
+    TimeoutMs: number?,
+    MaxResponseBytes: number?,
+}
+
+export type HttpResponse = {
+    read StatusCode: number,
+    read StatusMessage: string,
+    read Success: boolean,
+    read Body: string,
+    read Headers: {HttpHeader},
+    read Trailers: {HttpHeader},
+}
+
+export type App = { read GetService: ((Self: App, Name: "WindowService") -> WindowService) & ((Self: App, Name: "PlatformService") -> PlatformService) & ((Self: App, Name: "ThemeService") -> ThemeService) & ((Self: App, Name: "ClipboardService") -> ClipboardService) & ((Self: App, Name: "DialogService") -> DialogService) & ((Self: App, Name: "AssetService") -> AssetService) & ((Self: App, Name: "NetworkService") -> NetworkService) & ((Self: App, Name: "HttpService") -> HttpService) }
 
 export type WindowInit = {
     Name: string?,
