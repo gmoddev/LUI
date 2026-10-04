@@ -39,7 +39,9 @@ The TCP service has a coroutine resumption bridge, a pinned Asio transport, capa
 
 Define a shared owner-thread async completion and coroutine-resumption contract, then implement runtime-owned TCP listening, connecting, accept, read, write, shutdown, cancellation, and bounded backpressure. Use an internal, pinned transport library after dependency review. The public Luau service must not expose native socket handles or depend on a UI backend. Add `network.client`, `network.server`, and `network.raw` grants before enabling access. Qualify the same semantics with Windows and Linux headless tests; this does not require a Linux UI backend. See [networking specification](docs/SPEC.md#53-networking-and-hosted-endpoints-planned) and [proposal](docs/proposals/NETWORKING-ARCHITECTURE.md).
 
-### Networking Foundation B — HTTP (planned)
+### Networking Foundation B — HTTP (in progress)
+
+The first slice adds a bounded internal HTTP/1.1 request/response parser, strict framing checks, binary bodies, chunk decoding, persistent message boundaries, response exceptions, and malformed/fragmented input tests, including composition with the existing TCP service. [Foundation B notes](docs/NETWORKING-FOUNDATION-B.md) state the supported profile. The outbound and hosted Luau services are not implemented yet.
 
 Build outbound `HttpService` and a loopback-default `HttpServerService` on the proven transport. Include strict HTTP/1.1 framing, bounded requests and responses, ordered persistent connections, scheduler-thread route handlers, timeouts, and malformed-request regression tests.
 
@@ -67,4 +69,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Begin Networking Foundation B with bounded HTTP/1.1 parsing and framing tests on the qualified TCP transport, then add outbound and hosted services. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.
+Continue Networking Foundation B with validated serialization and a bounded outbound HTTP service on the shared transport, then add hosted routes and ordered scheduler handlers. Its parser/framing slice is implemented. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.

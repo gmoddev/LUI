@@ -38,7 +38,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/linux-x64 -DCMAKE_BUILD_TYPE=Debug
       - name: Build
-        run: cmake --build build/linux-x64 --parallel 2 --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiTypeCheck LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension
+        run: cmake --build build/linux-x64 --parallel 2 --target LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiTypeCheck LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiHttpTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension
       - name: Test
         run: ctest --test-dir build/linux-x64 --output-on-failure
       - name: CLI tests
