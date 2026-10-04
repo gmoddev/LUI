@@ -61,6 +61,17 @@ try
     AppManifest Network = AppManifest.Load(ManifestPath);
     if (!Network.AllowNetworkClient || !Network.AllowNetworkServer || !Network.AllowNetworkRaw)
         throw new Exception("[LUI:ManifestTest] Network capability manifest did not resolve");
+    File.WriteAllText(ManifestPath,
+        "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"NetworkPolicy\":{\"ClientLoopbackOnly\":true,\"ServerLoopbackOnly\":true,\"ClientPortMin\":80,\"ClientPortMax\":443}}");
+    AppManifest RestrictedNetwork = AppManifest.Load(ManifestPath);
+    if (RestrictedNetwork.NetworkPolicy?.ClientLoopbackOnly != true ||
+        RestrictedNetwork.NetworkPolicy?.ServerLoopbackOnly != true ||
+        RestrictedNetwork.NetworkPolicy?.ClientPortMax != 443)
+        throw new Exception("[LUI:ManifestTest] Network policy manifest did not resolve");
+    Reject(ManifestPath,
+        "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"NetworkPolicy\":{\"ClientPortMin\":443,\"ClientPortMax\":80}}");
+    Reject(ManifestPath,
+        "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"NetworkPolicy\":{\"ServerPortMin\":10000}}");
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"NetworkClient\"]}");
     File.WriteAllBytes(Path.Combine(TempRoot, "logo.png"), new byte[] { 1, 2, 3 });
     File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Assets\":[\"logo.png\"]}");

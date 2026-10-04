@@ -140,7 +140,7 @@ static constexpr ServicePropertyDefinition ObjectProperties[] = {
     {"NetworkEndpoint", "Address", "string"},
     {"NetworkEndpoint", "Port", "number"},
     {"NetworkListenOptions", "Address", "string?"},
-    {"NetworkListenOptions", "Family", "(\"IPv4\" | \"IPv6\")?"},
+    {"NetworkListenOptions", "Family", "(\"IPv4\" | \"IPv6\" | \"DualStack\")?"},
     {"NetworkListenOptions", "Port", "number"},
     {"NetworkConnectOptions", "Address", "string?"},
     {"NetworkConnectOptions", "Port", "number"},

@@ -164,7 +164,7 @@ export type NetworkEndpoint = {
 
 export type NetworkListenOptions = {
     Address: string?,
-    Family: ("IPv4" | "IPv6")?,
+    Family: ("IPv4" | "IPv6" | "DualStack")?,
     Port: number,
 }
 

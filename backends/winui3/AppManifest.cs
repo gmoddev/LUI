@@ -10,12 +10,23 @@ internal sealed class AppManifest
         public ulong MaxInterrupts { get; set; }
     }
 
+    internal sealed class NetworkPolicyConfiguration
+    {
+        public bool ClientLoopbackOnly { get; set; }
+        public bool ServerLoopbackOnly { get; set; }
+        public uint ClientPortMin { get; set; }
+        public uint ClientPortMax { get; set; }
+        public uint ServerPortMin { get; set; }
+        public uint ServerPortMax { get; set; }
+    }
+
     public int SchemaVersion { get; set; }
     public string Script { get; set; } = string.Empty;
     public List<string> Capabilities { get; set; } = new();
     public List<string> Extensions { get; set; } = new();
     public List<string> Assets { get; set; } = new();
     public SandboxConfiguration? Sandbox { get; set; }
+    public NetworkPolicyConfiguration? NetworkPolicy { get; set; }
 
     public string ScriptPath { get; private set; } = string.Empty;
     public List<string> ExtensionPaths { get; private set; } = new();
@@ -59,6 +70,13 @@ internal sealed class AppManifest
             (Manifest.Sandbox.MaxMemoryBytes < 1024 * 1024 || Manifest.Sandbox.MaxInterrupts == 0 ||
              Manifest.AllowNativeExtensions))
             throw new InvalidDataException("Sandbox limits are invalid or grant native extensions");
+        static bool ValidPortRange(uint Minimum, uint Maximum) =>
+            (Minimum == 0 && Maximum == 0) ||
+            (Minimum >= 1 && Minimum <= Maximum && Maximum <= 65535);
+        if (Manifest.NetworkPolicy is { } Policy &&
+            (!ValidPortRange(Policy.ClientPortMin, Policy.ClientPortMax) ||
+             !ValidPortRange(Policy.ServerPortMin, Policy.ServerPortMax)))
+            throw new InvalidDataException("Network policy port range is invalid");
 
         string DirectoryPath = Path.GetDirectoryName(ManifestPath)
             ?? throw new InvalidDataException("Application manifest has no directory");

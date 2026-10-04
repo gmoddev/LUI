@@ -226,7 +226,7 @@ Base: `UIComponent`. Creatable: `true`.
 ### NetworkListenOptions
 
 - `Address`: `string?`
-- `Family`: `("IPv4" | "IPv6")?`
+- `Family`: `("IPv4" | "IPv6" | "DualStack")?`
 - `Port`: `number`
 
 ### NetworkConnectOptions

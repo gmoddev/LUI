@@ -7,6 +7,7 @@
 #include <asio.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -28,12 +29,17 @@ static int Raise(lua_State* State, const char* Format, Arguments... Values) {
     return 0;
 }
 
+struct NetworkConnection;
 struct NetworkListener {
-    explicit NetworkListener(asio::io_context& Io) : Acceptor(Io) {}
-    Tcp::acceptor Acceptor;
+    explicit NetworkListener(asio::io_context& Io) : Io(Io) {}
+    asio::io_context& Io;
+    std::vector<std::unique_ptr<Tcp::acceptor>> Acceptors;
     std::atomic<bool> Open{true};
     std::atomic<bool> AcceptPending{false};
-    std::string Address;
+    std::vector<Tcp::endpoint> BoundEndpoints;
+    std::deque<std::shared_ptr<NetworkConnection>> Ready; // Network worker only.
+    std::array<bool, 2> AcceptActive{false, false}; // Network worker only.
+    int WaiterReference = 0; // Network worker only.
     unsigned short Port = 0;
 };
 
@@ -140,8 +146,12 @@ static int BeginAwait(lua_State* State) {
 
 static std::string OptionString(lua_State* State, int Table, const char* Key, const char* Default) {
     lua_getfield(State, Table, Key);
-    std::string Value = lua_isnil(State, -1) ? Default : luaL_checkstring(State, -1);
+    size_t Length = 0;
+    const char* Data = lua_isnil(State, -1) ? nullptr : luaL_checklstring(State, -1, &Length);
+    std::string Value = Data ? std::string(Data, Length) : Default;
     lua_pop(State, 1);
+    if (Value.find('\0') != std::string::npos)
+        luaL_error(State, "[LUI:Network] %s contains a null byte", Key);
     return Value;
 }
 
@@ -198,30 +208,64 @@ static int ListenTcp(lua_State* State) {
         return Raise(State, "[LUI:Network] network.server and network.raw grants are required");
     luaL_checktype(State, 2, LUA_TTABLE);
     std::string Address = OptionString(State, 2, "Address", "loopback");
-    std::string Family = OptionString(State, 2, "Family", "IPv4");
+    std::string Family = OptionString(State, 2, "Family", "");
     unsigned short Port = OptionPort(State, 2, true);
-    if (Family != "IPv4" && Family != "IPv6")
-        return Raise(State, "[LUI:Network] Family must be IPv4 or IPv6 in this release");
-    if (Address == "loopback") Address = Family == "IPv4" ? "127.0.0.1" : "::1";
-    else if (Address == "any") Address = Family == "IPv4" ? "0.0.0.0" : "::";
     ErrorCode Error;
-    auto Ip = asio::ip::make_address(Address, Error);
-    if (Error || (Family == "IPv4" && !Ip.is_v4()) || (Family == "IPv6" && !Ip.is_v6()))
-        return Raise(State, "[LUI:Network] Address must be a numeric local %s address", Family.c_str());
+    const bool SemanticAddress = Address == "loopback" || Address == "any";
+    auto Ip = SemanticAddress ? asio::ip::address{} : asio::ip::make_address(Address, Error);
+    if (Error) return Raise(State, "[LUI:Network] Address must be a numeric local address");
+    if (Family.empty()) Family = !SemanticAddress && Ip.is_v6() ? "IPv6" : "IPv4";
+    if (Family != "IPv4" && Family != "IPv6" && Family != "DualStack")
+        return Raise(State, "[LUI:Network] Family must be IPv4, IPv6, or DualStack");
+    if ((!SemanticAddress && Family == "DualStack") ||
+        (!SemanticAddress && ((Family == "IPv4" && !Ip.is_v4()) ||
+            (Family == "IPv6" && !Ip.is_v6()))))
+        return Raise(State, "[LUI:Network] Address and Family disagree");
+    if ((Runtime->NetworkPolicyFlags & LUI_NETWORK_POLICY_SERVER_LOOPBACK_ONLY) &&
+        (Address == "any" || (!SemanticAddress && !Ip.is_loopback())))
+        return Raise(State, "[LUI:Network] PolicyDenied");
+    if (Runtime->ServerPortMin &&
+        (Port < Runtime->ServerPortMin || Port > Runtime->ServerPortMax))
+        return Raise(State, "[LUI:Network] PolicyDenied");
     auto* Network = Context(Runtime);
     if (Network->Listeners.size() >= 16) return Raise(State, "[LUI:Network] TooManyListeners");
     auto Listener = std::make_shared<NetworkListener>(Network->Io);
-    Tcp::endpoint Endpoint(Ip, Port);
-    Listener->Acceptor.open(Endpoint.protocol(), Error);
-    if (!Error && Ip.is_v6()) Listener->Acceptor.set_option(asio::ip::v6_only(true), Error);
-    if (!Error) Listener->Acceptor.set_option(asio::socket_base::reuse_address(true), Error);
-    if (!Error) Listener->Acceptor.bind(Endpoint, Error);
-    if (!Error) Listener->Acceptor.listen(asio::socket_base::max_listen_connections, Error);
+    std::vector<asio::ip::address> Addresses;
+    if (Family == "DualStack" || Family == "IPv6")
+        Addresses.push_back(asio::ip::make_address(Address == "any" ? "::" : "::1"));
+    if (Family == "DualStack" || Family == "IPv4")
+        Addresses.push_back(asio::ip::make_address(Address == "any" ? "0.0.0.0" : "127.0.0.1"));
+    if (!SemanticAddress) Addresses[0] = Ip;
+    // For an ephemeral paired listener, retry if another process takes the
+    // selected IPv4 port between the two binds. A failure never leaves half a listener.
+    const int Attempts = Port == 0 && Family == "DualStack" ? 16 : 1;
+    for (int Attempt = 0; Attempt < Attempts; ++Attempt) {
+        Listener->Acceptors.clear();
+        Listener->BoundEndpoints.clear();
+        unsigned short SharedPort = Port;
+        for (const auto& BindAddress : Addresses) {
+            auto Acceptor = std::make_unique<Tcp::acceptor>(Network->Io);
+            Tcp::endpoint Endpoint(BindAddress, SharedPort);
+            Acceptor->open(Endpoint.protocol(), Error);
+            if (!Error && BindAddress.is_v6()) Acceptor->set_option(asio::ip::v6_only(true), Error);
+            if (!Error) Acceptor->bind(Endpoint, Error);
+            if (!Error) Acceptor->listen(asio::socket_base::max_listen_connections, Error);
+            if (Error) break;
+            auto Bound = Acceptor->local_endpoint(Error);
+            if (Error) break;
+            SharedPort = Bound.port();
+            Listener->BoundEndpoints.push_back(Bound);
+            Listener->Acceptors.push_back(std::move(Acceptor));
+        }
+        if (!Error && Listener->Acceptors.size() == Addresses.size()) {
+            Listener->Port = SharedPort;
+            break;
+        }
+        Listener->Acceptors.clear();
+        Listener->BoundEndpoints.clear();
+        if (Error != asio::error::address_in_use || Attempt + 1 == Attempts) break;
+    }
     if (Error) return Raise(State, "%s", NetworkError(Error).c_str());
-    auto Bound = Listener->Acceptor.local_endpoint(Error);
-    if (Error) return Raise(State, "%s", NetworkError(Error).c_str());
-    Listener->Port = Bound.port();
-    Listener->Address = Bound.address().to_string();
     int Id = Network->NextId++;
     Network->Listeners.emplace(Id, std::move(Listener));
     *static_cast<int*>(lua_newuserdata(State, sizeof(int))) = Id;
@@ -241,6 +285,17 @@ static int ConnectTcp(lua_State* State) {
     if (Host.empty() || Host.size() > 253 || Host == "any")
         return Raise(State, "[LUI:Network] invalid remote address");
     unsigned short Port = OptionPort(State, 2, false);
+    if (Runtime->ClientPortMin &&
+        (Port < Runtime->ClientPortMin || Port > Runtime->ClientPortMax))
+        return Raise(State, "[LUI:Network] PolicyDenied");
+    bool LoopbackOnly = (Runtime->NetworkPolicyFlags & LUI_NETWORK_POLICY_CLIENT_LOOPBACK_ONLY) != 0;
+    if (LoopbackOnly) {
+        ErrorCode AddressError;
+        auto NumericAddress = asio::ip::make_address(Host, AddressError);
+        if ((!AddressError && !NumericAddress.is_loopback()) ||
+            (AddressError && Host != "localhost"))
+            return Raise(State, "[LUI:Network] PolicyDenied");
+    }
     CheckAwait(State);
     auto* Network = Context(Runtime);
     if (Network->Connections.size() >= 64) return Raise(State, "[LUI:Network] TooManyConnections");
@@ -249,7 +304,7 @@ static int ConnectTcp(lua_State* State) {
     auto Timer = std::make_shared<asio::steady_timer>(Network->Io);
     auto Done = std::make_shared<std::atomic<bool>>(false);
     int Reference = BeginAwait(State);
-    asio::post(Network->Io, [Runtime, Reference, Resolver, Connection, Timer, Done, Host, Port] {
+    asio::post(Network->Io, [Runtime, Reference, Resolver, Connection, Timer, Done, Host, Port, LoopbackOnly] {
     Timer->expires_after(std::chrono::seconds(10));
     Timer->async_wait([Runtime, Reference, Resolver, Connection, Done](const ErrorCode& Error) {
         if (Error || Done->exchange(true)) return;
@@ -259,7 +314,7 @@ static int ConnectTcp(lua_State* State) {
         Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {}, "[LUI:Network] TimedOut", {}});
     });
     Resolver->async_resolve(Host, std::to_string(Port),
-        [Runtime, Reference, Resolver, Connection, Timer, Done](const ErrorCode& Error, Tcp::resolver::results_type Results) {
+        [Runtime, Reference, Resolver, Connection, Timer, Done, LoopbackOnly](const ErrorCode& Error, Tcp::resolver::results_type Results) {
             if (Done->load()) return;
             if (Error) {
                 if (!Done->exchange(true)) {
@@ -268,7 +323,20 @@ static int ConnectTcp(lua_State* State) {
                 }
                 return;
             }
-            asio::async_connect(Connection->Socket, Results,
+            std::vector<Tcp::endpoint> Endpoints;
+            for (const auto& Result : Results) {
+                if (!LoopbackOnly || Result.endpoint().address().is_loopback())
+                    Endpoints.push_back(Result.endpoint());
+            }
+            if (Endpoints.empty()) {
+                if (!Done->exchange(true)) {
+                    Timer->cancel();
+                    Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {},
+                        "[LUI:Network] PolicyDenied", {}});
+                }
+                return;
+            }
+            asio::async_connect(Connection->Socket, Endpoints,
                 [Runtime, Reference, Connection, Timer, Done](const ErrorCode& ConnectError, const Tcp::endpoint&) {
                     if (Done->exchange(true)) return;
                     Timer->cancel();
@@ -281,24 +349,87 @@ static int ConnectTcp(lua_State* State) {
     return lua_yield(State, 0);
 }
 
+static void CloseListenerWorker(LuiRuntime* Runtime, const std::shared_ptr<NetworkListener>& Listener) {
+    for (const auto& Acceptor : Listener->Acceptors) {
+        ErrorCode Error;
+        Acceptor->close(Error);
+    }
+    for (const auto& Connection : Listener->Ready) {
+        ErrorCode Error;
+        Connection->Socket.close(Error);
+    }
+    Listener->Ready.clear();
+    if (Listener->WaiterReference) {
+        int Reference = Listener->WaiterReference;
+        Listener->WaiterReference = 0;
+        Listener->AcceptPending = false;
+        Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {}, "[LUI:Network] Canceled", {}});
+    }
+}
+
+static void StartAcceptWorker(LuiRuntime* Runtime, const std::shared_ptr<NetworkListener>& Listener,
+    size_t Index) {
+    if (!Listener->Open || Listener->AcceptActive[Index] || !Listener->WaiterReference) return;
+    Listener->AcceptActive[Index] = true;
+    auto Connection = std::make_shared<NetworkConnection>(Listener->Io);
+    Listener->Acceptors[Index]->async_accept(Connection->Socket,
+        [Runtime, Listener, Connection, Index](const ErrorCode& Error) {
+            Listener->AcceptActive[Index] = false;
+            if (!Listener->Open) return;
+            if (Error) {
+                Listener->Open = false;
+                if (Listener->WaiterReference) {
+                    int Reference = Listener->WaiterReference;
+                    Listener->WaiterReference = 0;
+                    Listener->AcceptPending = false;
+                    Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {}, NetworkError(Error), {}});
+                }
+                for (const auto& Acceptor : Listener->Acceptors) {
+                    ErrorCode CloseError;
+                    Acceptor->close(CloseError);
+                }
+                return;
+            }
+            CaptureEndpoints(Connection.get());
+            if (Listener->WaiterReference) {
+                int Reference = Listener->WaiterReference;
+                Listener->WaiterReference = 0;
+                Listener->AcceptPending = false;
+                Queue(Runtime, {NetworkCompletion::Kind::Connection, Reference, {}, "", Connection});
+            } else if (Listener->Ready.size() < 2) {
+                Listener->Ready.push_back(Connection);
+            } else {
+                ErrorCode CloseError;
+                Connection->Socket.close(CloseError);
+            }
+        });
+}
+
 static int AcceptAsync(lua_State* State) {
     auto Listener = GetListener(State);
     if (!Listener->Open) return Raise(State, "[LUI:Network] Closed");
     CheckAwait(State);
     auto* Runtime = GetRuntime(State);
     auto* Network = Context(Runtime);
-    auto Connection = std::make_shared<NetworkConnection>(Network->Io);
     if (Listener->AcceptPending.exchange(true))
         return Raise(State, "[LUI:Network] ConcurrentAccept");
     int Reference = BeginAwait(State);
-    asio::post(Network->Io, [Runtime, Reference, Listener, Connection] {
-    Listener->Acceptor.async_accept(Connection->Socket,
-        [Runtime, Reference, Listener, Connection](const ErrorCode& Error) {
+    asio::post(Network->Io, [Runtime, Reference, Listener] {
+        if (!Listener->Open) {
             Listener->AcceptPending = false;
-            if (!Error) CaptureEndpoints(Connection.get());
-            Queue(Runtime, {Error ? NetworkCompletion::Kind::None : NetworkCompletion::Kind::Connection,
-                Reference, {}, Error ? (!Listener->Open ? "[LUI:Network] Canceled" : NetworkError(Error)) : "", Connection});
-        });
+            Queue(Runtime, {NetworkCompletion::Kind::None, Reference, {}, "[LUI:Network] Canceled", {}});
+            return;
+        }
+        if (!Listener->Ready.empty()) {
+            auto Connection = Listener->Ready.front();
+            Listener->Ready.pop_front();
+            Listener->AcceptPending = false;
+            Queue(Runtime, {NetworkCompletion::Kind::Connection, Reference, {}, "", Connection});
+            return;
+        }
+        Listener->WaiterReference = Reference;
+        for (size_t Index = 0; Index < Listener->Acceptors.size(); ++Index)
+            StartAcceptWorker(Runtime, Listener, Index);
     });
     return lua_yield(State, 0);
 }
@@ -307,7 +438,8 @@ static int ListenerClose(lua_State* State) {
     auto Listener = GetListener(State);
     if (Listener->Open.exchange(false)) {
         auto* Network = Context(GetRuntime(State));
-        asio::post(Network->Io, [Listener] { ErrorCode Error; Listener->Acceptor.close(Error); });
+        auto* Runtime = GetRuntime(State);
+        asio::post(Network->Io, [Runtime, Listener] { CloseListenerWorker(Runtime, Listener); });
     }
     return 0;
 }
@@ -416,9 +548,12 @@ static int ListenerIndex(lua_State* State) {
     if (std::strcmp(Key, "Port") == 0) lua_pushinteger(State, Listener->Port);
     else if (std::strcmp(Key, "IsListening") == 0) lua_pushboolean(State, Listener->Open);
     else if (std::strcmp(Key, "BoundEndpoints") == 0) {
-        lua_createtable(State, 1, 0);
-        PushEndpoint(State, Listener->Address, Listener->Port);
-        lua_rawseti(State, -2, 1);
+        lua_createtable(State, static_cast<int>(Listener->BoundEndpoints.size()), 0);
+        int Index = 1;
+        for (const auto& Endpoint : Listener->BoundEndpoints) {
+            PushEndpoint(State, Endpoint.address().to_string(), Endpoint.port());
+            lua_rawseti(State, -2, Index++);
+        }
         lua_setreadonly(State, -1, true);
     }
     else if (std::strcmp(Key, "AcceptAsync") == 0) lua_pushcfunction(State, AcceptAsync, "TcpListener.AcceptAsync");
@@ -454,7 +589,7 @@ static int ListenerGc(lua_State* State) {
     if (Found != Runtime->Network->Listeners.end()) {
         if (Found->second->Open.exchange(false)) {
             auto Listener = Found->second;
-            asio::post(Runtime->Network->Io, [Listener] { ErrorCode Error; Listener->Acceptor.close(Error); });
+            asio::post(Runtime->Network->Io, [Runtime, Listener] { CloseListenerWorker(Runtime, Listener); });
         }
         Runtime->Network->Listeners.erase(Found);
     }

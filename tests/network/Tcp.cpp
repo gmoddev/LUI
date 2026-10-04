@@ -10,6 +10,10 @@ struct Results {
     bool Canceled = false;
     bool UnexpectedEof = false;
     bool ReadCanceled = false;
+    bool DualStack = false;
+    bool DualCanceled = false;
+    bool PolicyDenied = false;
+    bool PolicyAllowed = false;
     std::string Error;
 };
 
@@ -20,6 +24,10 @@ static void LUI_CALL OnLog(void* Context, const char* Level, const char* Message
     if (std::string(Message) == "TCP_CANCELED") Result->Canceled = true;
     if (std::string(Message) == "TCP_UNEXPECTED_EOF") Result->UnexpectedEof = true;
     if (std::string(Message) == "TCP_READ_CANCELED") Result->ReadCanceled = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_DUAL_STACK") Result->DualStack = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_DUAL_CANCELED") Result->DualCanceled = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_POLICY_DENIED") Result->PolicyDenied = true;
+    if (std::string(Message) == "[LUI:NetworkTest] TCP_POLICY_ALLOWED") Result->PolicyAllowed = true;
 }
 
 static int Check(bool Condition, const char* Message) {
@@ -146,7 +154,132 @@ int main() {
     Failures += Check(Lui_RunScript(Runtime, Cancel, "TcpCancel") == 1, Lui_GetLastError(Runtime));
     Failures += Check(PumpUntil(Runtime, Result.Canceled), "pending accept was not canceled");
     Failures += Check(Result.Error.empty(), Result.Error.c_str());
+
+    const char* DualStack = R"(
+        local Network = app:GetService('NetworkService')
+        local IPv4 = Network:ListenTcp({Port = 0})
+        local Ok, Error = pcall(function()
+            Network:ListenTcp({Family = 'DualStack', Port = IPv4.Port})
+        end)
+        assert(not Ok and string.find(Error, 'AddressInUse'))
+        local IPv6 = Network:ListenTcp({Family = 'IPv6', Port = IPv4.Port})
+        assert(IPv6.Port == IPv4.Port)
+        IPv6:Close()
+        IPv4:Close()
+        local Inferred = Network:ListenTcp({Address = '::1', Port = 0})
+        assert(Inferred.BoundEndpoints[1].Address == '::1')
+        Inferred:Close()
+        local Listener = Network:ListenTcp({Family = 'DualStack', Port = 0})
+        assert(#Listener.BoundEndpoints == 2)
+        assert(Listener.BoundEndpoints[1].Address == '::1')
+        assert(Listener.BoundEndpoints[2].Address == '127.0.0.1')
+        assert(Listener.BoundEndpoints[1].Port == Listener.Port)
+        assert(Listener.BoundEndpoints[2].Port == Listener.Port)
+        assert(not pcall(function()
+            Network:ListenTcp({Address = '127.0.0.1', Family = 'DualStack', Port = 0})
+        end))
+        local Seen = {}
+        task.spawn(function()
+            for Index = 1, 2 do
+                local Peer = Listener:AcceptAsync()
+                Seen[Peer.RemoteEndpoint.Address] = true
+                Peer:Close()
+            end
+            assert(Seen['127.0.0.1'] and Seen['::1'])
+            Listener:Close()
+            print('[LUI:NetworkTest] TCP_DUAL_STACK')
+        end)
+        task.spawn(function()
+            local Client = Network:ConnectTcp({Address = '127.0.0.1', Port = Listener.Port})
+            Client:Close()
+        end)
+        task.spawn(function()
+            local Client = Network:ConnectTcp({Address = '::1', Port = Listener.Port})
+            Client:Close()
+        end)
+    )";
+    Failures += Check(Lui_RunScript(Runtime, DualStack, "TcpDualStack") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(PumpUntil(Runtime, Result.DualStack), "dual-family accepts timed out");
+    Failures += Check(Result.Error.empty(), Result.Error.c_str());
+    Failures += Check(Lui_RunScript(Runtime, R"(
+        local Network = app:GetService('NetworkService')
+        local Listener = Network:ListenTcp({Family = 'DualStack', Port = 0})
+        task.spawn(function()
+            local Ok, Error = pcall(function() Listener:AcceptAsync() end)
+            assert(not Ok and string.find(Error, 'Canceled'))
+            print('[LUI:NetworkTest] TCP_DUAL_CANCELED')
+        end)
+        task.defer(function() Listener:Close() end)
+    )", "TcpDualCancel") == 1, Lui_GetLastError(Runtime));
+    Failures += Check(PumpUntil(Runtime, Result.DualCanceled), "dual-family accept was not canceled");
+    Failures += Check(Result.Error.empty(), Result.Error.c_str());
     Lui_Destroy(Runtime);
+
+    LuiRuntime* Restricted = Lui_Create();
+    Results RestrictedResult;
+    Lui_SetLogCallback(Restricted, &RestrictedResult, OnLog);
+    Failures += Check(Lui_DeclareCapabilities(Restricted, &Grant) == 1, "restricted grants rejected");
+    LuiNetworkPolicyV1 Policy{sizeof(Policy), LUI_EXTENSION_ABI_VERSION,
+        LUI_NETWORK_POLICY_CLIENT_LOOPBACK_ONLY | LUI_NETWORK_POLICY_SERVER_LOOPBACK_ONLY,
+        80, 80, 10000, 10000};
+    LuiNetworkPolicyV1 Invalid = Policy;
+    Invalid.ClientPortMax = 79;
+    Failures += Check(Lui_SetNetworkPolicy(Restricted, &Invalid) == 0,
+        "invalid network policy accepted");
+    Failures += Check(Lui_SetNetworkPolicy(Restricted, &Policy) == 1,
+        Lui_GetLastError(Restricted));
+    const char* RestrictedScript = R"(
+        local Network = app:GetService('NetworkService')
+        local function Denied(Action)
+            local Ok, Error = pcall(Action)
+            assert(not Ok and string.find(Error, 'PolicyDenied'))
+        end
+        Denied(function() Network:ListenTcp({Address = 'any', Port = 10000}) end)
+        Denied(function() Network:ListenTcp({Port = 0}) end)
+        Denied(function() Network:ListenTcp({Address = '8.8.8.8', Port = 10000}) end)
+        task.spawn(function()
+            Denied(function() Network:ConnectTcp({Address = '127.0.0.1', Port = 81}) end)
+            Denied(function() Network:ConnectTcp({Address = '8.8.8.8', Port = 80}) end)
+            Denied(function() Network:ConnectTcp({Address = 'example.com', Port = 80}) end)
+            print('[LUI:NetworkTest] TCP_POLICY_DENIED')
+        end)
+    )";
+    Failures += Check(Lui_RunScript(Restricted, RestrictedScript, "TcpPolicy") == 1,
+        Lui_GetLastError(Restricted));
+    Failures += Check(Lui_SetNetworkPolicy(Restricted, &Policy) == 0,
+        "late network policy accepted");
+    Failures += Check(PumpUntil(Restricted, RestrictedResult.PolicyDenied),
+        "network policy did not deny remote endpoint");
+    Failures += Check(RestrictedResult.Error.empty(), RestrictedResult.Error.c_str());
+    Lui_Destroy(Restricted);
+
+    LuiRuntime* Allowed = Lui_Create();
+    Results AllowedResult;
+    Lui_SetLogCallback(Allowed, &AllowedResult, OnLog);
+    LuiNetworkPolicyV1 LoopbackPolicy{sizeof(LoopbackPolicy), LUI_EXTENSION_ABI_VERSION,
+        LUI_NETWORK_POLICY_CLIENT_LOOPBACK_ONLY | LUI_NETWORK_POLICY_SERVER_LOOPBACK_ONLY,
+        0, 0, 0, 0};
+    Failures += Check(Lui_DeclareCapabilities(Allowed, &Grant) == 1 &&
+        Lui_SetNetworkPolicy(Allowed, &LoopbackPolicy) == 1,
+        Lui_GetLastError(Allowed));
+    Failures += Check(Lui_RunScript(Allowed, R"(
+        local Network = app:GetService('NetworkService')
+        local Listener = Network:ListenTcp({Port = 0})
+        task.spawn(function()
+            local Peer = Listener:AcceptAsync()
+            Peer:Close()
+            Listener:Close()
+            print('[LUI:NetworkTest] TCP_POLICY_ALLOWED')
+        end)
+        task.spawn(function()
+            local Client = Network:ConnectTcp({Address = 'localhost', Port = Listener.Port})
+            Client:Close()
+        end)
+    )", "TcpPolicyAllowed") == 1, Lui_GetLastError(Allowed));
+    Failures += Check(PumpUntil(Allowed, AllowedResult.PolicyAllowed),
+        "loopback network policy blocked a local connection");
+    Failures += Check(AllowedResult.Error.empty(), AllowedResult.Error.c_str());
+    Lui_Destroy(Allowed);
 
     LuiRuntime* Teardown = Lui_Create();
     Failures += Check(Lui_DeclareCapabilities(Teardown, &Grant) == 1 &&
@@ -158,6 +291,6 @@ int main() {
     Lui_Pump(Teardown);
     Lui_Destroy(Teardown);
 
-    if (!Failures) std::puts("[LUI:NetworkTest] TCP grants, round trip, EOF, read/accept cancellation, and teardown passed");
+    if (!Failures) std::puts("[LUI:NetworkTest] TCP grants, round trip, EOF, cancellation, dual-family binding, host policy, and teardown passed");
     return Failures ? 1 : 0;
 }

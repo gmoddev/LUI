@@ -198,6 +198,12 @@ struct LuiRuntime {
     LuiLogCallback LogCallback = nullptr;
     std::string BackendName = "headless";
     uint64_t GrantedCapabilities = 0;
+    uint32_t NetworkPolicyFlags = 0;
+    uint32_t ClientPortMin = 0;
+    uint32_t ClientPortMax = 0;
+    uint32_t ServerPortMin = 0;
+    uint32_t ServerPortMax = 0;
+    bool NetworkPolicyDeclared = false;
     uint64_t VmBytes = 0;
     uint64_t VmLimitBytes = 0;
     uint64_t MaxInterrupts = 0;

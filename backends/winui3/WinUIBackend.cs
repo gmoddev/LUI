@@ -120,6 +120,22 @@ internal sealed class WinUIBackend : IDisposable
         };
         if (Native.Lui_DeclareCapabilities(Runtime, ref Declaration) != 1)
             throw new InvalidOperationException("Capability declaration failed: " + LastError);
+        if (Manifest.NetworkPolicy is { } Policy)
+        {
+            Native.NetworkPolicy HostPolicy = new()
+            {
+                StructSize = (uint)Marshal.SizeOf<Native.NetworkPolicy>(),
+                AbiVersion = 1,
+                Flags = (Policy.ClientLoopbackOnly ? 1u : 0u) |
+                    (Policy.ServerLoopbackOnly ? 2u : 0u),
+                ClientPortMin = Policy.ClientPortMin,
+                ClientPortMax = Policy.ClientPortMax,
+                ServerPortMin = Policy.ServerPortMin,
+                ServerPortMax = Policy.ServerPortMax,
+            };
+            if (Native.Lui_SetNetworkPolicy(Runtime, ref HostPolicy) != 1)
+                throw new InvalidOperationException("Network policy failed: " + LastError);
+        }
         if (Manifest.Sandbox is not null)
         {
             Native.SandboxLimits Limits = new()
@@ -820,6 +836,17 @@ internal sealed class WinUIBackend : IDisposable
             internal ulong MaxMemoryBytes;
             internal ulong MaxInterrupts;
         }
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct NetworkPolicy
+        {
+            internal uint StructSize;
+            internal uint AbiVersion;
+            internal uint Flags;
+            internal uint ClientPortMin;
+            internal uint ClientPortMax;
+            internal uint ServerPortMin;
+            internal uint ServerPortMax;
+        }
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int CreateCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string ClassName);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -868,6 +895,8 @@ internal sealed class WinUIBackend : IDisposable
         internal static extern int Lui_DeclareCapabilities(IntPtr Runtime, ref CapabilityDeclaration Declaration);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_ConfigureSandbox(IntPtr Runtime, ref SandboxLimits Limits);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_SetNetworkPolicy(IntPtr Runtime, ref NetworkPolicy Policy);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_RegisterAsset(IntPtr Runtime,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string Name);

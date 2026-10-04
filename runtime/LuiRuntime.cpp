@@ -1278,6 +1278,32 @@ extern "C" LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const 
     return 1;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_SetNetworkPolicy(LuiRuntime* Runtime, const LuiNetworkPolicyV1* Policy) {
+    if (!CheckOwner(Runtime)) return 0;
+    auto ValidRange = [](uint32_t Minimum, uint32_t Maximum) {
+        return (Minimum == 0 && Maximum == 0) ||
+            (Minimum >= 1 && Minimum <= Maximum && Maximum <= 65535);
+    };
+    if (!Policy || Policy->StructSize < sizeof(LuiNetworkPolicyV1) ||
+        Policy->AbiVersion != LUI_EXTENSION_ABI_VERSION ||
+        (Policy->Flags & ~(LUI_NETWORK_POLICY_CLIENT_LOOPBACK_ONLY |
+            LUI_NETWORK_POLICY_SERVER_LOOPBACK_ONLY)) ||
+        !ValidRange(Policy->ClientPortMin, Policy->ClientPortMax) ||
+        !ValidRange(Policy->ServerPortMin, Policy->ServerPortMax) ||
+        Runtime->NetworkPolicyDeclared || Runtime->ApplicationStarted || Runtime->Network) {
+        Runtime->LastError = "[LUI:Network] invalid or late network policy";
+        return 0;
+    }
+    Runtime->NetworkPolicyFlags = Policy->Flags;
+    Runtime->ClientPortMin = Policy->ClientPortMin;
+    Runtime->ClientPortMax = Policy->ClientPortMax;
+    Runtime->ServerPortMin = Policy->ServerPortMin;
+    Runtime->ServerPortMax = Policy->ServerPortMax;
+    Runtime->NetworkPolicyDeclared = true;
+    Runtime->LastError.clear();
+    return 1;
+}
+
 extern "C" LUI_API int LUI_CALL Lui_EnableSourceProvenance(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return 0;
     if (Runtime->ApplicationStarted) {

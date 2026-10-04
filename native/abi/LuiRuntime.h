@@ -37,6 +37,20 @@ typedef struct LuiSandboxLimitsV1 {
     uint64_t MaxInterrupts;
 } LuiSandboxLimitsV1;
 
+/* Host-only narrowing of network grants. Zero port bounds mean unrestricted;
+   otherwise both bounds must be set and inclusive. Configure before scripts. */
+#define LUI_NETWORK_POLICY_CLIENT_LOOPBACK_ONLY 1u
+#define LUI_NETWORK_POLICY_SERVER_LOOPBACK_ONLY 2u
+typedef struct LuiNetworkPolicyV1 {
+    uint32_t StructSize;
+    uint32_t AbiVersion;
+    uint32_t Flags;
+    uint32_t ClientPortMin;
+    uint32_t ClientPortMax;
+    uint32_t ServerPortMin;
+    uint32_t ServerPortMax;
+} LuiNetworkPolicyV1;
+
 /* Internal host contract. This is not the stable extension ABI. */
 typedef struct LuiBackendCallbacks {
     void* Context;
@@ -70,6 +84,7 @@ LUI_API void LUI_CALL Lui_SetBackendName(LuiRuntime* Runtime, const char* Name);
 LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* Context, LuiLogCallback Callback);
 LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime, const LuiCapabilityDeclarationV1* Declaration);
 LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const LuiSandboxLimitsV1* Limits);
+LUI_API int LUI_CALL Lui_SetNetworkPolicy(LuiRuntime* Runtime, const LuiNetworkPolicyV1* Policy);
 /* Enable development-only source locations before the first script. */
 LUI_API int LUI_CALL Lui_EnableSourceProvenance(LuiRuntime* Runtime);
 /* Registers a packaged asset name before scripts; source paths stay in the host. */
