@@ -353,6 +353,8 @@ class EditorController {
     }
 
     Dispose() {
+        if (this.Disposed) return;
+        this.Disposed = true;
         this.Types.Dispose();
         this.Native?.removeAllListeners();
         this.StopNative();

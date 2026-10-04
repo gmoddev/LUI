@@ -84,8 +84,8 @@ Test('editor publishes Problems independently of preview, clears errors on edit 
         Assert.equal(GetEntry(Manifest).Script, Script);
         const Settings = new Map([['cliPath', 'cli.dll'], ['checkerPath', 'checker.exe'], ['definitionsPath', 'defs.luau']]);
         for (const Name of Settings.values()) Fs.writeFileSync(Path.join(Directory, Name), 'test');
-        const Collection = { Items: [], set(Uri, Items) { this.Items = Items; this.Uri = Uri; },
-            clear() { this.Items = []; }, dispose() {} };
+        const Collection = { Items: [], Disposed: false, set(Uri, Items) { this.Items = Items; this.Uri = Uri; },
+            clear() { Assert.equal(this.Disposed, false); this.Items = []; }, dispose() { this.Disposed = true; } };
         const Vscode = {
             workspace: { isTrusted: false, textDocuments: [], getConfiguration: () => ({ get: (Key, Default) => Settings.get(Key) ?? Default }) },
             languages: { createDiagnosticCollection: () => Collection },
@@ -120,7 +120,11 @@ Test('editor publishes Problems independently of preview, clears errors on edit 
         Assert.match(Messages.at(-1), /Save/);
         Fs.writeFileSync(Manifest, JSON.stringify({ SchemaVersion: 1, Script: '../outside.luau' }));
         Assert.throws(() => GetEntry(Manifest), /left/);
+        Settings.set('checkerPath', { Invalid: 'configuration' });
+        Assert.doesNotThrow(() => Controller.Check(Folder, true));
+        Assert.ok(Messages.at(-1).startsWith('[LUI:Types] '));
         Controller.Dispose();
+        Assert.doesNotThrow(() => Controller.Dispose());
     } finally { Fs.rmSync(Directory, { recursive: true, force: true }); }
 });
 

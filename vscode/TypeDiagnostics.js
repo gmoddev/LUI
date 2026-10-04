@@ -75,9 +75,9 @@ class TypeDiagnostics {
         const Vscode = this.Vscode;
         if (!Vscode.workspace.isTrusted) { if (Explicit) this.Log('Type checking requires a trusted workspace.'); return; }
         if (!Explicit && !Vscode.workspace.getConfiguration('lui', Folder.uri).get('autoCheck', true)) return;
-        const Paths = GetTypePaths(Folder, Vscode);
-        if (!Fs.existsSync(Paths.Manifest)) { if (Explicit) this.Log('Application manifest was not found.'); return; }
         try {
+            const Paths = GetTypePaths(Folder, Vscode);
+            if (!Fs.existsSync(Paths.Manifest)) { if (Explicit) this.Log('Application manifest was not found.'); return; }
             for (const [Name, Value] of [['CLI', Paths.Cli], ['checker', Paths.Checker], ['definitions', Paths.Definitions]])
                 if (!Value || !Fs.existsSync(Value)) throw new Error(`${Name} was not found. Build the tooling or set the LUI type-check settings.`);
             const { Script, SourceName } = GetEntry(Paths.Manifest);
@@ -101,15 +101,21 @@ class TypeDiagnostics {
         if (Document.uri.scheme !== 'file') return;
         const Folder = this.Vscode.workspace.getWorkspaceFolder(Document.uri);
         if (!Folder) return;
-        const { Manifest } = GetTypePaths(Folder, this.Vscode);
         try {
+            const { Manifest } = GetTypePaths(Folder, this.Vscode);
             const File = Path.resolve(Document.uri.fsPath);
             if (File === Manifest || File === GetEntry(Manifest).Script) this.Check(Folder);
         } catch { /* No matching readable entry script yet. Explicit checks report setup errors. */ }
     }
 
     Invalidate() { this.Session.Stop(); this.Diagnostics.clear(); }
-    Dispose() { this.Invalidate(); this.Session.removeAllListeners(); this.Diagnostics.dispose(); }
+    Dispose() {
+        if (this.Disposed) return;
+        this.Disposed = true;
+        this.Invalidate();
+        this.Session.removeAllListeners();
+        this.Diagnostics.dispose();
+    }
 }
 
 module.exports = { TypeDiagnostics, GetEntry, GetTypePaths };
