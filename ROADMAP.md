@@ -45,9 +45,9 @@ The parser, validated serializers, outbound `HttpService`, and hosted `HttpServe
 
 Build outbound `HttpService` and a loopback-default `HttpServerService` on the proven transport. Include strict HTTP/1.1 framing, bounded requests and responses, ordered persistent connections, scheduler-thread route handlers, timeouts, and malformed-request regression tests.
 
-### Networking Foundation C — UDP and TLS (in progress)
+### Networking Foundation C — UDP and TLS (complete for the defined profile)
 
-Bounded UDP is implemented and [qualified on Windows/Linux](https://github.com/gmoddev/LUI/actions/runs/37189268030) at `7fbbe5d`. The private OpenSSL provider, validated HTTPS client, explicit host PKCS#12 credentials, hosted TLS, bounded handshakes/shutdown, and cancellation are now implemented. All 12 Windows native suites passed on 2026-10-04; the combined Windows/Linux TLS exit audit is pending. See [Foundation C notes](docs/NETWORKING-FOUNDATION-C.md).
+Bounded UDP, the private OpenSSL provider, validated HTTPS, explicit host PKCS#12 credentials, hosted TLS, bounded handshakes/shutdown, and cancellation passed [Windows/Linux CI](https://github.com/gmoddev/LUI/actions/runs/37258631241) at `a8e803b` on 2026-10-04 (2026-10-05 UTC). All 12 native suites and tooling checks passed, including the Windows WinUI build. The [Foundation C exit audit](docs/NETWORKING-FOUNDATION-C.md#exit-audit) states the defined trust and credential profile; manifest credentials, mTLS, and direct Luau TLS sockets remain follow-up.
 
 Add bounded UDP datagrams and a portable TLS provider contract with validated client certificates and explicit server credentials. Qualify shutdown, cancellation, and resource limits on both platforms. WebSocket, HTTP/2, HTTP/3, and streaming bodies remain later work.
 
@@ -71,4 +71,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Qualify Foundation C's implemented TLS/HTTPS provider on Windows/Linux CI and record its defined exit audit. Then resume Foundation 3's developer experience work: saved-entry type Problems visual qualification and richer editor tools. UDP and Foundation B's defined HTTP/1.1 scope are already qualified on Windows/Linux headless runtimes. Keep the future native object ABI separately versioned.
+Resume Foundation 3's developer experience work: saved-entry type Problems visual qualification, then richer preview input and editor tools. Networking Foundations A, B, and C are qualified on Windows/Linux headless runtimes. Keep the future native object ABI separately versioned.

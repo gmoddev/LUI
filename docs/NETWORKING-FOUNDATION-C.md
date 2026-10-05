@@ -1,6 +1,6 @@
 # Networking Foundation C — UDP and TLS
 
-Status: UDP qualified; TLS/HTTPS implemented and Windows native suites passed. Foundation C's combined Windows/Linux CI exit audit is pending.
+Status: complete for the defined bounded UDP and TLS/HTTPS profile. The combined Windows/Linux exit audit passed; broader protocols and credential integration remain deferred below.
 
 ## Shipped UDP surface
 
@@ -70,7 +70,13 @@ Server:Start()
 
 Abrupt TLS EOF fails close-delimited responses as `UnexpectedEof`. Complete length/chunk-framed responses settle before shutdown cleanup; cleanup remains bounded by the existing deadline and slot, and its cancellation/timeout preserves the already authenticated response. Servers attempt close_notify within their request deadline. Server close, client cancellation, and runtime destruction abort unsettled work and prevent late route delivery. Provider calls and host credential parsing are not individually preempted by async timers.
 
-All 12 Windows native suites passed on 2026-10-04, including trusted binary HTTPS and hosted IPv4/IPv6 TLS, DNS SNI/IP identity, untrusted/wrong-name/expired certificates, TLS 1.2 and legacy refusal, handshake stalls, truncated streams, shutdown stalls, close/cancellation, owner delivery, and runtime destruction. Fixtures are explicitly public synthetic credentials and require no OS installation. Generated definitions validate the server's `TLS` option. Windows/Linux CI qualification is pending for this TLS revision.
+All 12 Windows native suites passed on 2026-10-04, including trusted binary HTTPS and hosted IPv4/IPv6 TLS, DNS SNI/IP identity, untrusted/wrong-name/expired certificates, TLS 1.2 and legacy refusal, handshake stalls, truncated streams, shutdown stalls, close/cancellation, owner delivery, and runtime destruction. Fixtures are explicitly public synthetic credentials and require no OS installation. Generated definitions validate the server's `TLS` option. The combined Windows/Linux CI qualification passed at the baseline below.
+
+## Exit audit
+
+The defined Foundation C profile passed on 2026-10-04 local time (2026-10-05 UTC) at source commit `a8e803b5bd3ddcd0aa3c4a22497d5e8c7c291a62`: [Windows and Linux CI](https://github.com/gmoddev/LUI/actions/runs/37258631241). Both platforms passed their 12 native suites, CLI checks, preview protocol/editor tests, and generated schema/API consistency checks. The Windows job also passed manifest/package checks and built the WinUI host from a clean OpenSSL source dependency.
+
+The audit covers bounded UDP packet semantics and resource limits, mandatory HTTPS peer validation, the explicit native host credential boundary, hosted TLS, scheduler-owned delivery, deadlines, cancellation, and teardown. It also includes initializing all network worker state before starting its thread. Headless Linux networking qualification does not establish a Linux UI backend or physical desktop accessibility behavior. Server credentials currently require the native host API; the deferred extensions below are outside this exit profile.
 
 ## Deferred extensions
 

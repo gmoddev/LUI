@@ -93,7 +93,7 @@ This is headless verification. No application endpoint is opened persistently, n
 
 ## Next implementation
 
-Foundation C now adds bounded UDP, the portable TLS provider, HTTPS, and explicit host server credentials. Its combined Windows/Linux exit audit is the next qualification gate. Streaming, proxies, broader HTTP profiles, JSON helpers, and outbound connection pooling remain follow-up.
+Foundation C's bounded UDP, portable TLS provider, HTTPS, and explicit host server credentials passed its [Windows/Linux exit audit](NETWORKING-FOUNDATION-C.md#exit-audit). The roadmap now returns to Foundation 3 editor work. Streaming, proxies, broader HTTP profiles, JSON helpers, and outbound connection pooling remain follow-up.
 
 ## Exit audit
 
