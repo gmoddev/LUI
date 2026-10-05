@@ -22,5 +22,6 @@
     <None Include="../../examples/grid.luau" Link="examples/grid.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
     <None Include="../../tests/winui/NativeMapping.luau" Link="tests/winui/NativeMapping.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
     <None Include="$(LuiNativeDll)" Link="LuiRuntime.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiNativeDll)' != ''" />
+    <None Include="../../third_party/licenses/OpenSSL.txt" Link="THIRD-PARTY-LICENSES/OpenSSL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

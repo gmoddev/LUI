@@ -10,7 +10,7 @@ Verified on a Windows x64 worker with Visual Studio 2022 C++ tools, Windows SDK 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Windows.ps1
 ```
 
-The script builds the native DLL and headless test, runs the test, then builds the unpackaged WinUI 3 host. It uses `build/windows-x64` for native incremental state and the normal .NET `obj`/`bin` directories for managed output. NuGet and Git access are needed on a fresh machine. The host uses the Windows App SDK runtime; installation and release packaging are later work.
+The script builds the native DLL and headless test, runs the test, then builds the unpackaged WinUI 3 host. It uses `build/windows-x64` for native incremental state and the normal .NET `obj`/`bin` directories for managed output. NuGet and Git access are needed on a fresh machine. Current builds also require an existing Perl for the cached static [TLS provider](TLS-DEPENDENCY.md). The host uses the Windows App SDK runtime; installation and release packaging are later work.
 
 ## Run
 

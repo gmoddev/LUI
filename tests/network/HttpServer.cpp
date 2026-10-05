@@ -71,7 +71,8 @@ struct Client {
                 }
                 if (!Error.empty() || Eof) { Done = true; return; }
             }
-            if (!Stop) Error = "native client deadline";
+            if (!Stop) Error = "native client deadline for " + Wire.substr(0, Wire.find("\r\n")) +
+                " (" + std::to_string(Wire.size()) + " bytes, " + std::to_string(Replies.size()) + " replies)";
             Done = true;
         });
     }

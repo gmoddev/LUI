@@ -47,7 +47,7 @@ Build outbound `HttpService` and a loopback-default `HttpServerService` on the p
 
 ### Networking Foundation C — UDP and TLS (in progress)
 
-Bounded UDP is implemented on the shared worker and scheduler bridge, with IPv4/IPv6, datagram boundaries, binary and empty payloads, oversize rejection, capability/policy enforcement, cancellation, and resource limits. All 12 Windows native suites and [Windows/Linux CI](https://github.com/gmoddev/LUI/actions/runs/37189268030) passed at `7fbbe5d` on 2026-10-04. TLS remains unimplemented. See [Foundation C notes](docs/NETWORKING-FOUNDATION-C.md).
+Bounded UDP is implemented and [qualified on Windows/Linux](https://github.com/gmoddev/LUI/actions/runs/37189268030) at `7fbbe5d`. The private OpenSSL provider, validated HTTPS client, explicit host PKCS#12 credentials, hosted TLS, bounded handshakes/shutdown, and cancellation are now implemented. All 12 Windows native suites passed on 2026-10-04; the combined Windows/Linux TLS exit audit is pending. See [Foundation C notes](docs/NETWORKING-FOUNDATION-C.md).
 
 Add bounded UDP datagrams and a portable TLS provider contract with validated client certificates and explicit server credentials. Qualify shutdown, cancellation, and resource limits on both platforms. WebSocket, HTTP/2, HTTP/3, and streaming bodies remain later work.
 
@@ -71,4 +71,4 @@ Evaluate macOS, optional direct Win32, richer declarative libraries, visual edit
 
 ## Current next step
 
-Define and implement Foundation C's portable TLS provider, validated client connections, explicit server credentials, and bounded lifecycle. UDP and Foundation B's defined HTTP/1.1 scope are qualified on Windows/Linux headless runtimes. Foundation 3's saved-entry type diagnostics are implemented; visual qualification and richer editor tools remain follow-up. Keep the future native object ABI separately versioned.
+Qualify Foundation C's implemented TLS/HTTPS provider on Windows/Linux CI and record its defined exit audit. Then resume Foundation 3's developer experience work: saved-entry type Problems visual qualification and richer editor tools. UDP and Foundation B's defined HTTP/1.1 scope are already qualified on Windows/Linux headless runtimes. Keep the future native object ABI separately versioned.

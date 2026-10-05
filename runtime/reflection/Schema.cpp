@@ -157,6 +157,7 @@ static constexpr ServicePropertyDefinition ObjectProperties[] = {
     {"HttpServerOptions", "Address", "string?"},
     {"HttpServerOptions", "Family", "(\"IPv4\" | \"IPv6\" | \"DualStack\")?"},
     {"HttpServerOptions", "Port", "number"},
+    {"HttpServerOptions", "TLS", "boolean?"},
     {"HttpServerOptions", "TimeoutMs", "number?"},
     {"HttpServerOptions", "MaxConnections", "number?"},
     {"HttpServerOptions", "MaxRequestBytes", "number?"},

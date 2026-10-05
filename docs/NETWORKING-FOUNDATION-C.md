@@ -1,6 +1,6 @@
 # Networking Foundation C — UDP and TLS
 
-Status: UDP implemented; TLS remains pending. Foundation C is in progress.
+Status: UDP qualified; TLS/HTTPS implemented and Windows native suites passed. Foundation C's combined Windows/Linux CI exit audit is pending.
 
 ## Shipped UDP surface
 
@@ -44,6 +44,34 @@ DNS destinations, connected UDP, multicast/broadcast configuration, IPv4-mapped 
 
 The incremental Windows worker build and all 12 native suites passed on 2026-10-04, including UDP and generated type checks. [Windows and Linux CI](https://github.com/gmoddev/LUI/actions/runs/37189268030) passed at `7fbbe5d03ecf82e70f8efef61eefec7c1882c3d7` on the same date. CI also passed CLI, preview/editor checks, and generated API/schema consistency. UDP tests cover packet boundaries, empty/binary/maximum payloads, both oversized receive paths and recovery, IPv6, buffer ownership, cancellation, bind failure, quotas, grants, host policy, and teardown. This is headless networking qualification and makes no Linux UI claim. This UDP audit does not complete Foundation C's TLS requirements.
 
-## Remaining Foundation C work
+## Shipped TLS and HTTPS
 
-Define and implement a portable TLS provider boundary with explicit host-owned credentials, validated client connections, bounded handshake/I/O deadlines, and cancellation/shutdown tests on Windows and Linux. Ordinary Luau must never receive native credential handles, and validation must not be silently disabled. HTTPS and TLS server use will build on that provider. UDP completion alone does not satisfy Foundation C's TLS exit requirements. WebSocket, HTTP/2, HTTP/3, streaming bodies, and outbound pooling remain later work.
+HTTPS URLs now work with `HttpService:RequestAsync` and `GetAsync`. The default port is 443. Client calls still require only `network.client`, obey host policy, and share the HTTP parser, worker, deadline, cancellation barrier, and 32-call/result ceiling. TLS always verifies certificate chain, dates, server purpose, and the original URL DNS/IP identity before writing an HTTP request. DNS requests send SNI. TLS 1.2 is the minimum and TLS 1.3 is supported; there is no Luau verification bypass or plaintext retry.
+
+The private provider uses OpenSSL. Windows builds pinned 3.5.9 statically in the CMake dependency cache and imports trusted OS roots; Linux uses distribution OpenSSL 3 and system trust paths. Windows also checks the Disallowed stores. No certificate store is modified. Validation does not currently fetch AIA or live revocation data. Certificates are bounded to a 128 KiB peer list and eight intermediate certificates. Tickets/session caching, compression, and renegotiation are disabled. [Decision 0031](decisions/0031-portable-tls-and-https.md) records the exact provider and trust profile.
+
+### Host credentials
+
+Before scripts/network use, a native host may call `Lui_SetTlsOptions` with a size/version-checked `LuiTlsOptionsV1`. Its optional PEM CA roots replace system trust roots; an optional PKCS#12 server certificate/key and length-delimited password configure server mode. Inputs are synchronously parsed, caller buffers need not remain alive, and configuration succeeds only once. Trust/credential byte limits are 256 KiB each, with a 1024-byte password limit. Invalid inputs fail nonintrusively with a stable `[LUI:Tls]` error, without logging secret data.
+
+Once the host has supplied credentials, application Luau can create a secure server:
+
+```luau
+local Server = app:GetService("HttpServerService"):CreateServer({Port = 8443, TLS = true})
+Server:Route("GET", "/health", function(Request)
+    return {Body = "ready"}
+end)
+Server:Start()
+```
+
+`network.server` is sufficient. Missing credentials fail before bind with `TlsCredentialRequired`; `TLS` must be Boolean. Each accepted TLS handshake retains an existing hosted connection/session slot and uses `TimeoutMs`, followed by a fresh per-request deadline after handshake. Plain HTTP remains the explicit default. The current CLI/WinUI manifest does not load TLS credentials; use the native host API for secure server credentials.
+
+### Shutdown and qualification
+
+Abrupt TLS EOF fails close-delimited responses as `UnexpectedEof`. Complete length/chunk-framed responses settle before shutdown cleanup; cleanup remains bounded by the existing deadline and slot, and its cancellation/timeout preserves the already authenticated response. Servers attempt close_notify within their request deadline. Server close, client cancellation, and runtime destruction abort unsettled work and prevent late route delivery. Provider calls and host credential parsing are not individually preempted by async timers.
+
+All 12 Windows native suites passed on 2026-10-04, including trusted binary HTTPS and hosted IPv4/IPv6 TLS, DNS SNI/IP identity, untrusted/wrong-name/expired certificates, TLS 1.2 and legacy refusal, handshake stalls, truncated streams, shutdown stalls, close/cancellation, owner delivery, and runtime destruction. Fixtures are explicitly public synthetic credentials and require no OS installation. Generated definitions validate the server's `TLS` option. Windows/Linux CI qualification is pending for this TLS revision.
+
+## Deferred extensions
+
+Schannel-specific provider integration, mTLS, live revocation/AIA policy, named credentials, hardware/platform key stores, PEM private-key loading, CLI/WinUI credential manifests, direct Luau TLS sockets, WebSocket, HTTP/2, HTTP/3, streaming bodies, and outbound pooling remain future work. These do not enter the current Foundation C profile; its exit audit covers bounded UDP and the defined TLS/HTTPS provider, client/server credentials, and lifecycle.

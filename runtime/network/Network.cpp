@@ -2,6 +2,7 @@
 #include "../internal/State.h"
 #include "../internal/Scheduler.h"
 #include "http/Serializer.h"
+#include "tls/Provider.h"
 
 #include "lua.h"
 #include "lualib.h"
@@ -78,7 +79,6 @@ struct NetworkContext {
     LuiRuntime* Runtime;
     asio::io_context Io;
     asio::executor_work_guard<asio::io_context::executor_type> Work;
-    std::thread Worker;
     int NextId = 1;
     int NextSignalId = 1;
     size_t HttpOutstanding = 0; // Scheduler owner only; includes queued completions.
@@ -94,7 +94,33 @@ struct NetworkContext {
     std::unordered_map<uint64_t, std::shared_ptr<HostedSession>> Sessions; // Network worker only.
     std::shared_ptr<std::atomic<size_t>> HostedSlots = std::make_shared<std::atomic<size_t>>(0);
     uint64_t NextSession = 1; // Network worker only.
+    std::shared_ptr<Lui::Tls::Settings> TlsSettings; // Network worker only; immutable after loading.
+    std::thread Worker; // Start only after all worker-owned state is initialized.
 };
+
+int ConfigureNetworkTls(LuiRuntime* Runtime, const LuiTlsOptionsV1* Options) {
+    if (!Options || Options->StructSize < sizeof(LuiTlsOptionsV1) ||
+        Options->AbiVersion != LUI_EXTENSION_ABI_VERSION || Runtime->ApplicationStarted ||
+        Runtime->Network || Runtime->TlsSettings || Options->TrustAnchorsBytes > 256 * 1024 ||
+        Options->ServerPkcs12Bytes > 256 * 1024 || Options->PasswordBytes > 1024 ||
+        (!Options->TrustAnchorsPem && Options->TrustAnchorsBytes) ||
+        (!Options->ServerPkcs12 && Options->ServerPkcs12Bytes) || (!Options->Password && Options->PasswordBytes)) {
+        Runtime->LastError = "[LUI:Tls] InvalidOptions"; return 0;
+    }
+    auto Settings = Lui::Tls::Settings::Load(
+        std::string_view(Options->TrustAnchorsPem ? Options->TrustAnchorsPem : "", Options->TrustAnchorsBytes),
+        std::string_view(Options->ServerPkcs12 ? static_cast<const char*>(Options->ServerPkcs12) : "", Options->ServerPkcs12Bytes),
+        std::string(Options->Password ? Options->Password : "", Options->PasswordBytes), Runtime->LastError);
+    if (!Settings) return 0;
+    Runtime->TlsSettings = std::move(Settings);
+    return 1;
+}
+
+static std::shared_ptr<Lui::Tls::Settings> GetTlsSettings(NetworkContext* Network, std::string& Error) {
+    if (!Network->TlsSettings) Network->TlsSettings = Network->Runtime->TlsSettings;
+    if (!Network->TlsSettings) Network->TlsSettings = Lui::Tls::Settings::Load({}, {}, {}, Error);
+    return Network->TlsSettings;
+}
 
 static LuiRuntime* GetRuntime(lua_State* State) {
     lua_getfield(State, LUA_REGISTRYINDEX, "LuiRuntime");
@@ -480,6 +506,8 @@ struct HttpOperation {
     asio::steady_timer Deadline;
     std::shared_ptr<DialOperation> Dial;
     std::shared_ptr<NetworkConnection> Connection;
+    std::shared_ptr<Lui::Tls::Stream> Tls;
+    std::shared_ptr<Lui::Http::Message> ClosingResponse;
     std::unique_ptr<Lui::Http::Parser> Parser;
     std::array<char, 16384> Buffer;
     unsigned Informational = 0;
@@ -490,6 +518,18 @@ struct HttpOperation {
 static void FinishHttp(const std::shared_ptr<HttpOperation>& Operation, std::string Error,
     std::shared_ptr<Lui::Http::Message> Response = {}) {
     if (Operation->Done) return;
+    if (Response && Error.empty() && Operation->Tls && !Operation->ClosingResponse) {
+        // Fully framed authenticated content is settled. Cleanup retains its
+        // slot until close_notify completes or the existing deadline/cancel fires.
+        Operation->ClosingResponse = Response;
+        Operation->Parser.reset();
+        Operation->Wire.clear();
+        Operation->Tls->Socket.async_shutdown([Operation](const ErrorCode&) {
+            FinishHttp(Operation, "", Operation->ClosingResponse);
+        });
+        return;
+    }
+    if (Operation->ClosingResponse) { Response = std::move(Operation->ClosingResponse); Error.clear(); }
     Operation->Done = true;
     Operation->Deadline.cancel();
     if (Operation->Dial && !Operation->Dial->Done)
@@ -518,11 +558,10 @@ static std::string HttpError(std::string Error) {
 
 static void ReadHttp(const std::shared_ptr<HttpOperation>& Operation) {
     if (Operation->Done) return;
-    Operation->Connection->Socket.async_read_some(asio::buffer(Operation->Buffer),
-        [Operation](const ErrorCode& Error, size_t Count) {
+    auto Handler = [Operation](const ErrorCode& Error, size_t Count) {
             if (Operation->Done) return;
             if (Error && Error != asio::error::eof) {
-                FinishHttp(Operation, HttpError(NetworkError(Error)));
+                FinishHttp(Operation, Operation->Tls ? "[LUI:Http] " + Operation->Tls->ErrorName(Error) : HttpError(NetworkError(Error)));
                 return;
             }
             std::string_view Bytes(Operation->Buffer.data(), Count);
@@ -552,7 +591,22 @@ static void ReadHttp(const std::shared_ptr<HttpOperation>& Operation) {
                 if (Bytes.empty() && !Error) break;
             }
             ReadHttp(Operation);
-        });
+        };
+    if (Operation->Tls) Operation->Tls->Socket.async_read_some(asio::buffer(Operation->Buffer), std::move(Handler));
+    else Operation->Connection->Socket.async_read_some(asio::buffer(Operation->Buffer), std::move(Handler));
+}
+
+static void WriteHttp(const std::shared_ptr<HttpOperation>& Operation) {
+    auto Handler = [Operation](const ErrorCode& Error, size_t) {
+        if (Operation->Done) return;
+        if (Error) {
+            FinishHttp(Operation, Operation->Tls ? "[LUI:Http] " + Operation->Tls->ErrorName(Error) : HttpError(NetworkError(Error)));
+            return;
+        }
+        ReadHttp(Operation);
+    };
+    if (Operation->Tls) asio::async_write(Operation->Tls->Socket, asio::buffer(Operation->Wire), std::move(Handler));
+    else asio::async_write(Operation->Connection->Socket, asio::buffer(Operation->Wire), std::move(Handler));
 }
 
 static size_t HttpNumber(lua_State* State, int Table, const char* Key, size_t Default, size_t Min, size_t Max) {
@@ -678,16 +732,23 @@ static int HttpRequest(lua_State* State, bool Get) {
         });
         Operation->Dial = std::make_shared<DialOperation>(Operation->Network->Io, Operation->Network->Runtime, 0);
         std::weak_ptr<HttpOperation> Weak = Operation;
-        Operation->Dial->Completion = [Weak](std::shared_ptr<NetworkConnection> Connection, std::string Error) {
+        Operation->Dial->Completion = [Weak, Destination](std::shared_ptr<NetworkConnection> Connection, std::string Error) {
             auto Operation = Weak.lock();
             if (!Operation || Operation->Done) return;
             if (!Error.empty()) { FinishHttp(Operation, HttpError(std::move(Error))); return; }
             Operation->Connection = std::move(Connection);
-            asio::async_write(Operation->Connection->Socket, asio::buffer(Operation->Wire),
-                [Operation](const ErrorCode& Error, size_t) {
+            if (!Destination.Secure) { WriteHttp(Operation); return; }
+            auto Settings = GetTlsSettings(Operation->Network, Error);
+            if (!Settings) { FinishHttp(Operation, "[LUI:Http] TlsProviderUnavailable"); return; }
+            Operation->Tls = std::make_shared<Lui::Tls::Stream>(Operation->Connection->Socket, Settings, false);
+            if (!Operation->Tls->SetPeerName(Destination.Host)) {
+                FinishHttp(Operation, "[LUI:Http] TlsHandshakeFailed"); return;
+            }
+            Operation->Tls->Socket.async_handshake(asio::ssl::stream_base::client,
+                [Operation](const ErrorCode& Error) {
                     if (Operation->Done) return;
-                    if (Error) { FinishHttp(Operation, HttpError(NetworkError(Error))); return; }
-                    ReadHttp(Operation);
+                    if (Error) { FinishHttp(Operation, "[LUI:Http] " + Operation->Tls->ErrorName(Error, true)); return; }
+                    WriteHttp(Operation);
                 });
         };
         BeginDial(Operation->Dial, Destination.Host, Destination.Port, LoopbackOnly, static_cast<unsigned>(Timeout));

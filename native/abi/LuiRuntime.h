@@ -51,6 +51,21 @@ typedef struct LuiNetworkPolicyV1 {
     uint32_t ServerPortMax;
 } LuiNetworkPolicyV1;
 
+/* Host-only TLS configuration, once before scripts/network use. Inputs are
+   copied/parsed synchronously. Empty trust uses OS roots; supplied PEM CA roots
+   replace them. Server credentials are a PKCS#12 certificate/key bundle.
+   Sizes are capped at 256 KiB; PasswordBytes at 1024. No validation bypass. */
+typedef struct LuiTlsOptionsV1 {
+    uint32_t StructSize;
+    uint32_t AbiVersion;
+    const char* TrustAnchorsPem;
+    uint32_t TrustAnchorsBytes;
+    const void* ServerPkcs12;
+    uint32_t ServerPkcs12Bytes;
+    const char* Password;
+    uint32_t PasswordBytes;
+} LuiTlsOptionsV1;
+
 /* Internal host contract. This is not the stable extension ABI. */
 typedef struct LuiBackendCallbacks {
     void* Context;
@@ -85,6 +100,7 @@ LUI_API void LUI_CALL Lui_SetLogCallback(LuiRuntime* Runtime, void* Context, Lui
 LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime, const LuiCapabilityDeclarationV1* Declaration);
 LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const LuiSandboxLimitsV1* Limits);
 LUI_API int LUI_CALL Lui_SetNetworkPolicy(LuiRuntime* Runtime, const LuiNetworkPolicyV1* Policy);
+LUI_API int LUI_CALL Lui_SetTlsOptions(LuiRuntime* Runtime, const LuiTlsOptionsV1* Options);
 /* Enable development-only source locations before the first script. */
 LUI_API int LUI_CALL Lui_EnableSourceProvenance(LuiRuntime* Runtime);
 /* Registers a packaged asset name before scripts; source paths stay in the host. */

@@ -304,6 +304,7 @@ Base: `UIComponent`. Creatable: `true`.
 - `Address`: `string?`
 - `Family`: `("IPv4" | "IPv6" | "DualStack")?`
 - `Port`: `number`
+- `TLS`: `boolean?`
 - `TimeoutMs`: `number?`
 - `MaxConnections`: `number?`
 - `MaxRequestBytes`: `number?`

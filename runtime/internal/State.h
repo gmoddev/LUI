@@ -14,6 +14,7 @@
 #include <vector>
 
 struct lua_State;
+namespace Lui::Tls { class Settings; }
 
 struct Dimension {
     double Scale = 0;
@@ -219,6 +220,7 @@ struct LuiRuntime {
     bool SourceProvenanceEnabled = false;
     bool CapabilitiesDeclared = false;
     bool ApplicationStarted = false;
+    std::shared_ptr<Lui::Tls::Settings> TlsSettings;
     bool InitializingExtension = false;
     bool UiCompletionRunning = false;
     std::atomic<bool> ShuttingDown{false};

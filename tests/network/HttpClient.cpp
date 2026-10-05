@@ -68,7 +68,9 @@ void Serialization() {
     Check(ParseUrl("http://localhost:8080?x=%20", Address) == ErrorCode::None && Address.Host == "localhost" &&
         Address.Port == 8080 && Address.Target == "/?x=%20", "query-only URL parsing failed");
     Check(ParseUrl("http://[::1]/", Address) == ErrorCode::None && Address.Host == "::1", "IPv6 URL rejected");
-    for (const auto& Text : {"https://localhost/", "http://a/#frag", "http://u:p@a/", "http://a:0/", "http://a:65536/",
+    Check(ParseUrl("https://localhost/", Address) == ErrorCode::None && Address.Secure && Address.Port == 443,
+        "HTTPS default port parsing failed");
+    for (const auto& Text : {"ftp://localhost/", "http://a/#frag", "http://u:p@a/", "http://a:0/", "http://a:65536/",
         "http://a:/", "http://[::1]:/", "http://a:99999999999/", "http://a/\r\nHost:b", "http://a/%xx", "http://a/with space"})
         Check(ParseUrl(Text, Address) != ErrorCode::None, std::string("invalid URL accepted: ") + Text);
 }

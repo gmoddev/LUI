@@ -55,7 +55,7 @@ int main() {
             Socket:SendToAsync(Endpoint, "reply")
             Socket:Close()
         end)
-        local Hosted = app:GetService("HttpServerService"):CreateServer({Port = 0, Family = "IPv4", MaxConnections = 4})
+        local Hosted = app:GetService("HttpServerService"):CreateServer({Port = 0, Family = "IPv4", MaxConnections = 4, TLS = true})
         Hosted:Route("POST", "/typed", function(Request: HttpRequest): HttpReplyOptions
             local Target: string = Request.RawTarget
             local Body: string = Request.Body
@@ -113,6 +113,10 @@ int main() {
     Resolver.Scripts.emplace("udpInvalidOptions", R"(
         --!strict
         app:GetService("NetworkService"):BindUdp({Port = "invalid", Family = "DualStack"})
+    )");
+    Resolver.Scripts.emplace("tlsInvalidOptions", R"(
+        --!strict
+        app:GetService("HttpServerService"):CreateServer({Port = 0, TLS = "true"})
     )");
     Resolver.Scripts.emplace("hostedReadOnly", R"(
         --!strict
@@ -213,6 +217,7 @@ int main() {
     Failures += Check(!Frontend.check("httpReadOnly").errors.empty(), "HTTP response mutation typechecked");
     Failures += Check(!Frontend.check("udpReadOnly").errors.empty(), "UDP datagram mutation typechecked");
     Failures += Check(!Frontend.check("udpInvalidOptions").errors.empty(), "invalid UDP options typechecked");
+    Failures += Check(!Frontend.check("tlsInvalidOptions").errors.empty(), "invalid TLS options typechecked");
     Failures += Check(!Frontend.check("httpInvalidOptions").errors.empty(), "invalid HTTP options typechecked");
     Failures += Check(!Frontend.check("hostedReadOnly").errors.empty(), "hosted request mutation typechecked");
     Failures += Check(!Frontend.check("unknownService").errors.empty(), "unknown service typechecked");

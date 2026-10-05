@@ -37,14 +37,14 @@ The example requires an independently running endpoint. `GetAsync(Url)` uses the
 
 | Option | Contract |
 | --- | --- |
-| `Url` | Required encoded `http://` URL, at most 8192 bytes. ASCII hostname or bracketed IPv6; port 1–65535, default 80. Credentials, fragments, scoped literals, and HTTPS are rejected. A query without a path becomes `/?query`. |
+| `Url` | Required encoded `http://` or `https://` URL, at most 8192 bytes. ASCII hostname or bracketed IPv6; port 1–65535, default 80/443. Credentials, fragments, and scoped literals are rejected. A query without a path becomes `/?query`. HTTPS is Foundation C's addition. |
 | `Method` | Case-sensitive HTTP token, default `GET`. CONNECT and nonempty GET/HEAD bodies are rejected. |
 | `Headers` | Optional ordered array of `{Name, Value}` pairs, at most 96 caller fields. Duplicate application fields are preserved. Framing and hop-by-hop fields are runtime-owned. |
 | `Body` | Optional binary string or buffer, at most 1 MiB. |
 | `TimeoutMs` | Integer 1–60000, default 10000. One worker deadline covers DNS, dialing, writing, informational replies, and the final response. Scheduler delivery may occur later. |
 | `MaxResponseBytes` | Integer 0–8 MiB, default 1 MiB. Decoded chunk content and EOF-delimited bodies share this bound. |
 
-Every exchange uses a fresh socket and sends `Connection: close`. LUI constructs Host from the URL and Content-Length from buffered bytes. It adds `Accept-Encoding: identity` unless supplied by the caller. Compression is not decoded; response content remains binary bytes. HTTPS, proxies, automatic redirects/retries, cookies, JSON helpers, streaming, and connection pooling are not implemented. HTTP error status codes are returned normally: `Success` is true only for 200–299.
+Every exchange uses a fresh socket and sends `Connection: close`. LUI constructs Host from the URL and Content-Length from buffered bytes. It adds `Accept-Encoding: identity` unless supplied by the caller. Compression is not decoded; response content remains binary bytes. [Foundation C](NETWORKING-FOUNDATION-C.md) adds validated HTTPS and the hosted server's `TLS` option. Proxies, automatic redirects/retries, cookies, JSON helpers, streaming, and connection pooling are not implemented. HTTP error status codes are returned normally: `Success` is true only for 200–299.
 
 Responses are read-only tables containing `StatusCode`, `StatusMessage`, `Success`, binary string `Body`, ordered `Headers`, and separate ordered `Trailers`. Field names are lowercase; nested field tables are read-only too. HEAD and status-specific no-body rules come from the parser. At most eight informational responses are accepted before the final response. A framing failure closes the socket and never returns partial data; extra bytes already received after the final response cause rejection. No later response is parsed on that socket.
 
@@ -93,7 +93,7 @@ This is headless verification. No application endpoint is opened persistently, n
 
 ## Next implementation
 
-Start Foundation C with bounded UDP datagrams and the portable TLS provider design. HTTPS, streaming, proxies, broader HTTP profiles, JSON helpers, and outbound connection pooling remain follow-up.
+Foundation C now adds bounded UDP, the portable TLS provider, HTTPS, and explicit host server credentials. Its combined Windows/Linux exit audit is the next qualification gate. Streaming, proxies, broader HTTP profiles, JSON helpers, and outbound connection pooling remain follow-up.
 
 ## Exit audit
 

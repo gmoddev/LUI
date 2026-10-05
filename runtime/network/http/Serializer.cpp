@@ -86,8 +86,9 @@ ErrorCode SerializeResponse(const Message& Input, std::string& Wire, bool Head, 
 ErrorCode ParseUrl(std::string_view Text, Url& Result) {
     Result = {};
     if (Text.size() > 8192) return ErrorCode::LimitExceeded;
-    if (Text.substr(0, 7) != "http://") return ErrorCode::UnsupportedFeature;
-    Text.remove_prefix(7);
+    if (Text.substr(0, 8) == "https://") { Result.Secure = true; Result.Port = 443; Text.remove_prefix(8); }
+    else if (Text.substr(0, 7) == "http://") Text.remove_prefix(7);
+    else return ErrorCode::UnsupportedFeature;
     if (Text.find('#') != std::string_view::npos) return ErrorCode::UnsupportedFeature;
     size_t End = Text.find_first_of("/?");
     auto Authority = Text.substr(0, End);

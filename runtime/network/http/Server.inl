@@ -8,6 +8,7 @@ struct HostedServer {
     std::atomic<size_t> Slots{0};
     size_t MaxConnections = 16, MaxBody = 1024 * 1024, MaxResponse = 1024 * 1024;
     unsigned TimeoutMs = 10000;
+    std::shared_ptr<Lui::Tls::Settings> TlsSettings; // Immutable host credentials.
 };
 
 struct HostedSession {
@@ -19,6 +20,7 @@ struct HostedSession {
     NetworkContext* Network;
     std::shared_ptr<HostedServer> Server;
     std::shared_ptr<NetworkConnection> Connection;
+    std::shared_ptr<Lui::Tls::Stream> Tls;
     asio::steady_timer Deadline;
     std::shared_ptr<std::atomic<size_t>> Slots;
     uint64_t Id = 0;
@@ -43,14 +45,20 @@ static void SendHosted(const std::shared_ptr<HostedSession>& Session, std::share
     if (!Session->Open || !Session->Server->Open || Session->Writing) return;
     Session->Writing = true;
     Session->Waiting = false;
-    asio::async_write(Session->Connection->Socket, asio::buffer(*Wire),
-        [Session, Wire, Close](const ErrorCode& Error, size_t) {
+    auto Handler = [Session, Wire, Close](const ErrorCode& Error, size_t) {
             Session->Writing = false;
             if (!Session->Open) return;
-            if (Error || Close || !Session->Server->Open) { CloseHosted(Session); return; }
+            if (Error || !Session->Server->Open) { CloseHosted(Session); return; }
+            if (Close) {
+                if (Session->Tls) Session->Tls->Socket.async_shutdown([Session](const ErrorCode&) { CloseHosted(Session); });
+                else CloseHosted(Session);
+                return;
+            }
             Session->Request.reset();
             BeginHostedRequest(Session);
-        });
+        };
+    if (Session->Tls) asio::async_write(Session->Tls->Socket, asio::buffer(*Wire), std::move(Handler));
+    else asio::async_write(Session->Connection->Socket, asio::buffer(*Wire), std::move(Handler));
 }
 static void HostedStatus(const std::shared_ptr<HostedSession>& Session, unsigned Code, const char* Reason,
     bool Close = true) {
@@ -93,13 +101,14 @@ static void FeedHosted(const std::shared_ptr<HostedSession>& Session, std::strin
 }
 static void ReadHosted(const std::shared_ptr<HostedSession>& Session) {
     if (!Session->Open) return;
-    Session->Connection->Socket.async_read_some(asio::buffer(Session->Buffer),
-        [Session](const ErrorCode& Error, size_t Count) {
+    auto Handler = [Session](const ErrorCode& Error, size_t Count) {
             if (!Session->Open) return;
             if (Error && Error != asio::error::eof) { CloseHosted(Session); return; }
             if (Error == asio::error::eof && !Session->Received && Count == 0) { CloseHosted(Session); return; }
             FeedHosted(Session, {Session->Buffer.data(), Count}, Error == asio::error::eof);
-        });
+        };
+    if (Session->Tls) Session->Tls->Socket.async_read_some(asio::buffer(Session->Buffer), std::move(Handler));
+    else Session->Connection->Socket.async_read_some(asio::buffer(Session->Buffer), std::move(Handler));
 }
 static void BeginHostedRequest(const std::shared_ptr<HostedSession>& Session) {
     if (!Session->Open || !Session->Server->Open) { CloseHosted(Session); return; }
@@ -139,7 +148,16 @@ static void AcceptHosted(const std::shared_ptr<HostedServer>& Server, size_t Ind
                 auto Session = std::make_shared<HostedSession>(Server->Network, Server, Connection);
                 Session->Id = Server->Network->NextSession++;
                 Server->Network->Sessions.emplace(Session->Id, Session);
-                BeginHostedRequest(Session);
+                if (Server->TlsSettings) {
+                    Session->Tls = std::make_shared<Lui::Tls::Stream>(Connection->Socket, Server->TlsSettings, true);
+                    Session->Deadline.expires_after(std::chrono::milliseconds(Server->TimeoutMs));
+                    Session->Deadline.async_wait([Session](const ErrorCode& Error) { if (!Error) CloseHosted(Session); });
+                    Session->Tls->Socket.async_handshake(asio::ssl::stream_base::server, [Session](const ErrorCode& Error) {
+                        if (!Session->Open) return;
+                        if (Error || !Session->Server->Open) { CloseHosted(Session); return; }
+                        BeginHostedRequest(Session);
+                    });
+                } else BeginHostedRequest(Session);
             }
             AcceptHosted(Server, Index);
         });
@@ -166,6 +184,15 @@ static int CreateServer(lua_State* State) {
     Server->MaxConnections = HttpNumber(State, 2, "MaxConnections", 16, 1, 32);
     Server->MaxBody = HttpNumber(State, 2, "MaxRequestBytes", 1024 * 1024, 0, 8 * 1024 * 1024);
     Server->MaxResponse = HttpNumber(State, 2, "MaxResponseBytes", 1024 * 1024, 0, 8 * 1024 * 1024);
+    lua_getfield(State, 2, "TLS");
+    if (!lua_isnil(State, -1)) luaL_checktype(State, -1, LUA_TBOOLEAN);
+    const bool Secure = lua_toboolean(State, -1) != 0;
+    lua_pop(State, 1);
+    if (Secure) {
+        Server->TlsSettings = Runtime->TlsSettings;
+        if (!Server->TlsSettings || !Server->TlsSettings->Server)
+            return Raise(State, "[LUI:HttpServer] TlsCredentialRequired");
+    }
     BindTcp(State, false); // Same bind rollback, paired families, and host policy as TCP.
     Server->Id = *static_cast<int*>(lua_touserdata(State, -1));
     Server->Listener = Network->Listeners.at(Server->Id);

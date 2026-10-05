@@ -1310,6 +1310,11 @@ extern "C" LUI_API int LUI_CALL Lui_SetNetworkPolicy(LuiRuntime* Runtime, const 
     return 1;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_SetTlsOptions(LuiRuntime* Runtime, const LuiTlsOptionsV1* Options) {
+    if (!CheckOwner(Runtime)) return 0;
+    return ConfigureNetworkTls(Runtime, Options);
+}
+
 extern "C" LUI_API int LUI_CALL Lui_EnableSourceProvenance(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return 0;
     if (Runtime->ApplicationStarted) {
