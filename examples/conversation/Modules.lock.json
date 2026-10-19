@@ -1,0 +1,26 @@
+{
+  "SchemaVersion": 1,
+  "Packages": [
+    {
+      "Alias": "LuiUI",
+      "Provenance": {
+        "Kind": "LocalVendor",
+        "Id": "LuiUI-0.1.0"
+      },
+      "Files": [
+        {
+          "Path": "Scope.luau",
+          "Sha256": "6d58a28c96d17d29e18a831ba2e4283e387b24f15f5886b528fa9ea87ec2735d"
+        },
+        {
+          "Path": "State.luau",
+          "Sha256": "76a33f33177c5187486f0f516ae05a9613876f3032947b6a7551ce44d14be74e"
+        },
+        {
+          "Path": "VirtualList.luau",
+          "Sha256": "f94380fbdc24f8e44c85bb885d9c852ede47cfc79ed30e0af9b1370ba0b2846d"
+        }
+      ]
+    }
+  ]
+}

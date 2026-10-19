@@ -1,0 +1,14 @@
+{
+  "SchemaVersion": 2,
+  "Script": "Src/Main.luau",
+  "Capabilities": ["Clipboard"],
+  "Extensions": [],
+  "Assets": ["Avatar.png"],
+  "ExtensionDeclarations": [],
+  "Diagnostics": {"Mode": "Development"},
+  "Sandbox": {"MaxMemoryBytes": 134217728, "MaxInterrupts": 1000000},
+  "Modules": {
+    "Root": "Src", "Files": ["Main.luau"], "Requires": ["LuiUI"], "Lock": "Modules.lock.json",
+    "Dependencies": [{"Alias": "LuiUI", "Root": "Vendor/LuiUI", "Files": ["Scope.luau", "State.luau", "VirtualList.luau"], "Requires": []}]
+  }
+}

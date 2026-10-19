@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Lui.WinUI</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../tools/project/PreparedProject.cs" Link="PreparedProject.cs" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../examples/hello.luau" Link="examples/hello.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="../../examples/controls.luau" Link="examples/controls.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="../../examples/grid.luau" Link="examples/grid.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="../../tests/winui/NativeMapping.luau" Link="tests/winui/NativeMapping.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />
+    <None Include="$(LuiNativeDll)" Link="LuiRuntime.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiNativeDll)' != ''" />
+    <None Include="../../third_party/licenses/OpenSSL.txt" Link="THIRD-PARTY-LICENSES/OpenSSL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../../third_party/licenses/Json.txt" Link="THIRD-PARTY-LICENSES/Json.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

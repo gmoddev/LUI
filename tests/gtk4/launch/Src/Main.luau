@@ -1,0 +1,6 @@
+local View=require('./View')
+local Window=View()
+task.delay(0.05,function()
+    assert(Window:FindFirstChild('Content').Text=='Launcher smoke')
+    Window:Destroy()
+end)

@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows build and tests
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build and test
+        shell: pwsh
+        run: ./scripts/Build-Windows.ps1
+      - name: Check generated API files
+        shell: pwsh
+        run: git diff --exit-code -- docs/API.md types/LUI.d.luau types/schema.json
+
+  linux:
+    name: Linux headless tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Configure
+        run: cmake -S . -B build/linux-x64 -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build/linux-x64 --parallel 2 --target LuiCollectionTests LuiTextTests LuiPrivacyTests LuiApplicationTests LuiNativeLoaderTests LuiProjectTests LuiNativeBindingTests LuiDeclarationTests LuiPackageTests LuiProjectTool LuiCompiledProjectTests LuiModuleTests LuiProjectTypeTests LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiTypeCheck LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiHttpTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension
+      - name: Test
+        run: ctest --test-dir build/linux-x64 --output-on-failure
+      - name: CLI tests
+        run: |
+          dotnet build tools/cli/Lui.Cli.csproj --configuration Release
+          dotnet run --project tests/cli/CliTests.csproj --configuration Release -- build/linux-x64/libLuiRuntime.so build/linux-x64/LuiTypeCheck
+          dotnet tools/cli/bin/Release/net9.0/lui.dll check examples/dashboard/dashboard.manifest.json --checker build/linux-x64/LuiTypeCheck
+      - name: Preview protocol tests
+        run: |
+          dotnet build tools/preview-host/Lui.PreviewHost.csproj --configuration Release
+          dotnet run --project tests/preview/PreviewTests.csproj --configuration Release -- tools/preview-host/bin/Release/net9.0/lui-preview-host.dll build/linux-x64/libLuiRuntime.so
+      - name: VS Code preview client tests
+        env:
+          LUI_TEST_PREVIEW_HOST: tools/preview-host/bin/Release/net9.0/lui-preview-host.dll
+          LUI_TEST_RUNTIME: build/linux-x64/libLuiRuntime.so
+          LUI_TEST_CLI: tools/cli/bin/Release/net9.0/lui.dll
+          LUI_TEST_TYPECHECK: build/linux-x64/LuiTypeCheck
+        run: node --test tests/editor/EditorTests.js tests/editor/TypeTests.js tests/editor/ProjectTests.js
+      - name: Check generated schema
+        run: |
+          build/linux-x64/LuiSchemaDump > build/linux-x64/schema.json
+          cmp types/schema.json build/linux-x64/schema.json
+
+  gtk4:
+    name: GTK4 native mappings
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev xvfb xauth dbus-x11 at-spi2-core python3-pyatspi
+      - name: Configure
+        run: cmake -S . -B build/gtk4 -DCMAKE_BUILD_TYPE=Debug -DLUI_BUILD_GTK4=ON
+      - name: Build
+        run: cmake --build build/gtk4 --parallel 2 --target LuiGtkHost LuiGtkTests LuiProjectTool
+      - name: Native mapping tests
+        run: |
+          ctest --test-dir build/gtk4 -R LuiGtkTests --output-on-failure
+          GDK_SCALE=2 ctest --test-dir build/gtk4 -R LuiGtkTests --output-on-failure
+      - name: Live accessibility bus
+        run: timeout 20s xvfb-run -a dbus-run-session -- /usr/bin/python3 tests/gtk4/Accessibility.py "$PWD/build/gtk4/backends/gtk4/lui-gtk" "$PWD/tests/gtk4/a11y/lui.json"
+      - name: CLI GTK project launch
+        env:
+          GDK_BACKEND: x11
+          GSK_RENDERER: cairo
+          GTK_A11Y: none
+        run: |
+          dotnet build tools/cli/Lui.Cli.csproj --configuration Release
+          timeout 15s xvfb-run -a dbus-run-session -- dotnet tools/cli/bin/Release/net9.0/lui.dll run tests/gtk4/launch/lui.json --mode project --host build/gtk4/backends/gtk4
+      - name: Relocated GTK package launch
+        env:
+          GDK_BACKEND: x11
+          GSK_RENDERER: cairo
+          GTK_A11Y: none
+        run: |
+          cmake --install build/gtk4 --prefix "$PWD/build/gtk-prefix" --component GtkHost
+          dotnet tools/cli/bin/Release/net9.0/lui.dll build tests/gtk4/launch/lui.json --mode project --host build/gtk-prefix --project-tool build/gtk4/LuiProjectTool --output build/gtk-package
+          mv build/gtk-package "build/GTK relocated package"
+          dotnet tools/cli/bin/Release/net9.0/lui.dll verify "build/GTK relocated package/Application" --project-tool build/gtk4/LuiProjectTool
+          test -f "build/GTK relocated package/LICENSE"
+          test -f "build/GTK relocated package/THIRD-PARTY-LICENSES/Luau.txt"
+          timeout 15s xvfb-run -a dbus-run-session -- "build/GTK relocated package/Start-LUI.sh"

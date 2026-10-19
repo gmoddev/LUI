@@ -1,0 +1,10 @@
+{
+  "SchemaVersion": 2,
+  "Script": "Src/Main.luau",
+  "Capabilities": ["Clipboard", "Dialogs"],
+  "Extensions": [],
+  "ExtensionDeclarations": [],
+  "Assets": [],
+  "Diagnostics": {"Mode": "Development"},
+  "Modules": {"Root": "Src", "Files": ["Main.luau"], "Requires": [], "Dependencies": []}
+}
