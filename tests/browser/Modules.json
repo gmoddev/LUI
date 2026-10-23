@@ -1,0 +1,77 @@
+{
+  "Version": 1,
+  "Prelude": "local Window=Instance.new('Window'); local State=Instance.new('TextLabel',{Parent=Window,AccessibilityLabel='Module state',Text='Entry'}); local function Complete() State.Text='Module accepted' end\n",
+  "Epilogue": "\nWindow.Visible=true\n",
+  "Cases": [
+    {
+      "Name": "CacheIsolationAndSourceBinding",
+      "Files": {
+        "Main.luau": "Private='Entry'; local Counter=require('./Counter'); assert(Counter.False==0 and Counter.Failed==0); assert(require('./False')==false and require('./Sub/../False.luau')==false and Counter.False==1); local Data=require('./Data'); assert(Data==require('./Data.luau') and Data.Read()=='Data' and Private=='Entry'); for I=1,2 do local Ok,E=pcall(require,'./Failed'); assert(not Ok and E=='[LUI:Modules] LoadFailed') end; assert(Counter.Failed==1); for _,Name in {'Nil','Empty','Multiple'} do local Ok,E=pcall(require,'./'..Name); assert(not Ok and E=='[LUI:Modules] InvalidResult') end; for _,Request in {'./Missing','../Escape','./Main','C:/No','./Data\\0'} do assert(not pcall(require,Request)) end; local Factory=require('./Sub/Factory'); assert(Factory()==Data and Factory().Read()=='Data'); task.defer(function() assert(require('./Data')==Data and Private=='Entry'); Complete() end)",
+        "Counter.luau": "return {False=0,Failed=0}",
+        "False.luau": "local C=require('./Counter'); C.False+=1; return false",
+        "Failed.luau": "local C=require('./Counter'); C.Failed+=1; error('SyntheticRestrictedModuleCanary')",
+        "Nil.luau": "return nil",
+        "Empty.luau": "local Value=3",
+        "Multiple.luau": "return 1,2",
+        "Data.luau": "Private='Data'; return {Read=function() return Private end}",
+        "Sub/Factory.luau": "local function Read() return require('../Data') end; return function() return Read() end"
+      }
+    },
+    {
+      "Name": "DynamicCyclesNeverExposePartialExports",
+      "Files": {
+        "Main.luau": "for _,Name in {'A','B','A','B'} do local Ok,E=pcall(require,'./'..Name); assert(not Ok and E=='[LUI:Modules] Cycle') end; task.defer(Complete)",
+        "A.luau": "local R='./B'; pcall(require,R); return {Partial=true}",
+        "B.luau": "local R='./A'; pcall(require,R); return {Partial=true}"
+      }
+    },
+    {
+      "Name": "DeferredLiteralCycleRefusedBeforeStartup",
+      "CompileError": "[LUI:Project] Cycle",
+      "Files": {
+        "Main.luau": "return",
+        "A.luau": "return function() return require('./B') end",
+        "B.luau": "return function() return require('./A') end"
+      }
+    },
+    {
+      "Name": "InitializerEffectsAndYield",
+      "Files": {
+        "Main.luau": "local Shared=require('./Shared'); Shared.Node=Instance.new('TextButton',{Parent=Window}); Shared.Connection=Shared.Node.Activated:Connect(function() end); for _,Name in {'Create','Defer','Spawn','Delay','Service','Mutate','Destroy','Clone','Connect','Disconnect'} do for I=1,2 do local Ok,E=pcall(require,'./'..Name); assert(not Ok and E=='[LUI:Modules] InitializationEffect') end end; for I=1,2 do local Ok,E=pcall(require,'./Yield'); assert(not Ok and E=='[LUI:Modules] YieldNotAllowed') end; assert(Shared.Node.Text=='' and Shared.Node.Parent==Window); task.defer(Complete)",
+        "Shared.luau": "return {}",
+        "Create.luau": "Instance.new('Window'); return true",
+        "Defer.luau": "task.defer(function() end); return true",
+        "Spawn.luau": "task.spawn(function() end); return true",
+        "Delay.luau": "task.delay(1,function() end); return true",
+        "Service.luau": "app:GetService('Probe'); return true",
+        "Mutate.luau": "local Shared=require('./Shared'); Shared.Node.Text='bad'; return true",
+        "Destroy.luau": "local Shared=require('./Shared'); Shared.Node:Destroy(); return true",
+        "Clone.luau": "local Shared=require('./Shared'); Shared.Node:Clone(); return true",
+        "Connect.luau": "local Shared=require('./Shared'); Shared.Node.Activated:Connect(function() end); return true",
+        "Disconnect.luau": "local Shared=require('./Shared'); Shared.Connection:Disconnect(); return true",
+        "Yield.luau": "coroutine.yield(); return true"
+      }
+    },
+    {
+      "Name": "LexicallyShadowedRequire",
+      "Files": {
+        "Main.luau": "local function F(require) assert(require('./Missing')==7) end; F(function() return 7 end); local require=function() return 9 end; assert(require('./NoFile')==9); task.defer(Complete)"
+      }
+    },
+    {
+      "Name": "ReboundRequire",
+      "Files": { "Main.luau": "require=function() return 5 end; assert(require('./NoFile')==5); task.defer(Complete)" }
+    },
+    {
+      "Name": "GlobalTableRequire",
+      "Files": { "Main.luau": "_G.require=function() return 6 end; assert(require('./NoFile')==6); task.defer(Complete)" }
+    },
+    {
+      "Name": "DeferredSpawnDelayAndNestedTurns",
+      "PumpTurns": 2,
+      "Files": {
+        "Main.luau": "local Order={'Entry'}; task.defer(function() assert(table.concat(Order,',')=='Entry'); table.insert(Order,'First'); task.defer(function() assert(table.concat(Order,',')=='Entry,First,Second,Spawn,Delay'); Complete() end) end); task.defer(function() assert(table.concat(Order,',')=='Entry,First'); table.insert(Order,'Second') end); task.spawn(function() assert(table.concat(Order,',')=='Entry,First,Second'); table.insert(Order,'Spawn') end); task.delay(0,function() assert(table.concat(Order,',')=='Entry,First,Second,Spawn'); table.insert(Order,'Delay'); State.Text='Turn one' end); assert(table.concat(Order,',')=='Entry')"
+      }
+    }
+  ]
+}

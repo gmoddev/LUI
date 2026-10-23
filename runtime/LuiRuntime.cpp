@@ -7,6 +7,9 @@
 #include "internal/Images.h"
 #include "../ui/style/Style.h"
 #include "internal/Extensions.h"
+#include "internal/NativeServices.h"
+#include "internal/ApplicationServices.h"
+#include "services/Domain.h"
 #include "internal/Platform.h"
 #include "internal/Diagnostics.h"
 #include "internal/Scheduler.h"
@@ -1318,6 +1321,9 @@ static int PlatformServiceSupports(lua_State* State) {
         (!Runtime->Sandboxed || (Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES) != 0)) ||
         (Name == "Clipboard" && PlatformServiceAvailable(Runtime, "ClipboardService")) ||
         (Name == "Dialogs" && PlatformServiceAvailable(Runtime, "DialogService")) ||
+        (Name == "Storage" && HasNativeService(Runtime, "StorageService")) ||
+        (Name == "Notifications" && HasNativeService(Runtime, "NotificationService")) ||
+        (Name == "Tray" && HasNativeService(Runtime, "TrayService")) ||
         (Name == "network.client" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT) != 0) ||
         (Name == "network.server" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) != 0) ||
         (Name == "network.raw" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW) != 0));
@@ -1407,11 +1413,13 @@ static int AppGetService(lua_State* State) {
     CheckModuleEffect(State);
     const std::string Name = luaL_checkstring(State, 2);
     auto* Runtime = GetRuntime(State);
-    if (!LuiSchema::FindService(Name) && !HasExtensionService(Runtime, Name))
+    if (!LuiSchema::FindService(Name) && !HasExtensionService(Runtime, Name) && !HasNativeService(Runtime, Name))
         luaL_error(State, "unknown service '%s'", Name.c_str());
-    if (Runtime->Sandboxed && HasExtensionService(Runtime, Name) &&
+    if (((Runtime->Sandboxed && HasExtensionService(Runtime, Name)) || NativeServiceNeedsHostGrant(Runtime, Name)) &&
         !(Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES))
         luaL_error(State, "host service capability was not granted");
+    if ((Name == "StorageService" || Name == "NotificationService" || Name == "TrayService") && !HasNativeService(Runtime, Name))
+        luaL_error(State, "[LUI:NativeService] Unsupported");
     if ((Name == "ClipboardService" || Name == "DialogService") &&
         !PlatformServiceAvailable(Runtime, Name))
         luaL_error(State, "%s capability was not granted or backend is unavailable", Name.c_str());
@@ -1427,7 +1435,8 @@ static int AppGetService(lua_State* State) {
         lua_getref(State, Found->second);
         return 1;
     }
-    if (HasExtensionService(Runtime, Name)) PushExtensionService(State, Runtime, Name);
+    if (HasNativeService(Runtime, Name)) PushNativeService(State, Runtime, Name);
+    else if (HasExtensionService(Runtime, Name)) PushExtensionService(State, Runtime, Name);
     else if (Name == "ClipboardService" || Name == "DialogService")
         PushPlatformService(State, Runtime, Name);
     else if (Name == "NetworkService") PushNetworkService(State);
@@ -1468,6 +1477,7 @@ static void RegisterGlobals(lua_State* State) {
     RegisterMeta(State, "LuiConnectionMeta", ConnectionIndex);
     RegisterMeta(State, "LuiThemeServiceMeta", ThemeServiceIndex, ThemeServiceNewIndex);
     RegisterNetworkTypes(State);
+    RegisterNativeTypes(State);
     LuiStyle::Register(State);
     lua_newtable(State);
     lua_pushcfunction(State, InstanceNew, "Instance.new");
@@ -1520,6 +1530,7 @@ static LuiRuntime* CreateRuntime(uint32_t Mode) {
     auto* Runtime = new LuiRuntime();
     Runtime->DiagnosticMode=Mode; Runtime->LastError.Owner=Runtime; Runtime->ExtensionError.Owner=Runtime;
     Runtime->Owner = std::this_thread::get_id();
+    Runtime->NativeDomain = Lui::Native::GetDomain();
     Runtime->State = lua_newstate(VmAllocate, Runtime);
     if (!Runtime->State) { delete Runtime; return nullptr; }
     try {
@@ -1955,7 +1966,8 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         return 0;
     }
     DeliverTheme(Runtime);
-    int Count = DrainUiCompletions(Runtime) + DrainPlatformRequests(Runtime) + DrainNetworkCompletions(Runtime);
+    PumpDesktopServices(Runtime);
+    int Count = DrainUiCompletions(Runtime) + DrainPlatformRequests(Runtime) + DrainNetworkCompletions(Runtime) + DrainNativeServices(Runtime);
     const auto Now = std::chrono::steady_clock::now();
     std::vector<ScheduledCall> Pending;
     Pending.swap(Runtime->Tasks);
@@ -2000,6 +2012,8 @@ static void StopGeneration(LuiRuntime* Runtime) {
         Runtime->PendingUiCompletions.clear();
     }
     CloseNetwork(Runtime);
+    RetireDesktopServices(Runtime);
+    CloseNativeServices(Runtime);
     // Shutdown is terminal. Destroying must not execute an old generation's
     // callbacks or admit new work while native resources are being retired.
     for (auto& Pair : Runtime->Nodes)
@@ -2012,6 +2026,11 @@ static void StopGeneration(LuiRuntime* Runtime) {
     CloseExtensionListeners(Runtime);
     for (const auto& Pair : Runtime->ServiceRefs) lua_unref(Runtime->State, Pair.second);
     lua_close(Runtime->State); Runtime->State = nullptr;
+    Runtime->NativeServices.clear();
+    Runtime->DesktopServices.reset();
+    Runtime->UiCompletionRunning = true;
+    Lui::Native::Pump(Runtime->NativeDomain);
+    Runtime->UiCompletionRunning = false;
     CloseExtensions(Runtime);
     Runtime->Modules.reset(); Runtime->ModuleDepth = 0;
     Runtime->Nodes.clear(); Runtime->Listeners.clear(); Runtime->ThemeListeners.clear(); Runtime->ServiceRefs.clear();

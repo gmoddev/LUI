@@ -32,8 +32,8 @@ struct Owner {
 struct NativeBinary { std::string Provider, Platform, Path, Hash, Bytes; };
 class Snapshot;
 namespace Internal {
-class Anchor;
-std::shared_ptr<const Snapshot> PrepareSources(const Anchor&, const std::string&, const Options&, std::string&,
+class SourceReader;
+std::shared_ptr<const Snapshot> PrepareSources(const SourceReader&, const std::string&, const Options&, std::string&,
     std::map<std::string, std::string>* Metadata = nullptr);
 }
 class Snapshot {
@@ -55,10 +55,14 @@ private:
     DeclarationSet Declarations;
     std::map<std::string, NativeBinary> NativeBinaries;
     friend std::shared_ptr<const Snapshot> Prepare(const std::filesystem::path&, const Options&, std::string&);
-    friend std::shared_ptr<const Snapshot> Internal::PrepareSources(const Internal::Anchor&, const std::string&, const Options&, std::string&,
+    friend std::shared_ptr<const Snapshot> Internal::PrepareSources(const Internal::SourceReader&, const std::string&, const Options&, std::string&,
         std::map<std::string, std::string>*);
 };
 std::shared_ptr<const Snapshot> Prepare(const std::filesystem::path& Manifest, const Options& Settings, std::string& Error);
+// Trusted captured UTF-8 inputs; same validators/resolver as native preparation.
+// Exact declared set, max 256 files/8 MiB per file/32 MiB total. No IO or execution.
+std::shared_ptr<const Snapshot> PrepareCaptured(const std::map<std::string, std::string>& Files,
+    const std::string& Manifest, const Options& Settings, std::string& Error);
 // Data-only literal builtin import validation, shared with future analyzer adapters.
 bool ValidateImports(const Snapshot& Sources, const Options& Settings, std::string& Error);
 struct Artifact {

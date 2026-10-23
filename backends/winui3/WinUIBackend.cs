@@ -142,10 +142,14 @@ internal sealed partial class WinUIBackend : IDisposable
                 (Manifest.AllowDialogs ? 8UL : 0UL) |
                 (Manifest.AllowNetworkClient ? 16UL : 0UL) |
                 (Manifest.AllowNetworkServer ? 32UL : 0UL) |
-                (Manifest.AllowNetworkRaw ? 64UL : 0UL),
+                (Manifest.AllowNetworkRaw ? 64UL : 0UL) |
+                (Manifest.AllowStorage ? 128UL : 0UL) |
+                (Manifest.AllowNotifications ? 256UL : 0UL) |
+                (Manifest.AllowTray ? 512UL : 0UL),
         };
         if (Native.Lui_DeclareCapabilities(Runtime, ref Declaration) != 1)
             throw new InvalidOperationException("Capability declaration failed: " + LastError);
+        StartDesktopServices();
         if (Manifest.NetworkPolicy is { } Policy)
         {
             Native.NetworkPolicy HostPolicy = new()
@@ -189,13 +193,18 @@ internal sealed partial class WinUIBackend : IDisposable
     }
     public bool RunProject(PreparedProject Project,bool AllowNative=false)
     {
-        Project.Configure(Runtime,true,AllowNative);
+        Project.Configure(Runtime,true,AllowNative,StartDesktopServices);
         foreach(var Asset in Project.Manifest.GetProperty("Assets").EnumerateArray()) {
             string Name=Asset.GetString()!;
             AssetPaths[Name]=Path.Combine(Path.GetDirectoryName(Project.ManifestPath)!,Name);
             CaptureAsset(Name, AssetPaths[Name]);
         }
         return Project.Run(Runtime);
+    }
+    private void StartDesktopServices()
+    {
+        if (Native.Lui_InstallWindowsDesktopV1(Runtime) != 0)
+            throw new InvalidOperationException("[LUI:Desktop] InstallationFailed");
     }
 
     public bool RunFile(string Path)
@@ -1191,6 +1200,8 @@ internal sealed partial class WinUIBackend : IDisposable
         internal static extern void Lui_Destroy(IntPtr Runtime);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_DeclareCapabilities(IntPtr Runtime, ref CapabilityDeclaration Declaration);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Lui_InstallWindowsDesktopV1(IntPtr Runtime);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_ConfigureSandbox(IntPtr Runtime, ref SandboxLimits Limits);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

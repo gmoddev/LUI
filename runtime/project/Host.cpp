@@ -15,6 +15,13 @@ struct LuiProject {
 std::shared_ptr<const Lui::Project::CompiledSnapshot> GetProjectSnapshot(const LuiProject* Project) {
     return Project ? Project->Snapshot : nullptr;
 }
+LuiProject* WrapProject(std::shared_ptr<const Lui::Project::CompiledSnapshot> Snapshot) {
+    if (!Snapshot) return nullptr;
+    auto Result = std::make_unique<LuiProject>();
+    Result->Snapshot = std::move(Snapshot);
+    for (const auto& Pair : Result->Snapshot->GetSources().GetSources()) Result->Sources.push_back(&Pair.second);
+    return Result.release();
+}
 namespace {
 void WriteError(char* Output, uint64_t Capacity, const char* Message) noexcept {
     if (!Output || !Capacity) return;
@@ -35,6 +42,7 @@ LuiProjectSourceV1 View(const LuiProject* Project, const Lui::Project::Source& S
         static_cast<uint64_t>(Artifact.Bytes.size())};
 }
 }
+#ifndef LUI_CAPTURED_ONLY
 extern "C" LUI_API int LUI_CALL Lui_ProjectPrepare(const LuiProjectOptionsV1* Input,
     const char* ManifestPath, uint64_t PathBytes, LuiProject** Output, char* Error, uint64_t ErrorCapacity) {
     if (Output) *Output = nullptr;
@@ -77,6 +85,7 @@ extern "C" LUI_API int LUI_CALL Lui_ProjectPrepare(const LuiProjectOptionsV1* In
     catch (...) { WriteError(Error, ErrorCapacity, "[LUI:Project] InvalidInput"); }
     return 0;
 }
+#endif
 extern "C" LUI_API void LUI_CALL Lui_ProjectRetain(LuiProject* Project) {
     if (Project) Project->References.fetch_add(1, std::memory_order_relaxed);
 }

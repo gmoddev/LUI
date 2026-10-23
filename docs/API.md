@@ -262,6 +262,9 @@ Base: `Frame`. Creatable: `true`.
 
 ## Services
 
+- `StorageService`: Open, Read, Write, Remove
+- `NotificationService`: Show
+- `TrayService`: Create, Watch
 - `PerformanceService`: GetStats, GetTime
 - `WindowService`: GetWindows
 - `PlatformService`: Supports
@@ -274,6 +277,14 @@ Base: `Frame`. Creatable: `true`.
 - `HttpServerService`: CreateServer
 
 ## Networking value and resource types
+
+### NativeHandle
+
+- `Close`: `(Self: NativeHandle) -> boolean`
+
+### NativeRequest
+
+- `Cancel`: `(Self: NativeRequest) -> (boolean, string)`
 
 ### PerformanceStats
 

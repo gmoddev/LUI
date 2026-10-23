@@ -1,6 +1,8 @@
 #include "LuiRuntime.h"
 #include "../internal/Dispatch.h"
 #include "../internal/Extensions.h"
+#include "../internal/NativeServices.h"
+#include "../services/Domain.h"
 #include "../internal/Modules.h"
 #include "../reflection/Schema.h"
 #include "LuiProject.h"
@@ -57,8 +59,12 @@ bool IsIdentifier(const char* Name) {
 
 void* OpenLibrary(const std::filesystem::path& Path) {
 #if defined(_WIN32)
-    return LoadLibraryExW(Path.c_str(), nullptr,
+    DWORD Previous = 0;
+    if (!SetThreadErrorMode(GetThreadErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX, &Previous)) return nullptr;
+    auto* Library = LoadLibraryExW(Path.c_str(), nullptr,
         LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    SetThreadErrorMode(Previous, nullptr);
+    return Library;
 #else
     return dlopen(Path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -119,7 +125,7 @@ int LUI_EXTENSION_CALL RegisterMethod(void* HostContext, const char* ServiceName
     auto* Runtime = static_cast<LuiRuntime*>(HostContext);
     if (!CheckOwner(Runtime) || !Runtime->InitializingExtension) return 0;
     if (!IsIdentifier(ServiceName) || !IsIdentifier(MethodName) || !Type || !*Type || !Callback ||
-        std::char_traits<char>::length(Type) > 256 || LuiSchema::FindService(ServiceName)) {
+        std::char_traits<char>::length(Type) > 256 || LuiSchema::FindService(ServiceName) || HasNativeService(Runtime, ServiceName)) {
         Runtime->ExtensionError = "invalid or reserved service method registration";
         return 0;
     }
@@ -153,7 +159,7 @@ int LUI_EXTENSION_CALL RegisterSignal(void* HostContext, const char* ServiceName
     auto* Runtime = static_cast<LuiRuntime*>(HostContext);
     if (!CheckOwner(Runtime) || !Runtime->InitializingExtension) return 0;
     if (!IsIdentifier(ServiceName) || !IsIdentifier(SignalName) || !Type || !*Type ||
-        std::char_traits<char>::length(Type) > 256 || LuiSchema::FindService(ServiceName)) {
+        std::char_traits<char>::length(Type) > 256 || LuiSchema::FindService(ServiceName) || HasNativeService(Runtime, ServiceName)) {
         Runtime->ExtensionError = "invalid or reserved signal registration";
         return 0;
     }
@@ -186,7 +192,7 @@ extern "C" LUI_API int LUI_CALL Lui_RegisterHostMethod(LuiRuntime* Runtime,
     const char* ServiceName, const char* MethodName, const char* Type,
     LuiExtensionMethodV1 Method, void* MethodContext) {
     if (!CheckOwner(Runtime)) return 0;
-    if (Runtime->ApplicationStarted || Runtime->VmDepth || Runtime->BackendDepth ||
+    if (Runtime->ApplicationStarted || Runtime->ProjectNativeVerified || Runtime->VmDepth || Runtime->BackendDepth ||
         Runtime->InitializingExtension) return Fail(Runtime, "host methods must register before scripts");
     Runtime->InitializingExtension = true;
     Runtime->InitializingExtensionName = "Host";
@@ -208,7 +214,7 @@ extern "C" LUI_API void LUI_CALL Lui_SetHostError(LuiRuntime* Runtime, const cha
 extern "C" LUI_API int LUI_CALL Lui_RegisterHostSignal(LuiRuntime* Runtime,
     const char* ServiceName, const char* SignalName, const char* Type) {
     if (!CheckOwner(Runtime)) return 0;
-    if (Runtime->ApplicationStarted || Runtime->VmDepth || Runtime->BackendDepth ||
+    if (Runtime->ApplicationStarted || Runtime->ProjectNativeVerified || Runtime->VmDepth || Runtime->BackendDepth ||
         Runtime->InitializingExtension) return Fail(Runtime, "host signals must register before scripts");
     Runtime->InitializingExtension = true;
     Runtime->InitializingExtensionName = "Host";
@@ -505,7 +511,8 @@ extern "C" LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime,
         Declaration->AbiVersion != LUI_EXTENSION_ABI_VERSION ||
         (Declaration->GrantedCapabilities & ~(LUI_CAPABILITY_NATIVE_EXTENSIONS | LUI_CAPABILITY_HOST_SERVICES |
             LUI_CAPABILITY_CLIPBOARD | LUI_CAPABILITY_DIALOGS | LUI_CAPABILITY_NETWORK_CLIENT |
-            LUI_CAPABILITY_NETWORK_SERVER | LUI_CAPABILITY_NETWORK_RAW)))
+            LUI_CAPABILITY_NETWORK_SERVER | LUI_CAPABILITY_NETWORK_RAW | LUI_CAPABILITY_STORAGE |
+            LUI_CAPABILITY_NOTIFICATIONS | LUI_CAPABILITY_TRAY)))
         return Fail(Runtime, "invalid capability declaration");
     if (Runtime->CapabilitiesDeclared || Runtime->ApplicationStarted || !Runtime->Extensions.empty())
         return Fail(Runtime, "capabilities must be declared once before scripts or extensions");
@@ -519,7 +526,7 @@ extern "C" LUI_API int LUI_CALL Lui_DeclareCapabilities(LuiRuntime* Runtime,
 
 extern "C" LUI_API int LUI_CALL Lui_LoadExtension(LuiRuntime* Runtime, const char* Path) {
     if (!CheckOwner(Runtime)) return 0;
-    if (Runtime->ApplicationStarted || Runtime->VmDepth || Runtime->BackendDepth || Runtime->InitializingExtension)
+    if (Runtime->ApplicationStarted || Runtime->ProjectNativeVerified || Runtime->VmDepth || Runtime->BackendDepth || Runtime->InitializingExtension)
         return Fail(Runtime, "extensions must load before application scripts");
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NATIVE_EXTENSIONS))
         return Fail(Runtime, "native extensions capability was not granted");
@@ -635,10 +642,12 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
     if(!Runtime->DiagnosticMode || Runtime->ApplicationStarted || Runtime->InitializingExtension || Runtime->VmDepth ||
         Runtime->BackendDepth || Runtime->ShuttingDown || Runtime->ProjectNativeVerified || !Runtime->Extensions.empty() || Runtime->Sandboxed) return Failed("PolicyNotSupported");
     const auto Snapshot=GetProjectSnapshot(Project); if(!Snapshot) return Failed("InvalidInput");
+    for (const auto& Service : Runtime->NativeServices) if (Service->IsExtension) return Failed("PolicyNotSupported");
     const auto& Declared=Snapshot->GetSources().GetDeclarations();
     for(const auto& Pair:Declared.NativeProviders) if(Pair.second.RequiredCapabilities & ~Runtime->GrantedCapabilities) return Failed("CapabilityDenied");
     try {
         Lui::Project::DeclarationSet Expected,Observed;
+        ObserveNativeServices(Runtime, Observed, true);
         for(const auto& Pair:Declared.Services) if(Declared.ServiceProviders.at(Pair.first)=="Host") Expected.Services.emplace(Pair);
         for(const auto& Method:Runtime->ExtensionMethods) {
             if(Method->ExtensionName!="Host") return Failed("RegistrationMismatch");
@@ -655,7 +664,12 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
     if(nlohmann::json::parse(Snapshot->GetDescriptor()).at("Manifest").at("Diagnostics").at("Mode")=="Restricted")
         Runtime->DiagnosticMode=LUI_DIAGNOSTICS_RESTRICTED;
     const auto PreviousMethods=Runtime->ExtensionMethods.size(), PreviousSignals=Runtime->ExtensionSignals.size();
+    const auto PreviousNativeServices = Runtime->NativeServices.size();
     auto Rollback=[&] {
+        while (Runtime->NativeServices.size() > PreviousNativeServices) {
+            Lui_RetireNativeSessionV2(Runtime->NativeServices.back()->Host.Session); Runtime->NativeServices.pop_back();
+        }
+        Lui::Native::Pump(Runtime->NativeDomain);
         Runtime->ShuttingDown=true;
         while(!Runtime->Extensions.empty()) {
             auto& Value=Runtime->Extensions.back(); try {Value.Shutdown(Value.Context);} catch(...) {}
@@ -678,6 +692,16 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
             const auto& Binary=Snapshot->GetSources().GetNativeBinaries().at(Binding->second.Path);
             auto Image=std::make_shared<CapturedImage>(); Image->Prepare(Binary);
             LibraryGuard Library(OpenLibrary(Image->LoadPath)); if(!Library.Library) throw Lui::Project::Internal::Failure("LoadFailed");
+            if (Pair.second.AbiVersion == 2) {
+                Lui::Project::NativeObservation Expected;
+                Expected.Name = Pair.first; Expected.Platform = Platform; Expected.BinaryHash = Binary.Hash;
+                Expected.AbiVersion = 2; Expected.Version = Pair.second.Version; Expected.RequiredCapabilities = Pair.second.RequiredCapabilities;
+                std::shared_ptr<void> Pin(Library.Library, [Image](void* Value) { CloseLibrary(Value); });
+                auto* LoadedImage = Library.Library; Library.Release();
+                const auto Status = LoadNativeImageV2(Runtime, LoadedImage, std::move(Pin), &Declared, &Expected);
+                if (Status) throw Lui::Project::Internal::Failure("RegistrationMismatch");
+                continue;
+            }
             auto Query=reinterpret_cast<LuiExtensionQueryV1>(FindSymbol(Library.Library,"LuiExtensionQuery"));
             auto Init=reinterpret_cast<LuiExtensionInitV1>(FindSymbol(Library.Library,"LuiExtensionInit"));
             auto Shutdown=reinterpret_cast<LuiExtensionShutdownV1>(FindSymbol(Library.Library,"LuiExtensionShutdown"));
@@ -714,7 +738,8 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
 extern "C" LUI_API const char* LUI_CALL Lui_GetExtensionSchemaJson(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return "{}";
     if(Runtime->DiagnosticMode==LUI_DIAGNOSTICS_RESTRICTED) return "{\"schemaVersion\":2,\"services\":[],\"redacted\":true}";
-    if (Runtime->ExtensionSchemaJson.empty()) RefreshSchema(Runtime);
+    RefreshSchema(Runtime);
+    Runtime->ExtensionSchemaJson = NativeServiceSchema(Runtime, Runtime->ExtensionSchemaJson);
     return Runtime->ExtensionSchemaJson.c_str();
 }
 

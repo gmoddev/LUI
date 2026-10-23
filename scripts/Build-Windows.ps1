@@ -2,12 +2,19 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
     [string]$LuauSourceDir = '',
-    [string]$BuildDirectory = ''
+    [string]$BuildDirectory = '',
+    [switch]$NativeServiceProof,
+    [ValidateRange(1, 16)]
+    [int]$BuildJobs = 2
 )
 
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Build = if ($BuildDirectory) { $BuildDirectory } else { Join-Path $Root 'build/windows-x64' }
+$ToolchainOptions = @('--node')
+if ($NativeServiceProof) { $ToolchainOptions += '--rust' }
+& python (Join-Path $Root 'scripts/Check-Toolchains.py') @ToolchainOptions
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Toolchain qualification failed' }
 $VsWhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $VsWhere)) { throw '[LUI:Build] Visual Studio with C++ tools is required' }
 $Vs = & $VsWhere -latest -property installationPath
@@ -24,69 +31,21 @@ $Generator = switch ($Major) {
 
 $Options = @('-S', $Root, '-B', $Build, '-G', $Generator, '-A', 'x64', '-DCMAKE_SYSTEM_VERSION=10.0.26100.0')
 if ($LuauSourceDir) {
-    $PinnedRevision = 'c0e346edd89066b44dca174c9f54ce84c746a540'
+    $PinnedRevision = (Get-Content (Join-Path $Root 'cmake/Dependencies.json') -Raw | ConvertFrom-Json).LuauRevision
     $ActualRevision = (& git -C $LuauSourceDir rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $ActualRevision -ne $PinnedRevision) {
         throw '[LUI:Build] LuauSourceDir must contain the pinned Luau revision'
     }
     $Options += "-DLUAU_SOURCE_DIR=$LuauSourceDir"
 }
+$Options += if ($NativeServiceProof) { '-DLUI_BUILD_RUST_PROOF=ON' } else { '-DLUI_BUILD_RUST_PROOF=OFF' }
 
 & $Cmake @Options
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CMake configure failed' }
-& $Cmake --build $Build --config $Configuration --target LuiCollectionTests LuiTextTests LuiPrivacyTests LuiApplicationTests LuiNativeLoaderTests LuiProjectTests LuiNativeBindingTests LuiDeclarationTests LuiPackageTests LuiProjectTool LuiCompiledProjectTests LuiModuleTests LuiProjectTypeTests LuiHeadlessTests LuiLayoutTests LuiConformanceTests LuiSchemaDump LuiTypeTests LuiTypeCheck LuiExtensionTests LuiHostTests LuiSandboxTests LuiThemeTests LuiPlatformTests LuiAssetTests LuiNetworkTests LuiHttpTests LuiSampleExtension LuiFailedExtension LuiBadAbiExtension LuiExtraCapabilityExtension LuiLegacyExtension --parallel 8
+& $Cmake --build $Build --config $Configuration --target LuiNativeQualification --parallel $BuildJobs
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native build failed' }
-& (Join-Path $Build "$Configuration/LuiProjectTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Shared project tests failed' }
-& (Join-Path $Build "$Configuration/LuiPackageTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Project content/index tests failed' }
-& (Join-Path $Build "$Configuration/LuiCompiledProjectTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Compiled project host tests failed' }
-& (Join-Path $Build "$Configuration/LuiModuleTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Module runtime tests failed' }
-& (Join-Path $Build "$Configuration/LuiProjectTypeTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Project type checking tests failed' }
-& (Join-Path $Build "$Configuration/LuiDeclarationTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Project declaration/binding tests failed' }
-& (Join-Path $Build "$Configuration/LuiNativeBindingTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native provider binding tests failed' }
-& (Join-Path $Build "$Configuration/LuiPrivacyTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Privacy tests failed' }
-& (Join-Path $Build "$Configuration/LuiApplicationTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Modular application tests failed' }
-& (Join-Path $Build "$Configuration/LuiNativeLoaderTests.exe") (Join-Path $Build "$Configuration/LuiSampleExtension.dll")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Verified native loader tests failed' }
-& (Join-Path $Build "$Configuration/LuiHeadlessTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Headless tests failed' }
-& (Join-Path $Build "$Configuration/LuiLayoutTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Layout tests failed' }
-& (Join-Path $Build "$Configuration/LuiTextTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Advanced text tests failed' }
-& (Join-Path $Build "$Configuration/LuiCollectionTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Collection tests failed' }
-& (Join-Path $Build "$Configuration/LuiConformanceTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Conformance tests failed' }
-& (Join-Path $Build "$Configuration/LuiExtensionTests.exe") `
-    (Join-Path $Build "$Configuration/LuiSampleExtension.dll") `
-    (Join-Path $Build "$Configuration/LuiFailedExtension.dll") `
-    (Join-Path $Build "$Configuration/LuiBadAbiExtension.dll") `
-    (Join-Path $Build "$Configuration/LuiExtraCapabilityExtension.dll") `
-    (Join-Path $Build "$Configuration/LuiLegacyExtension.dll")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Extension ABI tests failed' }
-& (Join-Path $Build "$Configuration/LuiHostTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] C++ host tests failed' }
-& (Join-Path $Build "$Configuration/LuiSandboxTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Sandbox tests failed' }
-& (Join-Path $Build "$Configuration/LuiThemeTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Theme tests failed' }
-& (Join-Path $Build "$Configuration/LuiPlatformTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Platform service tests failed' }
-& (Join-Path $Build "$Configuration/LuiAssetTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Asset tests failed' }
-& (Join-Path $Build "$Configuration/LuiNetworkTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Network tests failed' }
-& (Join-Path $Build "$Configuration/LuiHttpTests.exe")
-if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] HTTP framing tests failed' }
+& (Join-Path (Split-Path $Cmake) 'ctest.exe') --test-dir $Build -C $Configuration --output-on-failure --no-tests=error
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native qualification failed' }
 & (Join-Path $Root 'scripts/Generate-Types.ps1') -SchemaDump (Join-Path $Build "$Configuration/LuiSchemaDump.exe") -Root $Root
 & (Join-Path $Build "$Configuration/LuiTypeTests.exe")
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Generated type validation failed' }
@@ -102,16 +61,18 @@ $TypeChecker = Join-Path $Build "$Configuration/LuiTypeCheck.exe"
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CLI tests failed' }
 & dotnet build (Join-Path $Root 'tools/cli/Lui.Cli.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] CLI build failed' }
-& dotnet (Join-Path $Root "tools/cli/bin/$Configuration/net9.0/lui.dll") check (Join-Path $Root 'examples/dashboard/dashboard.manifest.json') --checker $TypeChecker
+& dotnet (Join-Path $Root "tools/cli/bin/$Configuration/net10.0/lui.dll") check (Join-Path $Root 'examples/dashboard/dashboard.manifest.json') --checker $TypeChecker
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Dashboard type check failed' }
+& dotnet (Join-Path $Root "tools/cli/bin/$Configuration/net10.0/lui.dll") check (Join-Path $Root 'examples/native-integration/lui.json') --checker $TypeChecker --mode project --diagnostics development
+if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Native integration type check failed' }
 & dotnet build (Join-Path $Root 'tools/preview-host/Lui.PreviewHost.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Preview host build failed' }
-$PreviewHost = Join-Path $Root "tools/preview-host/bin/$Configuration/net9.0/lui-preview-host.dll"
+$PreviewHost = Join-Path $Root "tools/preview-host/bin/$Configuration/net10.0/lui-preview-host.dll"
 & dotnet run --project (Join-Path $Root 'tests/preview/PreviewTests.csproj') --configuration $Configuration -- $PreviewHost $Dll
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Preview protocol tests failed' }
 $env:LUI_TEST_PREVIEW_HOST = $PreviewHost
 $env:LUI_TEST_RUNTIME = $Dll
-$env:LUI_TEST_CLI = Join-Path $Root "tools/cli/bin/$Configuration/net9.0/lui.dll"
+$env:LUI_TEST_CLI = Join-Path $Root "tools/cli/bin/$Configuration/net10.0/lui.dll"
 $env:LUI_TEST_TYPECHECK = $TypeChecker
 & node --test (Join-Path $Root 'tests/editor/EditorTests.js') (Join-Path $Root 'tests/editor/TypeTests.js') (Join-Path $Root 'tests/editor/ProjectTests.js')
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] VS Code preview client tests failed' }

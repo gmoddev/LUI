@@ -1,4 +1,5 @@
 #include "../internal/Modules.h"
+#include "../internal/NativeServices.h"
 #include "lua.h"
 #include "lualib.h"
 #include <nlohmann/json.hpp>
@@ -125,7 +126,8 @@ bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::C
         const std::map<std::string, uint64_t> Capabilities{{"NativeExtensions",LUI_CAPABILITY_NATIVE_EXTENSIONS},
             {"HostServices",LUI_CAPABILITY_HOST_SERVICES}, {"Clipboard",LUI_CAPABILITY_CLIPBOARD},
             {"Dialogs",LUI_CAPABILITY_DIALOGS}, {"network.client",LUI_CAPABILITY_NETWORK_CLIENT},
-            {"network.server",LUI_CAPABILITY_NETWORK_SERVER}, {"network.raw",LUI_CAPABILITY_NETWORK_RAW}};
+            {"network.server",LUI_CAPABILITY_NETWORK_SERVER}, {"network.raw",LUI_CAPABILITY_NETWORK_RAW},
+            {"Storage",LUI_CAPABILITY_STORAGE},{"Notifications",LUI_CAPABILITY_NOTIFICATIONS},{"Tray",LUI_CAPABILITY_TRAY}};
         for (const auto& Name : Manifest.at("Capabilities")) Requested |= Capabilities.at(Name.get<std::string>());
         if (Requested & ~Runtime->GrantedCapabilities) return Fail("CapabilityDenied");
         const bool Native=Requested & LUI_CAPABILITY_NATIVE_EXTENSIONS;
@@ -139,6 +141,7 @@ bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::C
                 if (Runtime->ExtensionMethods.size() > 256 || Runtime->ExtensionSignals.size() > 256 - Runtime->ExtensionMethods.size())
                     return Fail("RegistrationMismatch");
                 Lui::Project::DeclarationSet Observed;
+                ObserveNativeServices(Runtime, Observed, false);
                 for (const auto& Method : Runtime->ExtensionMethods) {
                     if (Method->ExtensionName != "Host") return Fail("RegistrationMismatch");
                     Observed.Services[Method->ServiceName].Methods.emplace(Method->Name,

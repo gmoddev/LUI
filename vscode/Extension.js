@@ -28,10 +28,10 @@ function GetPaths(Folder) {
     const Manifest = GetConfiguredPath(Settings.get('manifestPath', 'lui.json'), Root);
     const Repo = Path.resolve(__dirname, '..');
     const Host = GetConfiguredPath(Settings.get('previewHostPath', ''), Root) || FindFirstFile([
-        Path.join(Repo, 'tools/preview-host/bin/Debug/net9.0/lui-preview-host.dll'),
-        Path.join(Repo, 'tools/preview-host/bin/Release/net9.0/lui-preview-host.dll'),
-        Path.join(Root, 'tools/preview-host/bin/Debug/net9.0/lui-preview-host.dll'),
-        Path.join(Root, 'tools/preview-host/bin/Release/net9.0/lui-preview-host.dll'),
+        Path.join(Repo, 'tools/preview-host/bin/Debug/net10.0/lui-preview-host.dll'),
+        Path.join(Repo, 'tools/preview-host/bin/Release/net10.0/lui-preview-host.dll'),
+        Path.join(Root, 'tools/preview-host/bin/Debug/net10.0/lui-preview-host.dll'),
+        Path.join(Root, 'tools/preview-host/bin/Release/net10.0/lui-preview-host.dll'),
     ]);
     const Runtime = GetConfiguredPath(Settings.get('runtimePath', ''), Root) ||
         GetConfiguredPath(process.env.LUI_RUNTIME || '', Root) || FindFirstFile([
@@ -54,8 +54,8 @@ function GetNativeHostPath(Folder) {
         Path.join(Root,'build/gtk4/backends/gtk4/lui-gtk'),
         Path.join(Root,'build/linux-x64/backends/gtk4/lui-gtk'),
     ] : [
-        Path.join(Root, 'backends/winui3/bin/x64/Debug/net9.0-windows10.0.19041.0/win-x64/Lui.WinUI.exe'),
-        Path.join(Root, 'backends/winui3/bin/x64/Release/net9.0-windows10.0.19041.0/win-x64/Lui.WinUI.exe'),
+        Path.join(Root, 'backends/winui3/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64/Lui.WinUI.exe'),
+        Path.join(Root, 'backends/winui3/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/Lui.WinUI.exe'),
     ];
     return Candidates.find(Candidate => {
         try { ResolveNativeHost(Candidate); return true; }

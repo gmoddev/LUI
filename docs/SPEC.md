@@ -26,6 +26,21 @@ Hosts grant capabilities explicitly; manifests can narrow them. VM execution/mem
 
 TCP, UDP, outbound HTTP/HTTPS and hosted HTTP/TLS use runtime-owned transports, bounded admission and owner-thread completion. Access is capability-gated and host address/port policy applies. HTTP direction grants do not imply unrestricted raw sockets. TLS validates outbound identity and requires explicit native-host server credentials. See [TLS dependencies and trust](TLS-DEPENDENCY.md).
 
-## Qualification
+## Owned native integration
+
+The experimental x64 ABI v2 coexists with ABI v1. Providers use copied immutable
+bytes, session-scoped typed handles and bounded async requests/progress. Only
+the owner delivers Luau callbacks. Terminal capacity is reserved before Start;
+cancellation and retirement suppress stale work. Nonquiescent native code stays
+pinned and charged rather than being force-unloaded. Structured schema 3/ABI 2
+declarations derive checker types and match captured registrations before Init.
+
+Storage is explicitly installed by trusted embedders on Windows/Linux. Separate
+grants control Windows notifications/tray; GTK reports these unsupported. Native
+payloads stay out of framework-owned diagnostics. These interfaces do not
+establish encryption, rollback, secure deletion or application protocol security.
+See [the complete service contract](NATIVE-SERVICES.md).
+
+## Qualification evidence
 
 Shared semantics are tested headlessly. Native tests and desktop observations supplement them for the [declared platform profiles](PLATFORMS.md); CI does not certify arbitrary devices, IME providers or screen-reader usability. The [performance guide](PERFORMANCE.md) describes workload limits and measurement boundaries.

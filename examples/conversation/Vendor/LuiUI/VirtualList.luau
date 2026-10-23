@@ -114,10 +114,21 @@ function VirtualList.New(Viewport: ScrollingFrame, Options: any)
         local Anchor = OldIndex > 0 and Key(Items[OldIndex]) or nil
         local Within = OldIndex > 0 and Offset - Prefix[OldIndex] or 0
         local AtEnd = Offset >= math.max(0, Viewport.AbsoluteCanvasSize.Y - Viewport.AbsoluteSize.Y) - 1
+        local ViewHeight = Viewport.AbsoluteSize.Y
         local NextHeights, NextPrefix, Width = Build(Next)
         Items = table.clone(Next); IndexByKey = NextIndex; Heights = NextHeights; Prefix = NextPrefix
+        -- Place retained rows before the derived-layout read in Refresh. Their
+        -- new offsets and restored canvas position must be observed together;
+        -- otherwise the focused anchor can briefly leave the input viewport.
+        for Id, Row in Active do
+            local Index = NextIndex[Id]
+            if Index then
+                Row.Frame.Position = UDim2.fromOffset(0, Prefix[Index])
+                Row.Frame.Size = UDim2.fromOffset(Width, Heights[Index])
+            end
+        end
         Viewport.CanvasSize = UDim2.fromOffset(Width, Prefix[#Items + 1])
-        if FollowEnd and AtEnd then Viewport.CanvasPosition = Vector2.new(0, math.max(0, Prefix[#Items + 1] - Viewport.AbsoluteSize.Y))
+        if FollowEnd and AtEnd then Viewport.CanvasPosition = Vector2.new(0, math.max(0, Prefix[#Items + 1] - ViewHeight))
         elseif Anchor and NextIndex[Anchor] then Viewport.CanvasPosition = Vector2.new(0, Prefix[NextIndex[Anchor]] + Within)
         else Viewport.CanvasPosition = Vector2.new(0, Offset) end
         Self:Refresh()

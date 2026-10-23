@@ -1,5 +1,11 @@
 # Owner-host service declarations
 
+The primitive Owner Host profile below remains ABI v1. Experimental owned native
+providers instead select SchemaVersion 3 / AbiVersion 2 and structured
+`OwnedAsync` methods; see [native bindings](PROJECT-NATIVE-BINDINGS.md) and
+[the owned service contract](NATIVE-SERVICES.md). Their fixed buffer/handle/
+callback types supplement these primitive signatures without reinterpreting them.
+
 Schema v2 projects type and validate owner-host ABI v1 methods/signals using captured JSON sidecars. This guide describes Provider Host; the linked schema 2 guide covers native providers. [Project hosting](PROJECT-HOST.md) adds policy-enabled v2 launch/preview/editor and verified native loading.
 
 Add `"HostServices"` to Capabilities and relative `.json` files to ExtensionDeclarations. Keep Extensions empty. A sidecar uses this exact shape:

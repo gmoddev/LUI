@@ -2,12 +2,12 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>lui</AssemblyName>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../backends/winui3/AppManifest.cs" Link="AppManifest.cs" />
+    <Compile Include="../../tools/project/AppManifest.cs" Link="AppManifest.cs" />
     <Compile Include="../packaging/PackageBuilder.cs" Link="PackageBuilder.cs" />
   </ItemGroup>
 </Project>

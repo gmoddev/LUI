@@ -1,5 +1,30 @@
 # Native provider and platform content bindings
 
+For the experimental owned service interface, use sidecar SchemaVersion 3 /
+AbiVersion 2 with Provider Native. Preserve the Extension identity, version,
+capabilities, provenance and platform path/hash bindings described below.
+Declare exactly one service with the same name as Extension.Name, a
+ResourceKindCount and structured Methods; no Signals or arbitrary type strings:
+
+```json
+{
+  "Name": "Echo",
+  "Profile": "OwnedAsync",
+  "MaxInputBytes": 1024,
+  "MaxResultBytes": 1024,
+  "InputKind": 0,
+  "ResultKind": 0,
+  "DeadlineMilliseconds": 30000
+}
+```
+
+The checker derives the buffer/optional handle/callback signature and returns
+NativeRequest. Kind 0 means no required handle; positive kinds must fit the
+service's ResourceKindCount. Query metadata must match the declaration before
+Init. NativeExtensions and HostServices are both required by this native owned
+provider profile. Schema 1/2 and ABI v1 are unchanged. See [owned native
+services](NATIVE-SERVICES.md) and the [executable fixture](../tests/services/Project.cpp).
+
 Schema v2 preparation/checking/staging captures and hashes declared native bytes and generates primitive types without loading a library. [Project hosting](PROJECT-HOST.md) adds actual owner-trusted verified Windows/Linux loading before project execution; isolated preview continues to refuse privileged providers.
 
 In a manifest, Extensions is a list of provider names, for example `"Extensions": ["NativeMath"]`. List the sidecar under ExtensionDeclarations and request NativeExtensions plus every capability it requires. HostServices is needed for Host sidecars; it is not automatically granted by native metadata. Legacy schema v1 Extensions remains a library-path list.

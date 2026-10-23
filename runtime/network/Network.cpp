@@ -194,7 +194,7 @@ static void CheckAwait(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     if (Runtime->ActiveTaskThread != State || !Runtime->ActiveTaskReference)
         luaL_error(State, "[LUI:Network] async methods require a task.spawn or task.defer coroutine");
-    if (Runtime->PendingAsyncReferences.size() >= 128)
+    if (Runtime->PendingAsyncReferences.size() + Runtime->PendingNativeRequests >= 128)
         luaL_error(State, "[LUI:Network] TooManyOperations");
 }
 

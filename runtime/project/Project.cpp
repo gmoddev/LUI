@@ -2,8 +2,8 @@
 #include "Files.h"
 #include "Json.h"
 #include "../../native/abi/LuiExtension.h"
+#include "../../native/abi/LuiApplicationServices.h"
 #include <nlohmann/json.hpp>
-#include <openssl/evp.h>
 #include <algorithm>
 #include <array>
 #include <set>
@@ -11,17 +11,6 @@
 namespace Lui::Project {
 using Json = nlohmann::json;
 using namespace Internal;
-std::string Hash(std::string_view Bytes) {
-    unsigned char Digest[EVP_MAX_MD_SIZE]; unsigned int Size = 0;
-    if (!EVP_Digest(Bytes.data(), Bytes.size(), Digest, &Size, EVP_sha256(), nullptr) || Size != 32)
-        Fail("ProviderUnavailable");
-    const char* Hex = "0123456789abcdef";
-    std::string Result;
-    for (unsigned Index = 0; Index < Size; ++Index) {
-        Result += Hex[Digest[Index] >> 4]; Result += Hex[Digest[Index] & 15];
-    }
-    return Result;
-}
 namespace {
 Json Parse(std::string_view Text) {
     return ParseJson(Text);
@@ -68,7 +57,7 @@ bool ContainsRoot(const std::string& Root, const std::string& Path) {
 }
 void CheckLegacyFields(Json& Manifest) {
     auto Capabilities = Strings(Manifest["Capabilities"], 32);
-    const std::set<std::string> Allowed{"NativeExtensions","HostServices","Clipboard","Dialogs","network.client","network.server","network.raw"};
+    const std::set<std::string> Allowed{"NativeExtensions","HostServices","Clipboard","Dialogs","network.client","network.server","network.raw","Storage","Notifications","Tray"};
     for (const auto& Capability : Capabilities) if (!Allowed.count(Capability)) Fail("InvalidManifest");
     Manifest["Capabilities"] = Capabilities;
     auto Extensions = Strings(Manifest["Extensions"], 32, true);
@@ -135,7 +124,7 @@ bool Hex(const std::string& Value, size_t Size) {
 }
 }
 
-std::shared_ptr<const Snapshot> Internal::PrepareSources(const Anchor& Files, const std::string& ManifestName,
+std::shared_ptr<const Snapshot> Internal::PrepareSources(const SourceReader& Files, const std::string& ManifestName,
     const Options& Settings, std::string& Error, std::map<std::string, std::string>* Metadata) {
     Error.clear();
     try {
@@ -205,7 +194,8 @@ std::shared_ptr<const Snapshot> Internal::PrepareSources(const Anchor& Files, co
         std::vector<std::string> ProviderNames;
         const std::map<std::string,uint64_t> Bits{{"NativeExtensions",LUI_CAPABILITY_NATIVE_EXTENSIONS},{"HostServices",LUI_CAPABILITY_HOST_SERVICES},
             {"Clipboard",LUI_CAPABILITY_CLIPBOARD},{"Dialogs",LUI_CAPABILITY_DIALOGS},{"network.client",LUI_CAPABILITY_NETWORK_CLIENT},
-            {"network.server",LUI_CAPABILITY_NETWORK_SERVER},{"network.raw",LUI_CAPABILITY_NETWORK_RAW}};
+            {"network.server",LUI_CAPABILITY_NETWORK_SERVER},{"network.raw",LUI_CAPABILITY_NETWORK_RAW},
+            {"Storage",LUI_CAPABILITY_STORAGE},{"Notifications",LUI_CAPABILITY_NOTIFICATIONS},{"Tray",LUI_CAPABILITY_TRAY}};
         uint64_t Requested=0; for(const auto& Name:CapNames) Requested|=Bits.at(Name);
         // Preflight every binding path before opening a binary, so collisions
         // and ownership aliases cannot change across platforms.
@@ -307,6 +297,7 @@ std::shared_ptr<const Snapshot> Internal::PrepareSources(const Anchor& Files, co
     catch (...) { Error = "[LUI:Project] InvalidInput"; }
     return {};
 }
+#ifndef LUI_CAPTURED_ONLY
 std::shared_ptr<const Snapshot> Prepare(const std::filesystem::path& ManifestPath, const Options& Settings, std::string& Error) {
     Error.clear();
     try {
@@ -320,6 +311,7 @@ std::shared_ptr<const Snapshot> Prepare(const std::filesystem::path& ManifestPat
     return {};
 }
 
+#endif
 const Source* Snapshot::GetSource(std::string_view Id) const {
     auto Found = Sources.find(std::string(Id)); return Found == Sources.end() ? nullptr : &Found->second;
 }

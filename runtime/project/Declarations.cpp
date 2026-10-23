@@ -3,6 +3,7 @@
 #include "Json.h"
 #include "../reflection/Schema.h"
 #include "../../native/abi/LuiExtension.h"
+#include "../../native/abi/LuiApplicationServices.h"
 #include <algorithm>
 #include <set>
 
@@ -27,10 +28,11 @@ bool Hex(std::string_view Value,size_t Length) {
     return Value.size()==Length && std::all_of(Value.begin(),Value.end(),[](char Byte) {return (Byte>='0' && Byte<='9') || (Byte>='a' && Byte<='f');});
 }
 uint64_t Capabilities(const Json& Names) {
-    if(!Names.is_array() || Names.empty() || Names.size()>7) Fail("InvalidDeclaration");
+    if(!Names.is_array() || Names.empty() || Names.size()>10) Fail("InvalidDeclaration");
     const std::map<std::string,uint64_t> Known{{"NativeExtensions",LUI_CAPABILITY_NATIVE_EXTENSIONS},{"HostServices",LUI_CAPABILITY_HOST_SERVICES},
         {"Clipboard",LUI_CAPABILITY_CLIPBOARD},{"Dialogs",LUI_CAPABILITY_DIALOGS},{"network.client",LUI_CAPABILITY_NETWORK_CLIENT},
-        {"network.server",LUI_CAPABILITY_NETWORK_SERVER},{"network.raw",LUI_CAPABILITY_NETWORK_RAW}};
+        {"network.server",LUI_CAPABILITY_NETWORK_SERVER},{"network.raw",LUI_CAPABILITY_NETWORK_RAW},
+        {"Storage",LUI_CAPABILITY_STORAGE},{"Notifications",LUI_CAPABILITY_NOTIFICATIONS},{"Tray",LUI_CAPABILITY_TRAY}};
     uint64_t Result=0;
     for(const auto& Item:Names) {
         if(!Item.is_string() || !Known.count(Item.get<std::string>())) Fail("InvalidDeclaration");
@@ -94,7 +96,8 @@ void AddDeclaration(DeclarationSet& Set, const std::string& Path, std::string By
     if(!Native && Input.at("Provider")!="Host") Fail("UnsupportedFeature");
     if(Native) Shape(Input,{"SchemaVersion","AbiVersion","Provider","Extension","Services"});
     else Shape(Input, {"SchemaVersion","AbiVersion","Provider","Services"});
-    if (Input.at("SchemaVersion") != (Native?2:1) || Input.at("AbiVersion") != 1 || !Input.at("SchemaVersion").is_number_integer() ||
+    const bool Owned = Input.at("SchemaVersion") == 3 && Input.at("AbiVersion") == 2;
+    if ((!Owned && (Input.at("SchemaVersion") != (Native?2:1) || Input.at("AbiVersion") != 1)) || !Input.at("SchemaVersion").is_number_integer() ||
         !Input.at("AbiVersion").is_number_integer()) Fail("InvalidDeclaration");
     std::string Provider="Host";
     if(Native) {
@@ -104,9 +107,11 @@ void AddDeclaration(DeclarationSet& Set, const std::string& Path, std::string By
         for(const auto& Pair:Set.NativeProviders) if(Fold(Pair.first)==Fold(Provider)) Fail("DuplicateIdentity");
         if(Set.NativeProviders.size()>=16) Fail("LimitExceeded");
         NativeDeclaration Value;
+        Value.AbiVersion = Owned ? 2 : 1;
         if(!Extension.at("Version").is_number_unsigned() || Extension.at("Version").get<uint64_t>()==0 ||
             Extension.at("Version").get<uint64_t>()>UINT32_MAX) Fail("InvalidDeclaration");
         Value.Version=Extension.at("Version").get<uint32_t>(); Value.RequiredCapabilities=Capabilities(Extension.at("RequiredCapabilities"));
+        if (Owned && !(Value.RequiredCapabilities & LUI_CAPABILITY_HOST_SERVICES)) Fail("InvalidDeclaration");
         const auto& Provenance=Extension.at("Provenance"); Shape(Provenance,{"Kind","Id"});
         if(!Provenance.at("Kind").is_string() || !Provenance.at("Id").is_string()) Fail("InvalidDeclaration");
         Value.ProvenanceKind=Provenance.at("Kind").get<std::string>(); Value.ProvenanceId=Provenance.at("Id").get<std::string>();
@@ -129,10 +134,34 @@ void AddDeclaration(DeclarationSet& Set, const std::string& Path, std::string By
     if (!Services.is_array() || Services.empty()) Fail("InvalidDeclaration");
     if (Services.size() > 64) Fail("LimitExceeded");
     for (const auto& Item : Services) {
-        Shape(Item, {"Name","Methods","Signals"}); auto ServiceName = Name(Item.at("Name"));
+        if (Owned) Shape(Item, {"Name","Methods","ResourceKindCount"});
+        else Shape(Item, {"Name","Methods","Signals"});
+        auto ServiceName = Name(Item.at("Name"));
         if (Reserved(ServiceName) || Set.Services.count(ServiceName)) Fail("InvalidDeclaration");
         if (Set.Services.size() >= 64) Fail("LimitExceeded");
         ServiceDeclaration Service; std::set<std::string> Members;
+        if (Owned) {
+            if (Native && (Services.size() != 1 || ServiceName != Provider)) Fail("InvalidDeclaration");
+            const auto Number = [](const Json& Value, uint32_t Maximum) -> uint32_t {
+                if (!Value.is_number_unsigned() || Value.get<uint64_t>() > Maximum) Fail("InvalidDeclaration");
+                return Value.get<uint32_t>();
+            };
+            Service.ResourceKindCount = Number(Item.at("ResourceKindCount"), 64);
+            const auto& Methods = Item.at("Methods");
+            if (!Methods.is_array() || Methods.empty() || Methods.size() > 32) Fail("InvalidDeclaration");
+            for (const auto& Method : Methods) {
+                Shape(Method, {"Name","Profile","MaxInputBytes","MaxResultBytes","InputKind","ResultKind","DeadlineMilliseconds"});
+                auto Member = Name(Method.at("Name"));
+                if (Method.at("Profile") != "OwnedAsync" || !Members.insert(Member).second) Fail("InvalidDeclaration");
+                OwnedMethodDeclaration Value{Number(Method.at("MaxInputBytes"), 8*1024*1024), Number(Method.at("MaxResultBytes"), 8*1024*1024),
+                    Number(Method.at("InputKind"), Service.ResourceKindCount), Number(Method.at("ResultKind"), Service.ResourceKindCount),
+                    Number(Method.at("DeadlineMilliseconds"), 300000)};
+                if (!Value.DeadlineMilliseconds) Fail("InvalidDeclaration");
+                Service.OwnedMethods.emplace(Member, Value);
+            }
+            Set.ServiceProviders.emplace(ServiceName, Provider); Set.Services.emplace(ServiceName, std::move(Service));
+            continue;
+        }
         const auto& Methods = Item.at("Methods"); const auto& Signals = Item.at("Signals");
         if (!Methods.is_array() || !Signals.is_array() || (Methods.empty() && Signals.empty())) Fail("InvalidDeclaration");
         if (Methods.size() + Signals.size() > 256) Fail("LimitExceeded");
@@ -153,27 +182,43 @@ void AddDeclaration(DeclarationSet& Set, const std::string& Path, std::string By
 }
 void FinishDeclarations(DeclarationSet& Set) {
     if (Set.Services.size() > 64) Fail("LimitExceeded");
-    size_t Members = 0; Json Services = Json::array();
+    size_t Members = 0; Json Services = Json::array(); bool Owned = false;
     for (const auto& Pair : Set.Services) {
         Json Methods = Json::array(), Signals = Json::array();
+        if (!Pair.second.OwnedMethods.empty()) {
+            if (!Pair.second.Methods.empty() || !Pair.second.Signals.empty()) Fail("InvalidDeclaration");
+            for (const auto& Method : Pair.second.OwnedMethods) {
+                const auto& Value = Method.second;
+                Methods.push_back({{"Name",Method.first},{"Profile","OwnedAsync"},{"MaxInputBytes",Value.MaxInputBytes},
+                    {"MaxResultBytes",Value.MaxResultBytes},{"InputKind",Value.InputKind},{"ResultKind",Value.ResultKind},
+                    {"DeadlineMilliseconds",Value.DeadlineMilliseconds}});
+            }
+            Members += Methods.size(); if (Members > 256) Fail("LimitExceeded");
+            Services.push_back({{"Name",Pair.first},{"Methods",Methods},{"ResourceKindCount",Pair.second.ResourceKindCount}});
+            Owned = true; continue;
+        }
         for (const auto& Method : Pair.second.Methods)
             Methods.push_back({{"Name",Method.first},{"Arguments",Method.second.Arguments},{"Returns",Method.second.Returns}});
         for (const auto& Signal : Pair.second.Signals) Signals.push_back({{"Name",Signal.first},{"Arguments",Signal.second}});
         Members += Methods.size() + Signals.size(); if (Members > 256) Fail("LimitExceeded");
         Services.push_back({{"Name",Pair.first},{"Methods",Methods},{"Signals",Signals}});
     }
-    if(Set.NativeProviders.empty()) Set.Descriptor = Json{{"SchemaVersion",1},{"AbiVersion",1},{"Provider","Host"},{"Services",Services}}.dump();
+    if(Set.NativeProviders.empty()) Set.Descriptor = Json{{"SchemaVersion",Owned?3:1},{"AbiVersion",Owned?2:1},{"Provider","Host"},{"Services",Services}}.dump();
     else {
         Json Providers=Json::array(), Host=Json::array();
         for(const auto& Service:Services) if(Set.ServiceProviders.at(Service.at("Name").get<std::string>())=="Host") Host.push_back(Service);
-        if(!Host.empty()) Providers.push_back({{"Provider","Host"},{"AbiVersion",1},{"Services",Host}});
+        if(!Host.empty()) {
+            bool HostOwned = false;
+            for (const auto& Service : Host) if (Service.contains("ResourceKindCount")) HostOwned = true;
+            Providers.push_back({{"Provider","Host"},{"AbiVersion",HostOwned?2:1},{"Services",Host}});
+        }
         for(const auto& Pair:Set.NativeProviders) {
             Json Owned=Json::array();
             for(const auto& Service:Services) if(Set.ServiceProviders.at(Service.at("Name").get<std::string>())==Pair.first) Owned.push_back(Service);
-            Providers.push_back({{"Provider","Native"},{"Name",Pair.first},{"AbiVersion",1},{"Version",Pair.second.Version},
+            Providers.push_back({{"Provider","Native"},{"Name",Pair.first},{"AbiVersion",Pair.second.AbiVersion},{"Version",Pair.second.Version},
                 {"RequiredCapabilities",Pair.second.RequiredCapabilities},{"Services",Owned}});
         }
-        Set.Descriptor=Json{{"SchemaVersion",2},{"Providers",Providers}}.dump();
+        Set.Descriptor=Json{{"SchemaVersion",Owned?3:2},{"Providers",Providers}}.dump();
     }
     Set.Digest = Hash(Set.Descriptor);
 }
@@ -181,7 +226,7 @@ bool MatchNative(const DeclarationSet& Set,const NativeObservation& Observed,std
     Error.clear(); auto Failed=[&](const char* Code) {Error=std::string("[LUI:Project] ")+Code; return false;};
     try {
         auto Found=Set.NativeProviders.find(Observed.Name);
-        if(Found==Set.NativeProviders.end() || Observed.AbiVersion!=1 || Observed.Version!=Found->second.Version) return Failed("IdentityMismatch");
+        if(Found==Set.NativeProviders.end() || Observed.AbiVersion!=Found->second.AbiVersion || Observed.Version!=Found->second.Version) return Failed("IdentityMismatch");
         if(Observed.RequiredCapabilities!=Found->second.RequiredCapabilities) return Failed("CapabilityMismatch");
         auto Binding=Found->second.Bindings.find(Observed.Platform);
         if(Binding==Found->second.Bindings.end()) return Failed("UnsupportedPlatform");
@@ -189,6 +234,13 @@ bool MatchNative(const DeclarationSet& Set,const NativeObservation& Observed,std
         if(Observed.Services.size()>64) return Failed("RegistrationMismatch");
         size_t Members=0;
         for(const auto& Pair:Observed.Services) {
+            if (!Pair.second.OwnedMethods.empty()) {
+                if (Observed.AbiVersion != 2 || !Identifier(Pair.first) || Pair.second.OwnedMethods.size() > 32 ||
+                    !Pair.second.Methods.empty() || !Pair.second.Signals.empty()) return Failed("RegistrationMismatch");
+                Members += Pair.second.OwnedMethods.size(); if (Members > 256) return Failed("RegistrationMismatch");
+                for (const auto& Method : Pair.second.OwnedMethods) if (!Identifier(Method.first)) return Failed("RegistrationMismatch");
+                continue;
+            }
             if(!Identifier(Pair.first) || Pair.second.Methods.size()>256 || Pair.second.Signals.size()>256) return Failed("RegistrationMismatch");
             Members+=Pair.second.Methods.size()+Pair.second.Signals.size(); if(Members>256) return Failed("RegistrationMismatch");
             for(const auto& Method:Pair.second.Methods) {
@@ -251,6 +303,8 @@ std::string MergeDefinitions(const DeclarationSet& Set, const std::string& Defin
     for (const auto& Pair : Set.Services) {
         const auto Alias = "LuiDeclaredService" + std::to_string(++Index);
         std::string Fields;
+        for (const auto& Method : Pair.second.OwnedMethods)
+            Fields += "    read " + Method.first + ": " + OwnedSignature(Alias) + ",\n";
         for (const auto& Method : Pair.second.Methods) {
             Fields += "    read " + Method.first + ": (Self: " + Alias;
             const auto Params = Parameters(Method.second.Arguments); if (!Params.empty()) Fields += ", " + Params;
@@ -276,5 +330,8 @@ std::string MergeDefinitions(const DeclarationSet& Set, const std::string& Defin
     }
     Output.replace(Offset,End - Offset,Marker + Overloads.at(0));
     if (Output.size() > 8 * 1024 * 1024) Fail("LimitExceeded"); return Output;
+}
+std::string OwnedSignature(const std::string& Self) {
+    return "(Self: " + Self + ", Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest";
 }
 }

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
@@ -14,6 +14,7 @@
     <RootNamespace>Lui.WinUI</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../tools/project/AppManifest.cs" Link="AppManifest.cs" />
     <Compile Include="../../tools/project/PreparedProject.cs" Link="PreparedProject.cs" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
   </ItemGroup>

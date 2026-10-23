@@ -15,7 +15,7 @@ function GetTypePaths(Folder, Vscode) {
     };
     const First = Candidates => Candidates.find(Candidate => Fs.existsSync(Candidate)) || '';
     const Cli = Configured('cliPath') || First([Root, Repo].flatMap(Directory => ['Debug', 'Release'].map(Configuration =>
-        Path.join(Directory, `tools/cli/bin/${Configuration}/net9.0/lui.dll`))));
+        Path.join(Directory, `tools/cli/bin/${Configuration}/net10.0/lui.dll`))));
     const Name = process.platform === 'win32' ? 'LuiTypeCheck.exe' : 'LuiTypeCheck';
     const Checker = Configured('checkerPath') || (process.env.LUI_TYPECHECK ? Path.resolve(Root, process.env.LUI_TYPECHECK) : '') ||
         First([Root, Repo].flatMap(Directory => [

@@ -88,13 +88,14 @@ internal sealed class PreparedProject : IDisposable
         if(Runtime==IntPtr.Zero) throw new InvalidDataException("[LUI:Project] PolicyNotSupported"); return Runtime;
     }
     public bool HasPrivileges => Manifest.GetProperty("Capabilities").GetArrayLength()!=0;
-    public void Configure(IntPtr Runtime,bool GrantRequested,bool AllowNative=false)
+    public void Configure(IntPtr Runtime,bool GrantRequested,bool AllowNative=false,Action? ConfigureServices=null)
     {
-        Dictionary<string,ulong> Known=new(){{"NativeExtensions",1},{"HostServices",2},{"Clipboard",4},{"Dialogs",8},{"network.client",16},{"network.server",32},{"network.raw",64}};
+        Dictionary<string,ulong> Known=new(){{"NativeExtensions",1},{"HostServices",2},{"Clipboard",4},{"Dialogs",8},{"network.client",16},{"network.server",32},{"network.raw",64},{"Storage",128},{"Notifications",256},{"Tray",512}};
         ulong Requested=0; foreach(JsonElement Name in Manifest.GetProperty("Capabilities").EnumerateArray()) Requested|=Known[Name.GetString()!];
         if((Requested!=0 && !GrantRequested) || ((Requested&1)!=0 && !AllowNative)) throw new InvalidDataException("[LUI:Project] CapabilityDenied");
         Capabilities Caps=new(){StructSize=(uint)Marshal.SizeOf<Capabilities>(),AbiVersion=1,Granted=Requested};
         if(Export<CapCall>("Lui_DeclareCapabilities")(Runtime,ref Caps)==0) throw new InvalidDataException(Error(Runtime));
+        ConfigureServices?.Invoke();
         foreach(JsonElement Name in Manifest.GetProperty("Assets").EnumerateArray())
             if(Export<AssetCall>("Lui_RegisterAsset")(Runtime,Name.GetString()!)==0) throw new InvalidDataException(Error(Runtime));
         if(Manifest.TryGetProperty("NetworkPolicy",out JsonElement Data))

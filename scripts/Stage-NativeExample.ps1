@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Build = if ($BuildDirectory) { $BuildDirectory } else { Join-Path $Root 'build/windows-x64' }
 $Output = if ($OutputDirectory) { $OutputDirectory } else { Join-Path $Root 'build/native-example/win-x64' }
-$HostOutput = Join-Path $Root "backends/winui3/bin/x64/$Configuration/net9.0-windows10.0.19041.0/win-x64"
+$HostOutput = Join-Path $Root "backends/winui3/bin/x64/$Configuration/net10.0-windows10.0.19041.0/win-x64"
 $Extension = Join-Path $Build "$Configuration/LuiSampleExtension.dll"
 if (-not (Test-Path (Join-Path $HostOutput 'Lui.WinUI.exe')) -or -not (Test-Path $Extension)) {
     throw '[LUI:Stage] Build the WinUI host and sample extension before staging'

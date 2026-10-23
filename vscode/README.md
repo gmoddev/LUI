@@ -16,4 +16,4 @@ Errors appear in Problems, the inspector and LUI Preview Output without modal po
 
 Project checking resolves literal imports and declared primitive service types using the shared native resolver. It is not an autocomplete language server or an unsaved-buffer checker. See [project typechecking](../docs/PROJECT-TYPECHECK.md), [project hosting](../docs/PROJECT-HOST.md) and the [modular example](../examples/modular/README.md).
 
-Use an Extension Development Host with `vscode/` as its development path to run from source. The extension uses Node.js built-ins and has no npm dependencies; the preview host requires .NET 9.
+Use an Extension Development Host with `vscode/` as its development path to run from source. The extension uses Node.js built-ins and has no npm dependencies; the preview host requires .NET 10.

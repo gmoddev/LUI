@@ -34,7 +34,7 @@ int main(int Count,char** Arguments) {
         Lui::Gtk::Backend Host(PolicyMode); auto* Runtime=Host.GetRuntime();
         if(Project) {
             Phase="Capabilities";
-            const std::map<std::string,uint64_t> Known{{"NativeExtensions",1},{"HostServices",2},{"Clipboard",4},{"Dialogs",8},{"network.client",16},{"network.server",32},{"network.raw",64}};
+            const std::map<std::string,uint64_t> Known{{"NativeExtensions",1},{"HostServices",2},{"Clipboard",4},{"Dialogs",8},{"network.client",16},{"network.server",32},{"network.raw",64},{"Storage",128},{"Notifications",256},{"Tray",512}};
             uint64_t Requested=0; for(const auto& Name:Manifest.at("Capabilities")) Requested|=Known.at(Name.get<std::string>());
             if((Requested&1) && !NativeAllowed) throw std::runtime_error("native trust");
             LuiCapabilityDeclarationV1 Caps{sizeof(Caps),1,Requested}; if(!Lui_DeclareCapabilities(Runtime,&Caps)) throw std::runtime_error("grants");

@@ -10,14 +10,20 @@ struct MethodDeclaration {
     std::vector<std::string> Arguments;
     std::string Returns;
 };
+struct OwnedMethodDeclaration {
+    uint32_t MaxInputBytes = 0, MaxResultBytes = 0, InputKind = 0, ResultKind = 0, DeadlineMilliseconds = 0;
+};
 struct ServiceDeclaration {
     std::map<std::string, MethodDeclaration> Methods;
     std::map<std::string, std::vector<std::string>> Signals;
+    std::map<std::string, OwnedMethodDeclaration> OwnedMethods;
+    uint32_t ResourceKindCount = 0;
 };
 struct DeclarationFile { std::string Bytes, Hash; };
 struct BinaryBinding { std::string Path, Hash; };
 struct NativeDeclaration {
     uint32_t Version = 0;
+    uint32_t AbiVersion = 1;
     uint64_t RequiredCapabilities = 0;
     std::string ProvenanceKind, ProvenanceId;
     std::map<std::string, BinaryBinding> Bindings;
@@ -39,6 +45,7 @@ void FinishDeclarations(DeclarationSet& Set);
 MethodDeclaration ParseMethod(const std::string& Service, std::string_view Type);
 std::vector<std::string> ParseSignal(std::string_view Type);
 std::string MergeDefinitions(const DeclarationSet& Set, const std::string& Definitions);
+std::string OwnedSignature(const std::string& Self);
 // Trusted owner observation/receipt. This matcher performs no loading/query/
 // filesystem access and cannot prove a receipt describes a particular OS image.
 struct NativeObservation {

@@ -5,8 +5,8 @@
 ## Commands
 
 ```powershell
-dotnet tools/cli/bin/Debug/net9.0/lui.dll stage app/lui.json --output build/app-content --project-tool build/windows-x64/Debug/LuiProjectTool.exe
-dotnet tools/cli/bin/Debug/net9.0/lui.dll verify build/app-content --project-tool build/windows-x64/Debug/LuiProjectTool.exe
+dotnet tools/cli/bin/Debug/net10.0/lui.dll stage app/lui.json --output build/app-content --project-tool build/windows-x64/Debug/LuiProjectTool.exe
+dotnet tools/cli/bin/Debug/net10.0/lui.dll verify build/app-content --project-tool build/windows-x64/Debug/LuiProjectTool.exe
 ```
 
 The output directory must not exist, and its parent must exist. On Linux use the native `LuiProjectTool` executable. Set `LUI_PROJECT_TOOL` or place the tool beside `lui.dll` to omit `--project-tool`. The native equivalents are `LuiProjectTool --stage <manifest> <new directory>` and `LuiProjectTool --verify <staged directory>`.

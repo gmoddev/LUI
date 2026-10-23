@@ -18,8 +18,8 @@ if(WIN32)
     file(GENERATE OUTPUT "${LuiSslRoot}/Build.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\nnmake /nologo build_libs\r\nexit /b %errorlevel%\r\n")
     file(GENERATE OUTPUT "${LuiSslRoot}/Install.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\nnmake /nologo install_dev\r\nexit /b %errorlevel%\r\n")
     ExternalProject_Add(LuiOpenSslBuild
-        URL https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz
-        URL_HASH SHA256=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+        URL https://github.com/openssl/openssl/releases/download/openssl-${LuiOpenSslVersion}/openssl-${LuiOpenSslVersion}.tar.gz
+        URL_HASH SHA256=${LuiOpenSslSha256}
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         PREFIX "${LuiSslRoot}"
         BUILD_IN_SOURCE TRUE

@@ -164,6 +164,22 @@ export type ScrollingFrame = Frame & {
     read CanvasChanged: Signal,
 }
 
+export type StorageService = {
+    read Open: (Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Read: (Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Write: (Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Remove: (Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+}
+
+export type NotificationService = {
+    read Show: (Self: NotificationService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+}
+
+export type TrayService = {
+    read Create: (Self: TrayService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Watch: (Self: TrayService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+}
+
 export type PerformanceService = {
     read GetStats: (Self: PerformanceService) -> PerformanceStats,
     read GetTime: (Self: PerformanceService) -> number,
@@ -210,6 +226,14 @@ export type HttpService = {
 
 export type HttpServerService = {
     read CreateServer: (Self: HttpServerService, Options: HttpServerOptions) -> HttpServer,
+}
+
+export type NativeHandle = {
+    read Close: (Self: NativeHandle) -> boolean,
+}
+
+export type NativeRequest = {
+    read Cancel: (Self: NativeRequest) -> (boolean, string),
 }
 
 export type PerformanceStats = {
@@ -357,7 +381,7 @@ export type HttpServer = {
     read Close: (Self: HttpServer) -> (),
 }
 
-export type App = (((({ read GetService: (Self: App, Name: "PerformanceService") -> PerformanceService } & { read GetService: (Self: App, Name: "WindowService") -> WindowService }) & ({ read GetService: (Self: App, Name: "PlatformService") -> PlatformService } & { read GetService: (Self: App, Name: "ThemeService") -> ThemeService })) & (({ read GetService: (Self: App, Name: "ClipboardService") -> ClipboardService } & { read GetService: (Self: App, Name: "DialogService") -> DialogService }) & ({ read GetService: (Self: App, Name: "AssetService") -> AssetService } & { read GetService: (Self: App, Name: "NetworkService") -> NetworkService }))) & ({ read GetService: (Self: App, Name: "HttpService") -> HttpService } & { read GetService: (Self: App, Name: "HttpServerService") -> HttpServerService }))
+export type App = (((({ read GetService: (Self: App, Name: "StorageService") -> StorageService } & { read GetService: (Self: App, Name: "NotificationService") -> NotificationService }) & ({ read GetService: (Self: App, Name: "TrayService") -> TrayService } & { read GetService: (Self: App, Name: "PerformanceService") -> PerformanceService })) & (({ read GetService: (Self: App, Name: "WindowService") -> WindowService } & { read GetService: (Self: App, Name: "PlatformService") -> PlatformService }) & ({ read GetService: (Self: App, Name: "ThemeService") -> ThemeService } & { read GetService: (Self: App, Name: "ClipboardService") -> ClipboardService }))) & ((({ read GetService: (Self: App, Name: "DialogService") -> DialogService } & { read GetService: (Self: App, Name: "AssetService") -> AssetService }) & ({ read GetService: (Self: App, Name: "NetworkService") -> NetworkService } & { read GetService: (Self: App, Name: "HttpService") -> HttpService })) & { read GetService: (Self: App, Name: "HttpServerService") -> HttpServerService }))
 
 export type WindowInit = {
     Name: string?,

@@ -4,5 +4,5 @@ Instance.new("TextBox",{Parent=Frame,Text="Synthetic",AccessibilityLabel="Qualif
 local Action=Instance.new("TextButton",{Parent=Frame,Text="Action",AccessibilityLabel="Qualification action",Position=UDim2.fromOffset(10,60),Size=UDim2.fromOffset(350,40)})
 Action.Text="Updated action"
 Window.Visible=true
-task.delay(1,function() Action.AccessibilityLabel=""; Action.Text="Fallback action" end)
+Action.Activated:Connect(function() Action.AccessibilityLabel=""; Action.Text="Fallback action" end)
 task.delay(15,function() Window:Destroy() end)

@@ -7,7 +7,7 @@ cmake -S . -B build/gtk4 -DCMAKE_BUILD_TYPE=Debug -DLUI_BUILD_GTK4=ON
 cmake --build build/gtk4 --parallel 2 --target LuiGtkHost LuiGtkTests
 ctest --test-dir build/gtk4 -R LuiGtkTests --output-on-failure
 build/gtk4/backends/gtk4/lui-gtk --project examples/modular/lui.json
-dotnet tools/cli/bin/Release/net9.0/lui.dll run examples/modular/lui.json --mode project --host build/gtk4/backends/gtk4
+dotnet tools/cli/bin/Release/net10.0/lui.dll run examples/modular/lui.json --mode project --host build/gtk4/backends/gtk4
 ```
 
 Tests require xvfb-run, xauth and dbus-run-session. Normal launching requires a Linux graphical session. `--script examples/hello.luau` runs a single script under Development diagnostic policy. Native projects additionally require explicit `--allow-native`; preparation/checking never load their libraries.
@@ -18,14 +18,14 @@ VS Code **LUI: Open Native Preview** supports Linux schema v2 projects. Set `lui
 
 ## Application folders
 
-Build CLI with .NET 9, then install and compose a schema v2 package:
+Build CLI with .NET 10, then install and compose a schema v2 package:
 
 ```sh
 cmake --build build/gtk4 --parallel 2 --target LuiGtkHost LuiProjectTool
 cmake --install build/gtk4 --prefix "$PWD/build/gtk-prefix" --component GtkHost
 dotnet build tools/cli/Lui.Cli.csproj --configuration Release -m:2
-dotnet tools/cli/bin/Release/net9.0/lui.dll build examples/modular/lui.json --mode project --host build/gtk-prefix --project-tool build/gtk4/LuiProjectTool --output build/modular-linux
-dotnet tools/cli/bin/Release/net9.0/lui.dll verify build/modular-linux/Application --project-tool build/gtk4/LuiProjectTool
+dotnet tools/cli/bin/Release/net10.0/lui.dll build examples/modular/lui.json --mode project --host build/gtk-prefix --project-tool build/gtk4/LuiProjectTool --output build/modular-linux
+dotnet tools/cli/bin/Release/net10.0/lui.dll verify build/modular-linux/Application --project-tool build/gtk4/LuiProjectTool
 build/modular-linux/Start-LUI.sh
 ```
 

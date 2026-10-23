@@ -1,8 +1,8 @@
 # LUI
 
-LUI is a native application framework for Luau. Build interfaces with Instances, properties, signals and services; LUI owns layout, scheduling and lifecycle while WinUI 3 and GTK4 render native controls.
+LUI is an application framework for Luau. Build interfaces with Instances, properties, signals and services; LUI owns layout, scheduling and lifecycle while WinUI 3, GTK4 and an experimental shared-runtime WASM/DOM host render the interface.
 
-**Experimental, version 0.0.1.** Windows x64 and a selected Ubuntu GTK/X11 profile have been tested. LUI is not a stable SDK or a signed release. See [platform support and limitations](docs/PLATFORMS.md).
+**Experimental, version 0.0.1.** Windows x64, a selected Ubuntu GTK/X11 desktop profile and the selected Chromium/Firefox/Playwright WebKit browser profile have passed their qualification gates. LUI is not a stable SDK or a signed release. See [platform support and limitations](docs/PLATFORMS.md).
 
 ```lua
 local Window = Instance.new("Window", { Title = "Hello" })
@@ -30,6 +30,7 @@ Window.Visible = true
 - Owned reusable state, scopes and virtual collections; asynchronous declared images.
 - Declared modules, project-wide checking, native preview, VS Code tooling and application folders.
 - Capability-gated native integration, clipboard/dialogs and bounded TCP/UDP/HTTP/TLS services.
+- Experimental owned native buffers/handles/async services, scoped storage and Windows notifications/tray.
 
 Capability availability depends on host grants and platform support. Tests and examples use synthetic data. Application execution never downloads undeclared modules or image assets.
 
@@ -38,6 +39,7 @@ Capability availability depends on host grants and platform support. Tests and e
 - [Implemented API](docs/API.md) and [Luau types](types/LUI.d.luau)
 - [Architecture](docs/ARCHITECTURE.md), [invariants](docs/INVARIANTS.md) and [compatibility](docs/COMPATIBILITY.md)
 - [Application contract](docs/SPEC.md) and [project host](docs/PROJECT-HOST.md)
+- [Owned native services](docs/NATIVE-SERVICES.md) and [native integration example](examples/native-integration/README.md)
 - [Testing](docs/TESTING.md), [performance](docs/PERFORMANCE.md) and [platform support](docs/PLATFORMS.md)
 - [Product roadmap](ROADMAP.md) and [contributing](CONTRIBUTING.md)
 

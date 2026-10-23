@@ -15,5 +15,5 @@ cmake --build "$Build" --parallel 2 --target LuiGtkHost LuiProjectTool
 Host=$(mktemp -d "$Build/published-gtk.XXXXXX")
 cmake --install "$Build" --prefix "$Host" --component GtkHost
 dotnet build "$Root/tools/cli/Lui.Cli.csproj" --configuration Release -m:2
-dotnet "$Root/tools/cli/bin/Release/net9.0/lui.dll" build "$Manifest" --mode project --host "$Host" --project-tool "$Build/LuiProjectTool" --output "$Output"
+dotnet "$Root/tools/cli/bin/Release/net10.0/lui.dll" build "$Manifest" --mode project --host "$Host" --project-tool "$Build/LuiProjectTool" --output "$Output"
 printf '%s\n' '[LUI:Package] Run Start-LUI.sh in the output folder'

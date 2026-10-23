@@ -1,0 +1,7 @@
+html { color-scheme: light dark; font: 16px system-ui, sans-serif; }
+body { margin: 24px; }
+#Application { position: relative; width: 100%; height: calc(100vh - 96px); min-height: 360px; }
+.LuiNode { position: absolute; box-sizing: border-box; margin: 0; padding: 0; }
+.LuiNode[hidden] { display: none !important; }
+textarea.LuiNode { resize: none; }
+img.LuiNode { object-fit: contain; }

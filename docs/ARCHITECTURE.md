@@ -1,31 +1,37 @@
 # Architecture
 
+Application Luau runs in the shared C++/Luau runtime. LUI owns Instances, reflection, signals, scheduling, module resolution, layout, input, styles and service semantics. Backends render canonical state and return validated input; they do not implement a second application model.
+
 ```text
-Application Luau
-    ↓
-LUI runtime: VM, scheduler, Instances, signals, reflection and services
-    ↓
-LUI UI semantics: layout, input, focus, styles, themes and accessibility
-    ↓
-Native backend: WinUI 3 or GTK4
+Declared project → captured inputs → shared compiler/resolver → owner generation
+                                                               ↓
+                                         runtime / layout / input / services
+                                                               ↓
+                          WinUI 3       GTK4       browser worker + DOM host
+                                                               ↓
+                                             preview / diagnostics projection
 ```
 
-## Ownership
+## Ownership and profiles
 
-LUI defines public behavior and resolves geometry in logical units. Platform controls are private representations of canonical Instances; toolkit behavior cannot silently redefine LUI properties or events.
+One scheduler owns the VM and Instance tree. Workers queue bounded completions to that owner. Destruction and generation retirement disconnect stale callbacks, cancel requests and retire resources before releasing a generation. Reusable scopes, state and virtual collections follow that ownership model. Geometry uses shared logical units.
 
-One scheduler owns the VM and UI tree. Native workers queue bounded completions to that owner. Destruction and generation retirement disconnect stale work before it can reach application callbacks. Reusable scopes/state/collections follow the same ownership model.
+WinUI 3 implements the selected Windows x64 profile. GTK4 implements the selected Linux/X11 profile. The experimental browser profile compiles the same runtime/project semantic sources to WASM in a worker, then sends a bounded versioned presentation protocol to a DOM host. Browser input returns through the worker; DOM nodes are private representations. Unsupported providers refuse capabilities explicitly. Its selected acceptance gate passes shared native/browser semantic fixtures, three-engine DOM performance, lifecycle/policy checks and Firefox real IME/Orca sessions. General accessibility usability, frozen-page guarantees and broader platform/provider combinations remain unqualified.
 
-## Interfaces
+Platform controls, toolkit handles and service implementation details stay private. Native code remains privileged even when its declarations, inputs and completion lifetimes are checked. See the [backend guides](../backends/gtk4/README.md) and [browser host](../backends/browser/README.md) for profile-specific limits.
 
-[LuiExtension.h](../native/abi/LuiExtension.h) provides the supported version 1 primitive extension contract. It is distinct from the internal host interface in [LuiRuntime.h](../native/abi/LuiRuntime.h) and captured project interface in [LuiProject.h](../native/abi/LuiProject.h). Host callbacks and toolkit objects are not part of the stable extension ABI.
+## Contracts and projects
 
-Reflection in [Schema.cpp](../runtime/reflection/Schema.cpp) drives generated API documentation, Luau definitions and inspector metadata. Backend mappings follow shared conformance tests.
+The supported primitive extension ABI v1 in [LuiExtension.h](../native/abi/LuiExtension.h) is distinct from internal host callbacks in [LuiRuntime.h](../native/abi/LuiRuntime.h). The owned typed service ABI v2 in [LuiNativeServices.h](../native/abi/LuiNativeServices.h) is experimental and unfrozen. Its domain owns bounded requests, cancellation, event ordering, buffers, handles and cooperative retirement/quarantine. Host protocols and native extension ABIs evolve separately.
 
-## Projects and diagnostics
+Declared source, dependency, asset and provider inputs are captured before execution, checking or packaging. The immutable compiler/resolver and module identities are shared by runtime, analyzer, CLI, preview and packaging. Managed manifest parsing lives in [tools/project/AppManifest.cs](../tools/project/AppManifest.cs); prepared-project consumption lives beside it. The WinUI host compiles those shared adapters.
 
-Declared inputs are captured before compilation, checking, execution or staging. Module identities and resolution are shared across consumers. Native provider loading requires explicit owner trust, declared capabilities and verified captured inputs. Native code remains privileged.
+Diagnostic policy is selected before VM creation. Sticky sensitive classification and bounded projections govern diagnostics and preview snapshots. Secret inputs use password presentation. Framework projections do not grant secrecy against application prints, privileged native code or external collectors.
 
-Diagnostic policy is selected before VM startup. Sensitive classification is sticky; framework snapshots and diagnostics use bounded projections. Secret inputs use native password controls. Explicit application prints and hostile native code are outside an automatic secrecy guarantee.
+[Schema.cpp](../runtime/reflection/Schema.cpp) drives generated API documentation, Luau definitions and inspector metadata. Public semantics belong in that shared layer before backend mappings are added.
 
-See the [canonical invariants](INVARIANTS.md), [application contract](SPEC.md), [project host guide](PROJECT-HOST.md) and [platform limits](PLATFORMS.md).
+## Build and validation boundaries
+
+[Sources.cmake](../cmake/Sources.cmake) shares runtime/project sources between desktop and browser targets. [Dependencies.json](../cmake/Dependencies.json) owns build dependency pins. Desktop services and browser refusal providers are selected explicitly. Native qualification targets live in [NativeTests.cmake](../cmake/NativeTests.cmake); GTK has its own qualification group.
+
+The Windows, Linux and GTK qualification scripts run the same commands locally and in CI. Shared headless semantics, native mappings, Rust interoperability, generated metadata, managed tooling, preview/editor protocols and relocated packaging provide distinct evidence. Browser toolchains and conformance remain a separate experimental profile. A passing build does not qualify untested devices or input/accessibility sessions.

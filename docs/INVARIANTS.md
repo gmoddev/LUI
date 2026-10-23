@@ -131,6 +131,22 @@ The following invariants are architectural requirements rather than implementati
 
 ---
 
+### Owned native service invariants
+
+- ABI v2 does not change ABI v1's layouts or reinterpret its metadata.
+- Worker data owns its references; opaque identities never expose native pointers
+  to ordinary Luau. Views remain valid only while an owned buffer reference lives.
+- Reserve terminal capacity and maximum result bytes before starting work.
+  Progress cannot consume terminal capacity; admission never starts refused work.
+- One settlement wins. Accepted progress precedes a later provider failure;
+  cancellation, expiry and closure suppress undelivered progress.
+- Only the owner delivers Luau callbacks or invokes native cleanup. Retirement
+  removes old-generation callbacks before destroying the VM.
+- Native images remain pinned until quiescence and owned references drain.
+  Stuck providers remain charged; reload cannot reset domain quotas.
+- Platform adapters require separate grants and explicit support. Fixed native
+  errors exclude private payloads, filesystem paths and provider context.
+
 ## 50.7 Security invariants
 
 1. No arbitrary FFI is exposed to ordinary Luau code.

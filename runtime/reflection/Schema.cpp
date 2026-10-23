@@ -141,6 +141,9 @@ static constexpr PropertyDefinition Properties[] = {
 };
 
 static constexpr ServiceDefinition Services[] = {
+    {"StorageService"},
+    {"NotificationService"},
+    {"TrayService"},
     {"PerformanceService"},
     {"WindowService"},
     {"PlatformService"},
@@ -154,6 +157,13 @@ static constexpr ServiceDefinition Services[] = {
 };
 
 static constexpr ServiceMethodDefinition ServiceMethods[] = {
+    {"StorageService", "Open", "(Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
+    {"StorageService", "Read", "(Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
+    {"StorageService", "Write", "(Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
+    {"StorageService", "Remove", "(Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
+    {"NotificationService", "Show", "(Self: NotificationService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
+    {"TrayService", "Create", "(Self: TrayService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
+    {"TrayService", "Watch", "(Self: TrayService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest"},
     {"PerformanceService", "GetStats", "(Self: PerformanceService) -> PerformanceStats"},
     {"PerformanceService", "GetTime", "(Self: PerformanceService) -> number"},
     {"WindowService", "GetWindows", "(Self: WindowService) -> {Window}"},
@@ -181,6 +191,8 @@ static constexpr ServiceSignalDefinition ServiceSignals[] = {
 };
 
 static constexpr ServiceDefinition Objects[] = {
+    {"NativeHandle"},
+    {"NativeRequest"},
     {"PerformanceStats"},
     {"Color3"},
     {"NetworkEndpoint"},
@@ -284,6 +296,8 @@ static constexpr ServicePropertyDefinition ObjectProperties[] = {
 };
 
 static constexpr ServiceMethodDefinition ObjectMethods[] = {
+    {"NativeHandle", "Close", "(Self: NativeHandle) -> boolean"},
+    {"NativeRequest", "Cancel", "(Self: NativeRequest) -> (boolean, string)"},
     {"HttpServer", "Route", "(Self: HttpServer, Method: string, Path: string, Handler: (Request: HttpRequest) -> HttpReplyOptions) -> ()"},
     {"HttpServer", "Start", "(Self: HttpServer) -> ()"},
     {"HttpServer", "Close", "(Self: HttpServer) -> ()"},

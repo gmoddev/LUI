@@ -1,6 +1,8 @@
 #pragma once
 
 #include "LuiRuntime.h"
+#include "LuiNativeServices.h"
+#include "LuiApplicationServices.h"
 #include "Diagnostics.h"
 
 #include <chrono>
@@ -17,6 +19,9 @@
 struct lua_State;
 struct ModuleContext;
 namespace Lui::Tls { class Settings; }
+namespace Lui::Native { struct Domain; }
+struct NativeServiceBinding;
+struct DesktopServiceState;
 
 struct Dimension {
     double Scale = 0;
@@ -272,6 +277,11 @@ struct LuiRuntime {
     std::vector<std::unique_ptr<ExtensionSignal>> ExtensionSignals;
     int NextExtensionListenerId = 1;
     std::vector<LoadedExtension> Extensions;
+    std::shared_ptr<Lui::Native::Domain> NativeDomain;
+    std::vector<std::shared_ptr<NativeServiceBinding>> NativeServices;
+    size_t PendingNativeRequests = 0;
+    std::shared_ptr<DesktopServiceState> DesktopServices;
+    std::shared_ptr<void> DesktopBridgeOwner;
     bool ProjectNativeVerified=false;
     std::string VerifiedProjectDigest;
     std::unordered_map<std::string, int> ServiceRefs;
