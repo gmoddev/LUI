@@ -1,0 +1,55 @@
+---
+title: Setup and troubleshooting
+description: Choose the preview SDK, verify a download and resolve common setup problems.
+sidebar:
+  order: 1
+---
+
+## Download the matching SDK
+
+These pages document **SDK 0.1.0-preview.1**. Get the [Windows 64-bit ZIP and checksum](https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.1), extract the whole archive, then select its `SDK-Preview` folder using **LUI: Choose SDK** in VS Code.
+
+The framework source version, SDK version and extension version are different labels. The bundled extension is version **0.1.0**; install it from `Editor/LUI.vsix`. It still needs the SDK tools.
+
+## Verify the ZIP
+
+In PowerShell, hash the ZIP you downloaded:
+
+```powershell
+Get-FileHash ./LUI-SDK-Windows-x64-0.1.0-preview.1.zip -Algorithm SHA256
+```
+
+Compare the result with the adjacent `.sha256` file on the release. The expected ZIP hash is:
+
+```text
+13b3635dead45ce500d21f2108ecf634425946fae90f443452b70982bc9d0dc8
+```
+
+A matching checksum shows that the file is unchanged; it does not authenticate the publisher. The preview is unsigned. Do not disable Windows protections or run downloads from a source you do not trust just to complete a tutorial.
+
+## Check an installation
+
+From the extracted SDK folder:
+
+```powershell
+./lui.cmd doctor
+```
+
+Doctor checks the SDK identity and component inventory. The exact project pin also checks the version and inventory digest. Keep SDK versions side by side rather than replacing files inside an existing installation.
+
+## Common problems
+
+| Problem | What to check |
+| --- | --- |
+| LUI commands are missing | Install `Editor/LUI.vsix` using VS Code's Install from VSIX command. |
+| SDK cannot be found | Choose the folder containing `SdkManifest.json`, not `Cli` or a tutorial folder. |
+| SDK inventory mismatch | Re-extract the complete original download to a new folder. Do not mix components from different builds. |
+| Project pin mismatch | Select the exact SDK recorded in `LuiToolchain.json`. Do not change the digest to silence an error. |
+| Create or Run is refused | Review VS Code's workspace trust state. Trust only projects whose code you trust. |
+| Checking fails after adding a module | Declare the exact-case filename in `Modules.Files` in `lui.json`. |
+| The native app shows old code | Save, Stop App, then Run App. Saving alone does not restart it yet. |
+| Setup or launch fails | Read the LUI Preview output and record your LUI version, Windows version and reproduction steps. |
+
+Fresh-PC prerequisites and the ordinary downloaded-file launch path are still being qualified. A successful check on an existing development machine does not establish general clean-machine support.
+
+[Report a bug or suggest an improvement](https://github.com/gmoddev/LUI/issues). Do not include passwords or personal data in logs or examples.

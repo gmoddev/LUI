@@ -1,0 +1,18 @@
+{
+  "name": "lui-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.22.1 <25" },
+  "scripts": {
+    "generate": "node scripts/Generate.mjs",
+    "dev": "npm run generate && astro dev --host 127.0.0.1",
+    "build": "npm run generate && astro build && node scripts/CheckSite.mjs",
+    "preview": "astro preview --host 127.0.0.1",
+    "test": "node --test tests/Reference.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.10",
+    "astro": "7.4.8"
+  }
+}

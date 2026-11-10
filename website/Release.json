@@ -1,0 +1,9 @@
+{
+  "SdkVersion": "0.1.0-preview.1",
+  "PublicCommit": "6a033dcfe7080fb9a1f009005247bade24b2d2fc",
+  "Tag": "sdk-v0.1.0-preview.1",
+  "SchemaSha256": "525578b2c2c8ff75c43cfd9122285302825385d494abdce148c65779876489af",
+  "DefinitionsSha256": "44a70f882d2310c2a4058de989cdd883023fe7eaef94c59954a5d1152a8ba902",
+  "SdkManifestSha256": "d35aec14d6a0f66f46b8f9d1dd78babc78da35e6a24ef1239c33441b831eaad4",
+  "ArchiveSha256": "13b3635dead45ce500d21f2108ecf634425946fae90f443452b70982bc9d0dc8"
+}

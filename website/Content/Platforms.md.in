@@ -1,0 +1,18 @@
+---
+title: Platform support and limits
+description: Distinguish the Windows SDK download, selected experimental profiles and planned platform support.
+sidebar:
+  order: 6
+---
+
+The tutorials use the **Windows 64-bit preview SDK**. This is the ready-to-download development bundle described here; it is unsigned and experimental.
+
+The framework also has selected Linux GTK/X11 and experimental browser profiles with recorded tests. Those results do not turn the Windows ZIP into a Linux or browser SDK. Host grants, services, input, accessibility and packaging support vary by platform.
+
+Android has experimental emulator coverage. Physical Android qualification is still open. The Apple build/device path and broader desktop/mobile distribution remain open. There are no ready-to-use Android, iPhone or Mac downloads in this SDK release.
+
+The selected browser profile is not a claim of Safari/mobile support. Production fenced FrameSurface presentation, general screen-reader usability and additional device/input configurations retain their own limits.
+
+See the release's [platform matrix](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/PLATFORMS.md) for the detailed tested scope. An API appearing in the reference means it is part of the documented shared surface; it does not mean every backend implements or qualifies it.
+
+These pages follow **SDK 0.1.0-preview.1** and its public source. The framework reports source version **0.0.1** and the bundled VS Code extension **0.1.0**. Those are separate version identities.

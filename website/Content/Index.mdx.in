@@ -1,0 +1,43 @@
+---
+title: LUI documentation
+description: Build native apps with Luau. Start your first project, build a modular app and explore the LUI API.
+template: splash
+hero:
+  title: Build something you can click.
+  tagline: Start with a window and a button. Grow it into an app with screens, shared state and reusable components.
+  image:
+    html: {{HeroCode}}
+  actions:
+    - text: Build your first app
+      link: /LUI/docs/sdk-0.1.0-preview.1/learn/first-project/
+      icon: right-arrow
+    - text: Explore the API
+      link: /LUI/docs/sdk-0.1.0-preview.1/api/
+      variant: minimal
+---
+
+<div className="LuiRelease"><span>Windows SDK 0.1.0-preview.1 · Early and unsigned</span><a href="https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.1">Download &amp; release notes ↗</a></div>
+
+<div className="LuiLearnGrid">
+  <a className="LuiLearnCard" href="/LUI/docs/sdk-0.1.0-preview.1/learn/first-project/"><strong>Your first project</strong><p>Install the tools, make a small app and learn how to check and run it.</p><span>A window, a button and your first event →</span></a>
+  <a className="LuiLearnCard" href="/LUI/docs/sdk-0.1.0-preview.1/learn/advanced-project/"><strong>Your first advanced project</strong><p>Build a project library with two screens, reusable controls and shared state.</p><span>From one file to a modular app →</span></a>
+</div>
+
+## A small beginning
+
+LUI is an application framework for Luau. Describe your interface with Instances, properties and events. LUI handles layout and lifetime; a native host displays your app.
+
+{{Code:First-03-Event:Main.luau}}
+
+You can start with the Windows SDK and VS Code. The SDK includes the command-line tools, native host, checker, layout inspector and editor extension. You do not need to build LUI from source to follow the tutorials.
+
+## Find what you need
+
+- [API reference](/LUI/docs/sdk-0.1.0-preview.1/api/): classes, services, types, constructors and helpers.
+- [Everyday workflow](/LUI/docs/sdk-0.1.0-preview.1/guides/workflow/): check, run, inspect and come back later.
+- [Setup help](/LUI/docs/sdk-0.1.0-preview.1/guides/setup/): download checks and common problems.
+- [Platform support](/LUI/docs/sdk-0.1.0-preview.1/guides/platforms/): tested configurations and current limits.
+
+## Help shape LUI
+
+Suggestions and bug reports are welcome in [GitHub issues](https://github.com/gmoddev/LUI/issues). LUI is changing quickly, so pull requests and code contributions are paused for now. See the [contribution guide](https://github.com/gmoddev/LUI/blob/main/CONTRIBUTING.md).

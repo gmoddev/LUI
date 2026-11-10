@@ -1,0 +1,9 @@
+node_modules/
+.astro/
+dist/
+src/content/docs/docs/
+src/content/docs/index.mdx
+src/content/docs/404.md
+public/downloads/
+public/ThirdPartyNotices.txt
+BuildReport.json

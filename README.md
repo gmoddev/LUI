@@ -18,6 +18,9 @@ Window.Visible = true
 
 ## Get started
 
+Visit the **[LUI documentation website](https://gmoddev.github.io/LUI/)** for your
+first project, a modular project-library tutorial and the searchable API reference.
+
 Try the [Windows preview download](https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.1)
 and follow the [SDK guide](docs/SDK.md) to create your first app with VS Code.
 This is an early, unsigned preview; first-time setup on a fresh Windows PC is

@@ -1,0 +1,28 @@
+---
+title: Layout, input and lifetime
+description: Understand logical geometry, parenting, event connections and screen retirement.
+sidebar:
+  order: 4
+---
+
+## Geometry is logical
+
+LUI resolves layout in logical units. `UDim` combines a parent-relative scale and offset; `UDim2` does this for both axes. Native hosts map that geometry to their toolkit. Do not rely on physical pixel sizes or toolkit-specific layout behavior.
+
+Use `Frame` for groups, `UIListLayout` or `UIGridLayout` for ordered children, and `UIPadding` or size constraints where needed. A `ScrollingFrame` clips its descendants and owns a canonical scrolling canvas.
+
+## Parenting defines ownership
+
+An Instance's `Parent` places it in the tree. Destroying a screen root destroys its owned descendants, disconnects callbacks and prevents later dispatch into dead objects. `Destroy` is safe to call more than once.
+
+When switching screens, retire the old screen before keeping a replacement. Preserve application state in a separate declared module if it must outlive the screen. This is demonstrated in [the project-library tutorial](../../learn/advanced-project/#4-connect-home-and-library).
+
+## Prefer semantic events
+
+Connect a button's `Activated` event rather than making the app depend on a native pointer message. Luau callbacks and Instance mutations run on LUI's authoritative scheduler.
+
+## Text and sensitive input
+
+TextBox selection uses zero-based Unicode scalar offsets, not UTF-16 units or grapheme indices. Composition is separate from committed text. Secret input has additional limits and sensitive handling. Read [TextBox](../../api/classes/textbox/) before building custom editing or password flows.
+
+Inspect Layout can show the shared tree and geometry in a separate app generation; native testing is still required for host-specific behavior.

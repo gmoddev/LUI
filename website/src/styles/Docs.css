@@ -1,0 +1,54 @@
+:root {
+  --sl-color-accent-low: #25294e;
+  --sl-color-accent: #a9aeff;
+  --sl-color-accent-high: #e0e2ff;
+  --sl-font: 'Segoe UI', system-ui, sans-serif;
+  --sl-content-width: 49rem;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #eff0ff;
+  --sl-color-accent: #494fc8;
+  --sl-color-accent-high: #30378e;
+  --sl-color-white: #1d2436;
+  --sl-color-gray-1: #30394c;
+  --sl-color-gray-2: #49536a;
+  --sl-color-gray-3: #667089;
+  --sl-color-gray-5: #e4e7ee;
+  --sl-color-gray-6: #f5f6fa;
+  --sl-color-black: #fff;
+}
+.LuiHeader { width: 100%; }
+.LuiHeader .header { height: auto; }
+.LuiTopNav { display: flex; flex-wrap: wrap; gap: 1.6rem; padding-block-start: .7rem; font-size: .82rem; }
+.LuiTopNav a { color: var(--sl-color-gray-2); text-decoration: none; font-weight: 500; }
+.LuiTopNav a:hover { color: var(--sl-color-text-accent); text-decoration: underline; }
+:root { --sl-nav-height: 6.8rem; }
+.hero { padding-block: 2.5rem; }
+.hero h1 { letter-spacing: -.045em; font-size: clamp(2rem, 4vw, 3rem); }
+.hero > .hero-html { width: 100%; max-width: 30rem; }
+.LuiHeroCode { width: 100%; border: 1px solid var(--sl-color-hairline); border-radius: .6rem; overflow: hidden; background: var(--sl-color-gray-6); }
+.LuiHeroCode > div { padding: .7rem 1rem; border-block-end: 1px solid var(--sl-color-hairline); font-size: .7rem; color: var(--sl-color-gray-2); }
+.LuiHeroCode span { float: right; }
+.LuiHeroCode pre { padding: 1rem; margin: 0; font-size: .72rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sl-markdown-content h2 { letter-spacing: -.025em; }
+.LuiRelease { display: flex; flex-wrap: wrap; gap: .3rem 1rem; color: var(--sl-color-gray-2); font-size: .8rem; border-block-end: 1px solid var(--sl-color-hairline); padding-block-end: .9rem; margin-block-end: 1.6rem; }
+.LuiRelease a { color: var(--sl-color-text-accent); }
+.LuiLearnGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,17rem),1fr)); gap: 1.2rem; margin-block: 2rem; }
+.LuiLearnCard { display: block; border: 1px solid var(--sl-color-hairline); border-radius: .6rem; padding: 1.5rem; color: var(--sl-color-text); text-decoration: none; }
+.LuiLearnCard:hover { border-color: var(--sl-color-text-accent); }
+.LuiLearnCard strong { font-size: 1.15rem; }
+.LuiLearnCard p { color: var(--sl-color-gray-2); font-size: .95rem; }
+.LuiLearnCard span { color: var(--sl-color-text-accent); font-size: .85rem; }
+.LuiMeta { font-size: .85rem; color: var(--sl-color-gray-2); }
+.LuiFooter { display: flex; gap: .8rem 1.3rem; flex-wrap: wrap; border-block-start: 1px solid var(--sl-color-hairline); padding-block: 1.5rem; margin-block-start: 2rem; font-size: .75rem; color: var(--sl-color-gray-2); }
+.LuiFooter a { color: var(--sl-color-gray-2); }
+.sl-markdown-content pre { font-size: .82rem; }
+.sl-markdown-content table { display: block; overflow-x: auto; font-size: .85rem; }
+.sl-markdown-content :is(td,th) { min-width: 5rem; }
+.sl-markdown-content td code { white-space: normal; overflow-wrap: anywhere; }
+.LuiMember { scroll-margin-top: 8rem; }
+@media (max-width: 49.99rem) {
+  .LuiTopNav { padding-block-start: .45rem; gap: 1.2rem; }
+  :root { --sl-nav-height: 6.4rem; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0s !important; transition-duration: 0s !important; } }

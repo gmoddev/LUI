@@ -1,0 +1,18 @@
+---
+title: Modules and project structure
+description: Declare source files and understand source-bound module loading.
+sidebar:
+  order: 3
+---
+
+SDK starters use a schema-2 `lui.json`. `Script` is the entry file. `Modules.Root` identifies the source root; `Modules.Files` lists its exact-case declared source files relative to that root.
+
+{{Manifest:Advanced-05-State}}
+
+Use relative source-bound imports such as `require("./State")` or `require("../Components/Button")`. The loader resolves canonical identities within the declared graph, caches one non-nil exported value for each module in a generation, and refuses invalid paths or cycles.
+
+Dependencies are explicitly declared and pinned. Evaluating a module never fetches an undeclared package. Avoid introducing side effects or yielding while a module initializes; perform app work after loading its exports.
+
+`LuiToolchain.json` pins the SDK, while `lui.json` describes application sources and capabilities. Neither is a replacement for the other.
+
+Follow [the advanced tutorial](../../learn/advanced-project/) for a complete declared project. For detailed project contracts, see the released [project-host guide](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/PROJECT-HOST.md).

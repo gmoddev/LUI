@@ -1,0 +1,120 @@
+---
+title: Your first advanced project
+description: Build a project library with reusable controls, two screens, shared state and a shareable app folder.
+sidebar:
+  order: 2
+---
+
+Build a small **project library** with Home and Library screens. Reuse a button component, preserve a counter and selection while switching screens, and package the result.
+
+Complete [your first project](../first-project/) first. This walkthrough uses local example data and the same Windows SDK. It does not need network access or a storage provider. State lasts for the current app session; restarting starts fresh.
+
+Create a new project named `ProjectLibrary`. Each chapter has a complete downloadable checkpoint. Extract checkpoints to new folders and open the extracted project folder containing `lui.json`; do not paste one project's pin or manifest into an unrelated project.
+
+## 1. Lay out a workspace
+
+Start with a window and a content container. Replace `Src/Main.luau`:
+
+{{Code:Advanced-01-Workspace:Main.luau}}
+
+The content leaves room for navigation above it. `UDim2.new(1, -32, 1, -100)` combines parent-relative scale with logical offsets. It does not mean physical display pixels.
+
+**Check and run:** you should see **My project library**. [Download chapter 1]({{Download:Advanced-01-Workspace}}).
+
+## 2. Split the app into modules
+
+Create `Src/Screens/Home.luau` and move screen creation into a function:
+
+{{Code:Advanced-02-Modules:Screens/Home.luau}}
+
+Update `Src/Main.luau` to load and call it:
+
+{{Code:Advanced-02-Modules:Main.luau}}
+
+New source files must be declared. Use this complete `lui.json` for this chapter:
+
+{{Manifest:Advanced-02-Modules}}
+
+The module root is `Src`; `Modules.Files` lists exact-case paths relative to that root. `require("./Screens/Home")` is relative to the source containing the call. Modules return one non-nil exported value. They do not download dependencies.
+
+**Check and run:** the same screen should appear, now assembled from two files. A missing-source error usually means a filename, case or module declaration differs. [Download chapter 2]({{Download:Advanced-02-Modules}}).
+
+## 3. Make a reusable button
+
+Create `Src/Components/Button.luau`:
+
+{{Code:Advanced-03-Component:Components/Button.luau}}
+
+The function accepts a parent, name, label and callback, then returns the new button. It keeps repeated setup in one place. Update `Src/Screens/Home.luau`:
+
+{{Code:Advanced-03-Component:Screens/Home.luau}}
+
+Add `Components/Button.luau` to `Modules.Files` in `lui.json`. `Main.luau` stays as it was in chapter 2.
+
+**Check and run:** clicking **Add action** should change the status to **Action added**. [Download chapter 3]({{Download:Advanced-03-Component}}).
+
+## 4. Connect Home and Library
+
+Add a Library screen in `Src/Screens/Library.luau`:
+
+{{Code:Advanced-04-Screens:Screens/Library.luau}}
+
+Replace `Src/Main.luau` to add navigation:
+
+{{Code:Advanced-04-Screens:Main.luau}}
+
+Add `Screens/Library.luau` to `Modules.Files`. Home and the button component are unchanged from chapter 3.
+
+`Show` destroys the old screen before creating the next. Destroying its root retires the children and their callbacks; keeping the native toolkit objects yourself is unnecessary.
+
+**Check and run:** switch between Home and Library and choose a project. At this stage, leaving a screen resets its local status. [Download chapter 4]({{Download:Advanced-04-Screens}}).
+
+## 5. Keep shared state between screens
+
+Create `Src/State.luau`:
+
+{{Code:Advanced-05-State:State.luau}}
+
+Replace Home so it reads and updates that module:
+
+{{Code:Advanced-05-State:Screens/Home.luau}}
+
+Replace Library so it remembers the selection:
+
+{{Code:Advanced-05-State:Screens/Library.luau}}
+
+Use this final `Src/Main.luau`:
+
+{{Code:Advanced-05-State:Main.luau}}
+
+The complete final manifest is:
+
+{{Manifest:Advanced-05-State}}
+
+The declared module is cached within the app generation, so both screens see the same state. A restart creates a fresh generation and resets it. This is not saving to disk.
+
+**Check and run:** add two actions, switch to Library, select **Map viewer**, return Home, then return Library. The counter should still show **Actions: 2**, and the selection should still be **Map viewer**. Restart the app and confirm both reset. [Download chapter 5]({{Download:Advanced-05-State}}).
+
+## 6. Check, inspect and share
+
+Run **LUI: Check Types**. It checks every declared source without executing your application code.
+
+Use **LUI: Inspect Layout** to explore the Instance tree and geometry. It starts a **separate app generation**; it does not attach to the native window you already have open. Changing state in one does not update the other.
+
+To create an app folder, open a terminal in your project and run the SDK's CLI. Use its full path if you have not added it to PATH:
+
+```powershell
+& "C:/Tools/LUI/SDK-Preview/lui.cmd" build --output Dist/ProjectLibrary
+```
+
+Replace the example SDK path with your actual installation. Choose a new output directory. Give recipients the whole `Dist/ProjectLibrary` folder and launch `Start-LUI.cmd`; do not send only the executable. This is folder packaging, not a signed installer or updater. Try it on a separate PC before sharing more widely.
+
+[Download the complete project library]({{Download:Advanced-06-Package}}).
+
+## Where to go next
+
+- Explore [layout and lifetime](../../guides/layout/) before adding more dynamic screens.
+- Use the [API reference](../../api/) to find properties, methods, signals and exact type signatures.
+- Read [packaging and sharing](../../guides/packaging/) for distribution limits.
+
+The walkthrough builds on LUI's [existing modular workspace example](https://github.com/gmoddev/LUI/tree/sdk-v0.1.0-preview.1/examples/modular). Persistence, networking and application-authored automated test commands are separate topics, not hidden requirements of this project.

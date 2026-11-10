@@ -1,0 +1,40 @@
+---
+title: Everyday workflow
+description: Edit, check, run, inspect and return to your LUI project.
+sidebar:
+  order: 2
+---
+
+## Edit → check → run
+
+1. Open your project folder in VS Code.
+2. Edit and save a declared Luau source.
+3. Use **LUI: Check Types** and read any Problems diagnostics.
+4. Use **LUI: Run App** to run the native application.
+5. After editing, use **LUI: Stop App**, then run it again.
+
+Static checking reads the declared project without running your app. A passing type check does not prove the UI works or that an application protocol is correct. Try the app's user interactions as well.
+
+There is no native restart-on-save supervisor or application-authored `lui test` command in this SDK. Those workflows are planned.
+
+## The layout inspector is separate
+
+**LUI: Inspect Layout** starts another app generation to inspect its tree and resolved geometry. It does not inspect the live native window. Its state and lifetime are independent of Run App.
+
+## Return to a project later
+
+Open the same project folder. Choose the exact pinned SDK if it is missing. The project records the SDK identity without committing a machine-specific SDK path. Opening a project does not automatically update its SDK or download dependencies.
+
+## Command-line use
+
+Use the full path to `lui.cmd`, or add the SDK's `Cli` directory to your own PATH. From the project folder, the equivalent commands are:
+
+```powershell
+lui check
+lui run
+lui build --output Dist/MyApp
+```
+
+For a manifest outside the current folder, pass its path explicitly. Quote paths containing spaces. Choose a new packaging output directory; existing output is preserved.
+
+New sources must be declared in `lui.json`. See [modules and project structure](../modules/).

@@ -1,0 +1,29 @@
+---
+title: Packaging and sharing
+description: Create a complete Windows app folder and understand the preview's distribution limits.
+sidebar:
+  order: 5
+---
+
+From your project directory, use the matched SDK CLI:
+
+```powershell
+lui check
+lui build --output Dist/MyApp
+```
+
+If `lui` is not on PATH, use the full path to the extracted SDK's `lui.cmd`. Choose an output directory that does not already exist.
+
+Share the entire output folder. Recipients launch `Start-LUI.cmd` and do not need the developer SDK. Sending only the executable leaves out required runtime and application files.
+
+The folder includes prepared application content. New modules, dependencies and assets must be declared before packaging. Keep dependency notices and license material with redistributions.
+
+## Try the result independently
+
+Run the packaged copy, not the original source project. Check startup, navigation, input, shutdown and error behavior. Try it on a separate target machine before treating it as ready to distribute.
+
+This preview produces a folder, not a signed installer, automatic updater or stable distribution channel. Clean-machine prerequisites, signing/publisher authenticity and final release/redistribution checks remain open. Existing-worker smoke checks do not qualify every Windows PC.
+
+## Keep versions deliberate
+
+The SDK and project pin identify matched components. Do not swap native libraries or checker binaries from another SDK to repair a package. Install the required SDK beside other versions and build from a complete matching installation.

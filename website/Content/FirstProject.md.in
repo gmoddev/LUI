@@ -1,0 +1,87 @@
+---
+title: Your first project
+description: Install LUI, create a native window and button, check your code and run your first app.
+sidebar:
+  order: 1
+---
+
+Make a native window with a button that changes its text. By the end, you will know the everyday **edit → check → run** loop.
+
+## 1. Get your tools ready
+
+You need a **Windows 64-bit PC** and **VS Code**. This tutorial uses SDK **0.1.0-preview.1**. It is an early, unsigned preview; first-time setup on a completely fresh Windows PC is still being tested.
+
+1. Open the [LUI preview release](https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.1) and download `LUI-SDK-Windows-x64-0.1.0-preview.1.zip`.
+2. Extract the whole ZIP to a folder you want to keep. Keep every subfolder inside `SDK-Preview` together.
+3. In VS Code, open the Command Palette with **Ctrl+Shift+P**. Run **Extensions: Install from VSIX** and select `SDK-Preview/Editor/LUI.vsix`.
+4. Run **LUI: Choose SDK** and select the `SDK-Preview` folder containing `SdkManifest.json`.
+
+Windows may display a warning because the preview is unsigned. Only run a download whose source you trust. If setup fails, read the **LUI Preview** output in VS Code and see [setup help](../../guides/setup/).
+
+**You should see:** the LUI commands in VS Code. Application authors do not need the .NET SDK or a C++ compiler to use this bundle.
+
+## 2. Create your project
+
+Run **LUI: Create Project**, select an existing parent folder and enter `HelloLui` as the project name. Choose a new name if that folder already exists. The extension needs a trusted workspace before creating or running projects; only trust code you understand and trust.
+
+VS Code opens the new folder. Its important files are:
+
+```text
+HelloLui/
+  Src/Main.luau
+  lui.json
+  LuiToolchain.json
+```
+
+- `Src/Main.luau` is your app's entry file.
+- `lui.json` describes its sources and settings.
+- `LuiToolchain.json` remembers the exact SDK version and inventory. Keep this file with your project.
+
+## 3. Open a window
+
+Replace the starter in `Src/Main.luau` with:
+
+{{Code:First-01-Window:Main.luau}}
+
+`Instance.new` creates an object. `Window` is the class name, and the table supplies its starting properties. `Visible` initially defaults to false, so set it to true after creating the content.
+
+Save the file. Run **LUI: Check Types**, then **LUI: Run App**.
+
+**You should see:** an empty window titled **Hello, LUI**. Close it before continuing. [Download this checkpoint]({{Download:First-01-Window}}).
+
+## 4. Add a button
+
+Replace `Src/Main.luau` with this complete version:
+
+{{Code:First-02-Button:Main.luau}}
+
+`Parent = Window` puts the button inside the window. `Size` and `Position` use logical units. `UDim2.fromOffset` creates an offset-only size or position.
+
+Save, check and run again. **You should see:** a **Say hello** button near the top-left. It has no action yet. [Download this checkpoint]({{Download:First-02-Button}}).
+
+## 5. Respond to a click
+
+Add an event connection before showing the window. Here is the complete file:
+
+{{Code:First-03-Event:Main.luau}}
+
+`Activated` is the button's activation event. `Connect` registers the function that changes `Button.Text`.
+
+Save, check and run. Click **Say hello**. **You should see:** the button change to **Hello, world!**. [Download the finished project]({{Download:First-03-Event}}).
+
+Related reference: [Window](../../api/classes/window/), [TextButton](../../api/classes/textbutton/), [Instance](../../api/globals/instance/) and [UDim2](../../api/globals/udim2/).
+
+## 6. Make a change and return later
+
+Change the greeting, save your file, use **LUI: Stop App**, then **LUI: Run App**. Saving does **not** restart the native app automatically in this preview.
+
+Tomorrow, open the same project folder and run it again. If LUI asks for an SDK, use **LUI: Choose SDK** to select the exact version recorded in `LuiToolchain.json`. Do not edit the pin just to hide a mismatch.
+
+## If something goes wrong
+
+- **No window:** inspect the LUI Preview output and confirm you set `Window.Visible = true`.
+- **Old code still running:** stop the native app and run it again after saving.
+- **Type error:** read the reported file/line in the Problems panel; compare against the complete checkpoint.
+- **SDK missing or mismatched:** keep the extracted SDK together and select the matching installation. See [setup help](../../guides/setup/).
+
+You have made your first LUI app. Next, [build a project library](../advanced-project/) with modules, screens and shared state.
