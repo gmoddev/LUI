@@ -18,10 +18,12 @@ Window.Visible = true
 
 ## Get started
 
-An experimental [portable SDK workflow](docs/SDK.md) now has a bundle builder,
-matched CLI/editor discovery, pinned modular starters and an offline VSIX. A
-signed public SDK download and clean-machine release qualification remain open.
-The commands below build the framework from source; they are contributor setup.
+Try the [Windows preview download](https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.1)
+and follow the [SDK guide](docs/SDK.md) to create your first app with VS Code.
+This is an early, unsigned preview; first-time setup on a fresh Windows PC is
+still being tested.
+
+To build the framework from source:
 
 1. Follow the [build guide](docs/BUILD.md).
 2. Run [hello.luau](examples/hello.luau) or the [modular application](examples/modular/README.md).
@@ -40,6 +42,10 @@ The commands below build the framework from source; they are contributor setup.
 Capability availability depends on host grants and platform support. Tests and examples use synthetic data. Application execution never downloads undeclared modules or image assets.
 
 ## Documentation
+
+Suggestions and bug reports are welcome. We are not accepting pull requests or
+code contributions for now because the project is changing quickly. See the
+[contribution guide](CONTRIBUTING.md) for details.
 
 - [Implemented API](docs/API.md) and [Luau types](types/LUI.d.luau)
 - [Architecture](docs/ARCHITECTURE.md), [invariants](docs/INVARIANTS.md) and [compatibility](docs/COMPATIBILITY.md)

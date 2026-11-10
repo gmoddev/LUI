@@ -1,16 +1,17 @@
 # Contributing
 
-Read the [architecture](docs/ARCHITECTURE.md), [invariants](docs/INVARIANTS.md), [compatibility policy](docs/COMPATIBILITY.md) and relevant API/project guides before changing behavior.
+LUI is changing quickly, so **we are not accepting pull requests or code contributions for now**. Keeping development together helps us move quickly while the design and APIs are still evolving. We will update this page when contributions reopen.
 
-- Introduce PascalCase identifiers; preserve required external names and ABI spellings. Use `GetObject()`, rather than `GetOrCreateObject()`.
-- Prefix diagnostics with `[LUI:Subsystem]`. Expected failures use structured, nonmodal diagnostics.
-- Keep public semantics in the shared runtime. Native toolkit objects remain private.
-- Run Instance mutations and Luau callbacks on the authoritative scheduler thread.
-- Make destruction idempotent and prevent callbacks into dead objects or retired generations.
-- Register public APIs in reflection; regenerate types/schema/API documentation together.
-- Add focused tests for changed semantics and native mappings. State the platforms actually tested.
-- Preserve copyright/license notices, dependency pins and useful technical comments.
+## Suggestions and bug reports are welcome
 
-Use the [build](docs/BUILD.md) and [testing](docs/TESTING.md) guides. Keep binaries, credentials, personal data and local logs out of contributions. Use synthetic fixtures. An API change should update its tests, public documentation and compatibility guidance together.
+Have an idea, a confusing setup step or a problem to report? [Open an issue](https://github.com/gmoddev/LUI/issues). Please search existing issues first.
 
-Public pull requests are reviewed and integrated into the maintained source before publication. Keep changes focused and include reproduction steps, expected behavior and verification evidence.
+- For suggestions, describe what you are trying to build and how the change would help.
+- For bugs, include your LUI version, operating system, steps to reproduce, what you expected and what happened. A small example is helpful.
+- Keep passwords, personal information and other sensitive data out of reports and examples.
+
+We read feedback to help guide the project, but cannot promise a response time or that every suggestion will be implemented.
+
+## Exploring the source
+
+You are welcome to download, build and experiment with LUI under its [MIT license](LICENSE). See the [build](docs/BUILD.md), [testing](docs/TESTING.md) and [architecture](docs/ARCHITECTURE.md) guides. The pause on accepting contributions does not change the license.
