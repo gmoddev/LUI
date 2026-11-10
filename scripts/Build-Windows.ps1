@@ -15,6 +15,8 @@ $ToolchainOptions = @('--node')
 if ($NativeServiceProof) { $ToolchainOptions += '--rust' }
 & python (Join-Path $Root 'scripts/Check-Toolchains.py') @ToolchainOptions
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Toolchain qualification failed' }
+& (Join-Path $Root 'scripts/Generate-WinUIFrameProjection.ps1') -BuildDirectory $Build
+$FrameProjection=Get-Content -Raw (Join-Path $Build 'WinUIFrameProjection.json') | ConvertFrom-Json
 $VsWhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $VsWhere)) { throw '[LUI:Build] Visual Studio with C++ tools is required' }
 $Vs = & $VsWhere -latest -property installationPath
@@ -29,7 +31,7 @@ $Generator = switch ($Major) {
     default { throw "[LUI:Build] Unsupported Visual Studio major version: $Major" }
 }
 
-$Options = @('-S', $Root, '-B', $Build, '-G', $Generator, '-A', 'x64', '-DCMAKE_SYSTEM_VERSION=10.0.26100.0')
+$Options = @('-S', $Root, '-B', $Build, '-G', $Generator, '-A', 'x64', '-DCMAKE_SYSTEM_VERSION=10.0.26100.0', '-DLUI_BUILD_WINUI_PRESENTER=ON', "-DLUI_WINUI_PROJECTION_DIR=$($FrameProjection.Projection)", "-DLUI_WINUI_INCLUDE_DIR=$($FrameProjection.Include)")
 if ($LuauSourceDir) {
     $PinnedRevision = (Get-Content (Join-Path $Root 'cmake/Dependencies.json') -Raw | ConvertFrom-Json).LuauRevision
     $ActualRevision = (& git -C $LuauSourceDir rev-parse HEAD).Trim()
@@ -74,7 +76,7 @@ $env:LUI_TEST_PREVIEW_HOST = $PreviewHost
 $env:LUI_TEST_RUNTIME = $Dll
 $env:LUI_TEST_CLI = Join-Path $Root "tools/cli/bin/$Configuration/net10.0/lui.dll"
 $env:LUI_TEST_TYPECHECK = $TypeChecker
-& node --test (Join-Path $Root 'tests/editor/EditorTests.js') (Join-Path $Root 'tests/editor/TypeTests.js') (Join-Path $Root 'tests/editor/ProjectTests.js')
+& node --test (Join-Path $Root 'tests/editor/EditorTests.js') (Join-Path $Root 'tests/editor/TypeTests.js') (Join-Path $Root 'tests/editor/ProjectTests.js') (Join-Path $Root 'tests/editor/SdkTests.js')
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] VS Code preview client tests failed' }
 
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"

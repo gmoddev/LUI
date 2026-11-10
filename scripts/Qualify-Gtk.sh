@@ -7,7 +7,7 @@ Build=$(realpath -m "$Build")
 python3 scripts/Check-Toolchains.py
 cmake -S . -B "$Build" -DCMAKE_BUILD_TYPE=Debug -DLUI_BUILD_GTK4=ON "$@"
 cmake --build "$Build" --parallel 2 --target LuiGtkQualification
-ctest --test-dir "$Build" -R '^LuiGtkTests$' --output-on-failure --no-tests=error
+ctest --test-dir "$Build" -R '^LuiGtk(Tests|TemporaryTextTests)$' --output-on-failure --no-tests=error
 GDK_SCALE=2 ctest --test-dir "$Build" -R '^LuiGtkTests$' --output-on-failure --no-tests=error
 # Keep the X server alive while discovery temporarily closes the last client.
 timeout 20s xvfb-run -a -e /dev/stderr -s '-screen 0 1280x1024x24 -noreset' dbus-run-session -- \

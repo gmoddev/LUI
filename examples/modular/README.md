@@ -10,7 +10,7 @@ dotnet tools/cli/bin/Debug/net10.0/lui.dll run examples/modular/lui.json --mode 
 dotnet tools/cli/bin/Debug/net10.0/lui.dll preview examples/modular/lui.json --mode project --host tools/preview-host/bin/Debug/net10.0/lui-preview-host.dll --runtime build/windows-x64/Debug/LuiRuntime.dll
 ```
 
-For VS Code set `lui.manifestPath` to this manifest, set built CLI/checker/preview/runtime/native-host paths, then use **LUI: Start Preview** and **LUI: Check Types**. Save any project file to reprepare the generation. Source controls navigate prepared module IDs.
+For VS Code set `lui.manifestPath` to this manifest. Use **LUI: Choose SDK** for a matched installation, or configure individual build paths as a framework contributor. **LUI: Inspect Layout** and **LUI: Check Types** inspect/check declared project sources; **LUI: Run App** launches native controls. Saving a project file reloads the inspector generation; native execution must be stopped and rerun. Source controls navigate prepared module IDs.
 
 Compose a runnable folder using a published WinUI host:
 

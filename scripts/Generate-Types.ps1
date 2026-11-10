@@ -18,10 +18,12 @@ $Types.Add('export type Signal = { read Connect: (Self: Signal, Callback: (...an
 $Types.Add('export type Vector2 = { read X: number, read Y: number }')
 $Types.Add('export type UDim = { read Scale: number, read Offset: number }')
 $Types.Add('export type UDim2 = { read X: UDim, read Y: UDim }')
-$Types.Add('export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2, read IsCanceled: boolean }')
+$Types.Add('export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2, read IsCanceled: boolean, read Button: ("Left" | "Right" | "Middle" | "Auxiliary1" | "Auxiliary2")? }')
 $Types.Add('export type KeyboardInput = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean }')
 $Types.Add('export type InputEvent = PointerInput | KeyboardInput')
 $Types.Add('export type InputSignal = { read Connect: (Self: InputSignal, Callback: (Input: InputEvent) -> ()) -> Connection }')
+$Types.Add('export type KeyboardShortcut = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean, read Control: boolean, read Shift: boolean, read Alt: boolean, read TextEditing: boolean }')
+$Types.Add('export type ShortcutSignal = { read Connect: (Self: ShortcutSignal, Callback: (Input: KeyboardShortcut) -> ()) -> Connection }')
 $Types.Add('export type ThemeSignal = { read Connect: (Self: ThemeSignal, Callback: (Theme: string) -> ()) -> Connection }')
 $Types.Add('')
 
@@ -96,10 +98,22 @@ foreach ($Class in $Schema.classes) {
         $Lineage.Insert(0, $Cursor)
         $Cursor = if ($Cursor.base) { $ClassMap[$Cursor.base] } else { $null }
     }
+    $ReadOnlyOverrides = @{}
+    foreach ($Property in $Class.properties) {
+        if ($Property.readOnly) { $ReadOnlyOverrides[$Property.name] = $true }
+    }
+    $PropertyOwners = @{}
+    foreach ($Ancestor in $Lineage) {
+        foreach ($Property in $Ancestor.properties) {
+            $PropertyOwners[$Property.name] = $Ancestor.name
+        }
+    }
     $Types.Add("export type $($Class.name)Init = {")
     foreach ($Ancestor in $Lineage) {
         foreach ($Property in $Ancestor.properties) {
-            if ($Property.readOnly -or ($Class.parentRule -eq 'none' -and $Property.name -eq 'Parent')) { continue }
+            if ($Property.readOnly -or $ReadOnlyOverrides.ContainsKey($Property.name) -or
+                $PropertyOwners[$Property.name] -ne $Ancestor.name -or
+                ($Class.parentRule -eq 'none' -and $Property.name -eq 'Parent')) { continue }
             $PropertyType = if ($Property.name -eq 'Parent' -and $Class.parentRule -eq 'visual') { "($ContainerTypes | GuiObject)?" }
                 elseif ($Property.name -eq 'Parent') { "($ContainerTypes)?" }
                 elseif ($Property.type.EndsWith('?')) { $Property.type }
@@ -112,28 +126,13 @@ foreach ($Class in $Schema.classes) {
 }
 
 $CreatableClasses = @($Schema.classes | Where-Object creatable)
-$ConstructorOverloads = @($CreatableClasses | Select-Object -First 7 | ForEach-Object {
-    "((ClassName: `"$($_.name)`", Properties: any) -> $($_.name))"
-})
-$SharedClasses = @($CreatableClasses | Select-Object -Skip 7)
-if ($SharedClasses.Count) {
-    # Keep the definition below the pinned Luau solver's overload complexity limit.
-    $Names = @($SharedClasses | ForEach-Object { "`"$($_.name)`"" }) -join ' | '
-    $ResultTypes = @($SharedClasses | ForEach-Object { $_.name }) -join ' | '
-    $ConstructorOverloads += "((ClassName: $Names, Properties: any) -> ($ResultTypes))"
-}
-while ($ConstructorOverloads.Count -gt 1) {
-    $Pairs = [System.Collections.Generic.List[string]]::new()
-    for ($Index = 0; $Index -lt $ConstructorOverloads.Count; $Index += 2) {
-        if ($Index + 1 -lt $ConstructorOverloads.Count) {
-            $Pairs.Add("($($ConstructorOverloads[$Index]) & $($ConstructorOverloads[$Index + 1]))")
-        } else {
-            $Pairs.Add($ConstructorOverloads[$Index])
-        }
-    }
-    $ConstructorOverloads = @($Pairs)
-}
-$Types.Add("declare Instance: { read new: $($ConstructorOverloads[0]) }")
+# A finite map keeps literal results exact without a large function intersection.
+# The same signature accepts supported finite unions of class names; unknown or
+# abstract names are outside keyof and cannot fall back to an unrelated result.
+$Types.Add('type LUIInstanceClassMap = {')
+foreach ($Class in $CreatableClasses) { $Types.Add("    $($Class.name): $($Class.name),") }
+$Types.Add('}')
+$Types.Add('declare Instance: { read new: <Name>(ClassName: Name & keyof<LUIInstanceClassMap>, Properties: any) -> index<LUIInstanceClassMap, Name> }')
 $Types.Add('declare Vector2: { read new: (X: number, Y: number) -> Vector2 }')
 $Types.Add('declare UDim: { read new: (Scale: number, Offset: number) -> UDim }')
 $Types.Add('declare UDim2: {')

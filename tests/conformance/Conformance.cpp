@@ -298,6 +298,199 @@ int main() {
             "late native pointer cancellation was accepted twice");
         Lui_Destroy(DisableRuntime);
     }
+    LuiRuntime* InteractionRuntime = Lui_Create();
+    Failures += Check(InteractionRuntime != nullptr, "could not create interaction runtime");
+    if (InteractionRuntime) {
+        LuiFocusCallbacksV1 InvalidFocus{sizeof(LuiFocusCallbacksV1),2,nullptr,
+            +[](void*,int)->int{return 1;},0};
+        Failures += Check(Lui_SetFocusCallbacks(InteractionRuntime,&InvalidFocus)==0,
+            "invalid focus callback version was accepted");
+        ScriptStatus = Lui_RunScript(InteractionRuntime, R"(
+            Window = Instance.new("Window")
+            Button = Instance.new("TextButton", {Parent = Window})
+            Sequence = ""
+            Button.InputBegan:Connect(function(Event)
+                assert(Event.Device == "Mouse" and Event.PointerId >= 0)
+                assert(not pcall(function() Event.Button = "Other" end))
+                Sequence ..= Event.Button .. "+ "
+            end)
+            Button.InputChanged:Connect(function(Event)
+                assert(Event.Button == nil and Event.PointerId == 7)
+                Sequence ..= "move "
+            end)
+            Button.InputEnded:Connect(function(Event)
+                Sequence ..= Event.Button .. (Event.IsCanceled and "! " or "- ")
+            end)
+            Button.FocusLost:Connect(function() Sequence ..= "lost " end)
+            Window.Visible = true
+            assert(type(Button.Focus) == "function" and Window.Focus == nil)
+        )", "InteractionV2");
+        Failures += Check(ScriptStatus == 1, Lui_GetLastError(InteractionRuntime));
+        ScriptStatus = Lui_RunScript(InteractionRuntime,"assert(Button:Focus())","InteractionFocusRequest");
+        Failures += Check(ScriptStatus == 1, Lui_GetLastError(InteractionRuntime));
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,0,0,7,1,1,0)==0,
+            "mouse press without button identity was accepted");
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,0,0,7,1,1,6)==0,
+            "unknown mouse button was accepted");
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,1,0,7,1,1,1)==0,
+            "button-tagged pointer motion was accepted");
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,0,2,7,1,1,1)==0,
+            "nonmouse button was accepted");
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,0,0,7,1,1,1)==1 &&
+            Lui_PointerInputV2(InteractionRuntime,2,0,0,7,1,1,2)==1,
+            "distinct buttons on one pointer were rejected");
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,1,0,7,10000,10000,0)==1,
+            "captured motion outside bounds was rejected");
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,2,0,7,10000,10000,1)==1,
+            "captured release outside bounds was rejected");
+        Failures += Check(Lui_FocusChanged(InteractionRuntime,2,0)==1,
+            "focus loss was rejected");
+        ScriptStatus = Lui_RunScript(InteractionRuntime,
+            "assert(Sequence == 'Left+ Right+ move Left- lost Right! ' and not Button.IsFocused)",
+            "InteractionV2Order");
+        Failures += Check(ScriptStatus == 1, Lui_GetLastError(InteractionRuntime));
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,2,3,0,7,0,0,0)==0,
+            "duplicate canceled pointer was accepted");
+        ScriptStatus=Lui_RunScript(InteractionRuntime,R"(
+            SelfDisable = Instance.new("TextButton", {Parent=Window})
+            SelfDisableSequence = ""
+            SelfDisable.InputBegan:Connect(function(Event)
+                SelfDisableSequence ..= Event.Button .. "+ "
+                SelfDisable.Enabled = false
+            end)
+            SelfDisable.InputEnded:Connect(function(Event)
+                assert(Event.IsCanceled)
+                SelfDisableSequence ..= Event.Button .. "! "
+            end)
+        )","InteractionSelfDisableSetup");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(InteractionRuntime));
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,3,0,0,8,1,1,1)==1,
+            "self-disabling V2 press was rejected");
+        ScriptStatus=Lui_RunScript(InteractionRuntime,
+            "assert(SelfDisableSequence == 'Left+ Left! ')","InteractionSelfDisableCheck");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(InteractionRuntime));
+        Failures += Check(Lui_PointerInputV2(InteractionRuntime,3,2,0,8,1,1,1)==0,
+            "late release after self-disable was accepted twice");
+        Lui_Destroy(InteractionRuntime);
+    }
+    LuiRuntime* FocusBridgeRuntime = Lui_Create();
+    Failures += Check(FocusBridgeRuntime != nullptr, "could not create focus bridge runtime");
+    if (FocusBridgeRuntime) {
+        int RequestCount = 0;
+        LuiFocusCallbacksV1 FocusBridge{sizeof(LuiFocusCallbacksV1),1,&RequestCount,
+            +[](void* Context,int Id)->int {++*static_cast<int*>(Context); return Id==2 ? 1 : 0;},0};
+        Failures += Check(Lui_SetFocusCallbacks(FocusBridgeRuntime,&FocusBridge)==1,
+            "valid focus bridge was rejected");
+        Failures += Check(Lui_SetFocusCallbacks(FocusBridgeRuntime,&FocusBridge)==0,
+            "duplicate focus bridge was accepted");
+        ScriptStatus = Lui_RunScript(FocusBridgeRuntime,
+            "Window=Instance.new('Window'); Button=Instance.new('TextButton',{Parent=Window}); Window.Visible=true",
+            "FocusBridgeSetup");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(FocusBridgeRuntime));
+        LuiBackendCallbacks Backend{};
+        Backend.Create=+[](void*,int,const char*)->int{return 1;};
+        Backend.Property=+[](void*,int,const char*,const char*)->int{return 1;};
+        Backend.Parent=+[](void*,int,int)->int{return 1;};
+        Backend.Arrange=+[](void*,int,double,double,double,double,int)->int{return 1;};
+        Backend.Destroy=+[](void*,int)->int{return 1;};
+        Lui_SetBackend(FocusBridgeRuntime,Backend);
+        ScriptStatus=Lui_RunScript(FocusBridgeRuntime,
+            "assert(Button:Focus() and not Button.IsFocused)","FocusRequestOnly");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(FocusBridgeRuntime));
+        Failures += Check(RequestCount==1,"native focus request callback was not called once");
+        Failures += Check(Lui_SetFocusCallbacks(FocusBridgeRuntime,&FocusBridge)==0,
+            "late focus bridge replacement was accepted");
+        Failures += Check(Lui_FocusChanged(FocusBridgeRuntime,2,1)==1,
+            "native focus notification was rejected");
+        ScriptStatus=Lui_RunScript(FocusBridgeRuntime,"assert(Button.IsFocused)","FocusNotifyOnly");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(FocusBridgeRuntime));
+        Lui_Destroy(FocusBridgeRuntime);
+    }
+    LuiRuntime* FocusSubmitRuntime = Lui_Create();
+    Failures += Check(FocusSubmitRuntime != nullptr,"could not create focus submission runtime");
+    if (FocusSubmitRuntime) {
+        struct NativeFocusState {bool Enabled=true,OverlayVisible=true; int Requests=0;} NativeState;
+        LuiFocusCallbacksV1 Focus{sizeof(Focus),1,&NativeState,+[](void* Context,int Id)->int {
+            auto& State=*static_cast<NativeFocusState*>(Context); ++State.Requests;
+            return Id==2 && State.Enabled && !State.OverlayVisible ? 1 : 0;
+        },0};
+        Failures += Check(Lui_SetFocusCallbacks(FocusSubmitRuntime,&Focus)==1,"focus submission bridge rejected");
+        LuiBackendCallbacks Backend{}; Backend.Context=&NativeState;
+        Backend.Create=+[](void*,int,const char*)->int{return 1;};
+        Backend.Property=+[](void* Context,int Id,const char* Name,const char* Value)->int {
+            auto& State=*static_cast<NativeFocusState*>(Context);
+            if(Id==2 && std::strcmp(Name,"Enabled")==0) State.Enabled=std::strcmp(Value,"true")==0;
+            if(Id==3 && std::strcmp(Name,"Visible")==0) State.OverlayVisible=std::strcmp(Value,"true")==0;
+            return 1;
+        };
+        Backend.Parent=+[](void*,int,int)->int{return 1;};
+        Backend.Arrange=+[](void*,int,double,double,double,double,int)->int{return 1;};
+        Backend.Destroy=+[](void*,int)->int{return 1;};
+        Lui_SetBackend(FocusSubmitRuntime,Backend);
+        ScriptStatus=Lui_RunScript(FocusSubmitRuntime,R"(
+            W=Instance.new('Window',{Visible=true})
+            Target=Instance.new('TextBox',{Parent=W,Enabled=false})
+            Overlay=Instance.new('Frame',{Parent=W,Visible=true})
+        )","FocusSubmitSetup");
+        Failures += Check(ScriptStatus==1 && !NativeState.Enabled,Lui_GetLastError(FocusSubmitRuntime));
+        ScriptStatus=Lui_RunScript(FocusSubmitRuntime,
+            "Overlay.Visible=false; Target.Enabled=true; assert(Target:Focus() and not Target.IsFocused)","FocusSubmitBeforeRequest");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(FocusSubmitRuntime));
+        Failures += Check(NativeState.Requests==1 && NativeState.Enabled && !NativeState.OverlayVisible,
+            "native focus did not observe preceding queued properties");
+        ScriptStatus=Lui_RunScript(FocusSubmitRuntime,
+            "Target.Enabled=false; assert(not Target:Focus())","FocusSubmitDisabled");
+        Failures += Check(ScriptStatus==1 && !NativeState.Enabled && NativeState.Requests==1,
+            "disabled focus request reached native control");
+        Lui_Destroy(FocusSubmitRuntime);
+    }
+    LuiRuntime* ShortcutRuntime = Lui_Create();
+    Failures += Check(ShortcutRuntime != nullptr, "could not create window shortcut runtime");
+    if (ShortcutRuntime) {
+        ScriptStatus = Lui_RunScript(ShortcutRuntime,R"(
+            W=Instance.new('Window',{Visible=true})
+            Input=Instance.new('TextBox',{Parent=W})
+            Other=Instance.new('Window',{Visible=true})
+            Button=Instance.new('TextButton',{Parent=Other})
+            Seen=0
+            W.Shortcut:Connect(function(Event)
+                assert(Event.Device=='Keyboard' and Event.Key=='S')
+                assert(Event.Control and Event.Shift and not Event.Alt and Event.TextEditing)
+                assert(not pcall(function() Event.Key='Z' end))
+                LastRepeat=Event.IsRepeat; Seen+=1
+            end)
+            Other.Shortcut:Connect(function(Event)
+                assert(Event.Key=='P' and not Event.TextEditing and not Event.Control and not Event.Shift and Event.Alt)
+                Seen+=10
+            end)
+        )","WindowShortcutSetup");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(ShortcutRuntime));
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,1,2,"S",3,0)==0,"unfocused shortcut accepted");
+        Failures += Check(Lui_FocusChanged(ShortcutRuntime,2,1)==1,"shortcut text focus rejected");
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,1,2,"S",3,0)==1,"window shortcut rejected");
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,1,2,"S",3,1)==1,"shortcut repeat rejected");
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,3,2,"S",3,0)==0,"shortcut crossed window");
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,2,2,"S",3,0)==0,"nonwindow shortcut accepted");
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,1,2,"Unknown",3,0)==0 &&
+            Lui_WindowShortcut(ShortcutRuntime,1,2,"Control",1,0)==0 &&
+            Lui_WindowShortcut(ShortcutRuntime,1,2,"S",8,0)==0 &&
+            Lui_WindowShortcut(ShortcutRuntime,1,2,"S",3,2)==0 &&
+            Lui_WindowShortcut(ShortcutRuntime,1,2,nullptr,3,0)==0,"invalid shortcut admitted");
+        Failures += Check(Lui_TextComposition(ShortcutRuntime,2,0,"preedit")==1 &&
+            Lui_WindowShortcut(ShortcutRuntime,1,2,"S",3,0)==0 &&
+            Lui_TextComposition(ShortcutRuntime,2,2,"")==1,"composing shortcut admitted");
+        Failures += Check(Lui_FocusChanged(ShortcutRuntime,4,1)==1 &&
+            Lui_WindowShortcut(ShortcutRuntime,1,2,"S",3,0)==0 &&
+            Lui_WindowShortcut(ShortcutRuntime,3,4,"P",4,0)==1,"focus transfer shortcut isolation failed");
+        ScriptStatus=Lui_RunScript(ShortcutRuntime,
+            "assert(Seen==12 and LastRepeat); Other.Visible=false","WindowShortcutCheck");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(ShortcutRuntime));
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,3,4,"P",4,0)==0,"hidden window shortcut accepted");
+        ScriptStatus=Lui_RunScript(ShortcutRuntime,"Other:Destroy()","WindowShortcutDestroy");
+        Failures += Check(ScriptStatus==1,Lui_GetLastError(ShortcutRuntime));
+        Failures += Check(Lui_WindowShortcut(ShortcutRuntime,3,4,"P",4,0)==0,"destroyed shortcut accepted");
+        Lui_Destroy(ShortcutRuntime);
+    }
     if (!Failures) std::puts("[LUI:Conformance] Foundation 1 control semantics passed");
     return Failures ? 1 : 0;
 }

@@ -85,7 +85,19 @@ static Json Read(lua_State* State, const std::string& Name, int Index) {
 }
 bool Set(lua_State* State, Node* Value, const std::string& Name, int Index) {
     if (!Defaults.contains(Name)) return false;
-    Value->StyleProperties[Name] = Read(State, Name, Index).dump(); return true;
+    const Json Property = Read(State, Name, Index);
+    Value->StyleProperties[Name] = Property.dump();
+    // Publish facts only after validation and authoritative assignment succeed.
+    auto& Geometry = Value->StyleGeometry;
+    if (Name == "Opacity") {
+        const double Number = Property.get<double>();
+        Geometry.Set(StyleGeometryValue::VisibleOpacity, Number > 0);
+        Geometry.Set(StyleGeometryValue::UnitOpacity, Number == 1);
+    } else if (Name == "BackgroundColor3") Geometry.Set(StyleGeometryValue::Background, !Property.is_null());
+    else if (Name == "BackgroundTransparency") Geometry.Set(StyleGeometryValue::NoTransparency, Property.get<double>() == 0);
+    else if (Name == "CornerRadius") Geometry.Set(StyleGeometryValue::SquareCorners, Property.get<double>() == 0);
+    else if (Name == "BorderSizePixel") Geometry.Set(StyleGeometryValue::NoBorder, Property.get<double>() == 0);
+    return true;
 }
 bool Push(lua_State* State, const Node* Value, const std::string& Name) {
     if (!Defaults.contains(Name)) return false;

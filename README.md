@@ -18,6 +18,11 @@ Window.Visible = true
 
 ## Get started
 
+An experimental [portable SDK workflow](docs/SDK.md) now has a bundle builder,
+matched CLI/editor discovery, pinned modular starters and an offline VSIX. A
+signed public SDK download and clean-machine release qualification remain open.
+The commands below build the framework from source; they are contributor setup.
+
 1. Follow the [build guide](docs/BUILD.md).
 2. Run [hello.luau](examples/hello.luau) or the [modular application](examples/modular/README.md).
 3. Explore the [launcher dashboard](examples/dashboard/README.md) and the [10,000-item conversation](examples/conversation/README.md).

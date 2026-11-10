@@ -23,7 +23,8 @@ bool NativeServiceNeedsHostGrant(const LuiRuntime* Runtime, const std::string& N
 uint32_t RegisterPlatformNativeService(LuiRuntime* Runtime, const LuiNativeServiceV2* Service,
     const LuiNativeProviderV2* Provider, void* Context, LuiNativeHostV2* Host);
 int PushNativeService(lua_State* State, LuiRuntime* Runtime, const std::string& Name);
-int DrainNativeServices(LuiRuntime* Runtime);
+int DrainNativeServices(LuiRuntime* Runtime, size_t Maximum = 64,
+    std::chrono::steady_clock::time_point Deadline = std::chrono::steady_clock::time_point::max());
 void CloseNativeServices(LuiRuntime* Runtime);
 std::string NativeServiceSchema(const LuiRuntime* Runtime, const std::string& Base);
 Lui::Project::ServiceDeclaration DescribeNativeService(LuiNativeSessionV2* Session);

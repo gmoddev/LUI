@@ -19,6 +19,8 @@ internal static class CliProgram
             {
                 Output.WriteLine("LUI developer CLI\n" +
                     "  lui new <directory>\n" +
+                    "  lui doctor [manifest] [--sdk <SDK directory>] [--format text|json]\n" +
+                    "  SDK commands discover matched tools and honor LuiToolchain.json; --sdk selects an installation.\n" +
                     "  lui check [manifest] --checker <LuiTypeCheck executable> [--definitions <LUI.d.luau>] [--format text|json]\n" +
                     "  lui check [manifest] --mode syntax --runtime <LuiRuntime library>\n" +
                     "  lui check [manifest v2] --mode project --diagnostics development --checker <LuiTypeCheck executable> [--format text|json]\n" +
@@ -36,6 +38,31 @@ internal static class CliProgram
 
             string Command = Arguments[0];
             (string? Position, Dictionary<string, string> Options) = Parse(Arguments);
+            string? SdkRoot = Options.GetValueOrDefault("--sdk");
+            Options.Remove("--sdk");
+            SdkInstallation? Sdk = SdkInstallation.Resolve(SdkRoot, Command == "new" ? null : Position ?? "lui.json", Command == "doctor");
+            if (Command == "doctor")
+            {
+                RequireOptions(Options, "--format");
+                string Format = Options.GetValueOrDefault("--format", "text");
+                if (Format is not ("text" or "json")) throw new ArgumentException("Format must be text or json");
+                Output.WriteLine(Format == "json" ? JsonSerializer.Serialize(Sdk!.Describe()) : $"[LUI:SDK] Ready: {Sdk!.Version} ({Sdk.Target}); local integrity verified, publisher authenticity is separate");
+                return 0;
+            }
+            if (Sdk is not null && Command is "check" or "run" or "preview" or "build")
+            {
+                if (new FileInfo(Position ?? "lui.json").Length > 256 * 1024) throw new InvalidDataException("[LUI:Project] LimitExceeded");
+                using JsonDocument Metadata = JsonDocument.Parse(File.ReadAllText(Position ?? "lui.json"));
+                if (!Options.ContainsKey("--mode") && Metadata.RootElement.GetProperty("SchemaVersion").GetInt32() == 2)
+                    Options["--mode"] = "project";
+                if (Command == "check" && Options.GetValueOrDefault("--mode") == "project" && !Options.ContainsKey("--diagnostics"))
+                {
+                    if (Metadata.RootElement.GetProperty("Diagnostics").GetProperty("Mode").GetString() != "Development")
+                        throw new InvalidDataException("[LUI:TypeCheck] PolicyNotSupported");
+                    Options["--diagnostics"] = "development";
+                }
+            }
+            Sdk?.Configure(Options, Command);
             switch (Command)
             {
                 case "stage":
@@ -54,7 +81,8 @@ internal static class CliProgram
                 case "new":
                     if (Position is null || Options.Count != 0)
                         throw new ArgumentException("new requires one directory and no options");
-                    CreateProject(Position);
+                    if (Sdk is null) CreateProject(Position);
+                    else CreateSdkProject(Position, Sdk);
                     Output.WriteLine("[LUI:CLI] Created project at " + Path.GetFullPath(Position));
                     return 0;
                 case "check":
@@ -208,11 +236,51 @@ internal static class CliProgram
         }
         catch (Exception Error) when (Error is ArgumentException or InvalidDataException or IOException or
             UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException or
-            BadImageFormatException or PlatformNotSupportedException or JsonException or Win32Exception)
+            BadImageFormatException or PlatformNotSupportedException or JsonException or Win32Exception or InvalidOperationException or KeyNotFoundException or FormatException)
         {
             Errors.WriteLine("[LUI:CLI] " + Error.Message);
             return 1;
         }
+    }
+
+    private static void CreateSdkProject(string DirectoryValue, SdkInstallation Sdk)
+    {
+        string Root = Path.GetFullPath(DirectoryValue);
+        string Name = Path.GetFileName(Path.TrimEndingDirectorySeparator(Root));
+        if (Name.Length is < 1 or > 64 || !char.IsAsciiLetter(Name[0]) || Name.Any(Character => !char.IsAsciiLetterOrDigit(Character) && Character is not ('_' or '-')))
+            throw new ArgumentException("Project name must start with a letter and use letters, digits, _ or -");
+        if (Directory.Exists(Root)) throw new IOException("Choose a new project directory; existing directories are preserved");
+        Directory.CreateDirectory(Path.Combine(Root, "Src"));
+        File.WriteAllText(Path.Combine(Root, "lui.json"), JsonSerializer.Serialize(new
+        {
+            SchemaVersion = 2, Script = "Src/Main.luau", Capabilities = Array.Empty<string>(), Extensions = Array.Empty<string>(),
+            Assets = Array.Empty<string>(), ExtensionDeclarations = Array.Empty<string>(), Diagnostics = new { Mode = "Development" },
+            Modules = new { Root = "Src", Files = new[] { "Main.luau" }, Requires = Array.Empty<string>(), Dependencies = Array.Empty<object>() },
+        }, new JsonSerializerOptions { WriteIndented = true }) + "\n");
+        File.WriteAllText(Path.Combine(Root, "Src", "Main.luau"), """
+            local Window = Instance.new("Window", {
+                Title = "MyApp",
+                Size = UDim2.fromOffset(480, 240),
+            })
+            local Greeting = Instance.new("TextLabel", {
+                Text = "Hello from LUI",
+                Size = UDim2.fromOffset(440, 80),
+                Parent = Window,
+            })
+            local Button = Instance.new("TextButton", {
+                Text = "Click me",
+                Position = UDim2.fromOffset(20, 100),
+                Size = UDim2.fromOffset(160, 44),
+                Parent = Window,
+            })
+            Button.Activated:Connect(function()
+                Greeting.Text = "You made it work!"
+            end)
+            Window.Visible = true
+            """.Replace("Title = \"MyApp\"", "Title = \"" + Name + "\"") + "\n");
+        Sdk.WritePin(Root);
+        File.WriteAllText(Path.Combine(Root, ".gitignore"), "Dist/\n.lui/\n");
+        File.WriteAllText(Path.Combine(Root, "README.md"), $"# {Name}\n\nRun `lui check`, then `lui run` from this folder. In VS Code, use LUI: Run App.\n\nEdit Src/Main.luau, save, stop the app and run again. Clicking the button changes the greeting.\n\nUse `lui build --output Dist/{Name}` for an app folder. Keep LuiToolchain.json in version control.\n\nNew module files must be declared in lui.json. Automatic native restart and application-authored test commands are not available in this preview.\n");
     }
 
     private static (string? Position, Dictionary<string, string> Options) Parse(string[] Arguments)

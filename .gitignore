@@ -26,3 +26,9 @@ LUI.zip
 # Python tooling caches
 __pycache__/
 *.pyc
+
+# Android local toolchains, native staging and Gradle state
+backends/android/.gradle/
+backends/android/.kotlin/
+backends/android/app/.cxx/
+backends/android/local.properties

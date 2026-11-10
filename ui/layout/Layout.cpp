@@ -199,6 +199,16 @@ int HitTest(const LuiRuntime* Runtime, const Node* Window, double X, double Y) {
     return HitNode(Runtime, Window, X, Y);
 }
 
+static std::vector<Node*> PaintChildren(const LuiRuntime* Runtime, const Node* Value) {
+    std::vector<Node*> Children;
+    for (int Id : Value->Children) {
+        Node* Child = Runtime->Nodes.at(Id).get();
+        if (LuiSchema::IsA(Child->ClassName, "GuiObject")) Children.push_back(Child);
+    }
+    std::stable_sort(Children.begin(), Children.end(), [](const Node* Left, const Node* Right) {return Left->ZIndex < Right->ZIndex;});
+    return Children;
+}
+
 static void PresentNode(LuiRuntime* Runtime, Node* Value, BoundsValue Clip, int Rank, bool Visible) {
     if (Runtime->BackendFailed || Value->Destroyed) return;
     Visible = Visible && Value->Visible && Value->Enabled;
@@ -213,16 +223,62 @@ static void PresentNode(LuiRuntime* Runtime, Node* Value, BoundsValue Clip, int 
         Visible && VisibleBounds.Width > 0 && VisibleBounds.Height > 0 ? 1 : 0)) {
         FailBackend(Runtime, "Present", Value->Id); return;
     }
-    std::vector<Node*> Children;
-    for (int Id : Value->Children) {
-        Node* Child = Runtime->Nodes.at(Id).get();
-        if (LuiSchema::IsA(Child->ClassName, "GuiObject")) Children.push_back(Child);
-    }
-    std::stable_sort(Children.begin(), Children.end(), [](const Node* Left, const Node* Right) {return Left->ZIndex < Right->ZIndex;});
+    const auto Children = PaintChildren(Runtime, Value);
     for (size_t Index = 0; Index < Children.size(); ++Index)
         PresentNode(Runtime, Children[Index], Clip, static_cast<int>(Index), Visible);
 }
 
 void PresentTree(LuiRuntime* Runtime, Node* Window) {PresentNode(Runtime, Window, Window->Bounds, 0, true);}
+
+int GetWindowPresentation(const LuiRuntime* Runtime, const Node* Window, LuiWindowPresentationV1* Snapshot) {
+    struct Pending {
+        const Node* Value;
+        BoundsValue Clip;
+        bool Visible, Eligible, OpaqueAncestors;
+    };
+    std::vector<Pending> Stack{{Window, Window->Bounds, true, true, true}};
+    std::vector<LuiPresentationEntryV1> Entries;
+    size_t Scheduled = 1, Scanned = 0;
+    auto Finite = [](const BoundsValue& Value) {
+        return std::isfinite(Value.X) && std::isfinite(Value.Y) && std::isfinite(Value.Width) &&
+            std::isfinite(Value.Height) && Value.Width >= 0 && Value.Height >= 0 &&
+            std::isfinite(Value.X+Value.Width) && std::isfinite(Value.Y+Value.Height);
+    };
+    while (!Stack.empty()) {
+        const Pending Current = Stack.back(); Stack.pop_back();
+        const Node* Value = Current.Value;
+        if (Value->Destroyed) continue;
+        if (!Finite(Value->Bounds) || !Finite(Current.Clip)) return 0;
+        if (Entries.size() == Snapshot->Capacity ||
+            Value->Children.size() > LUI_WINDOW_PRESENTATION_MAX_ENTRIES - Scanned)
+            return 2;
+        Scanned += Value->Children.size();
+        BoundsValue Clip = Current.Clip;
+        if (Value->ClipsDescendants || Value->ClassName == "ScrollingFrame" || Value == Window)
+            Clip = Intersect(Clip, Value->Bounds);
+        const BoundsValue VisibleBounds = Intersect(Clip, Value->Bounds);
+        const auto& Geometry = Value->StyleGeometry;
+        const bool Visible = Current.Visible && Value->Visible && Geometry.Has(StyleGeometryValue::VisibleOpacity);
+        const bool Eligible = Current.Eligible && Value->Visible && Value->Enabled;
+        const bool OpaqueAncestors = Current.OpaqueAncestors && Geometry.Has(StyleGeometryValue::UnitOpacity);
+        const bool Opaque = (Value->ClassName == "Frame" || Value->ClassName == "ScrollingFrame") &&
+            OpaqueAncestors && Geometry.FillsOpaqueRectangle();
+        const bool Intersects = VisibleBounds.Width > 0 && VisibleBounds.Height > 0;
+        const uint32_t Flags = (Visible && Intersects ? LUI_PRESENTATION_VISIBLE : 0) |
+            (Eligible && Intersects ? LUI_PRESENTATION_INPUT_ELIGIBLE : 0) |
+            (Visible && Intersects && Opaque ? LUI_PRESENTATION_OPAQUE_RECTANGLE : 0);
+        Entries.push_back({Value->Id, Value->ParentId, static_cast<uint32_t>(Entries.size()), Flags,
+            Value->Bounds.X, Value->Bounds.Y, Value->Bounds.Width, Value->Bounds.Height,
+            Clip.X, Clip.Y, Clip.Width, Clip.Height});
+        const auto Children = PaintChildren(Runtime, Value);
+        if (Children.size() > LUI_WINDOW_PRESENTATION_MAX_ENTRIES - Scheduled) return 2;
+        Scheduled += Children.size();
+        for (auto Child = Children.rbegin(); Child != Children.rend(); ++Child)
+            Stack.push_back({*Child, Clip, Visible, Eligible, OpaqueAncestors});
+    }
+    std::copy(Entries.begin(), Entries.end(), Snapshot->Entries);
+    Snapshot->Count = static_cast<uint32_t>(Entries.size());
+    return 1;
+}
 
 }

@@ -20,7 +20,7 @@ dotnet build tools/preview-host/Lui.PreviewHost.csproj --configuration Release
 Preview="$PWD/tools/preview-host/bin/Release/net10.0/lui-preview-host.dll"
 dotnet run --project tests/preview/PreviewTests.csproj --configuration Release -- "$Preview" "$Build/libLuiRuntime.so"
 LUI_TEST_PREVIEW_HOST="$Preview" LUI_TEST_RUNTIME="$Build/libLuiRuntime.so" LUI_TEST_CLI="$Cli" LUI_TEST_TYPECHECK="$Build/LuiTypeCheck" \
-    node --test tests/editor/EditorTests.js tests/editor/TypeTests.js tests/editor/ProjectTests.js
+    node --test tests/editor/EditorTests.js tests/editor/TypeTests.js tests/editor/ProjectTests.js tests/editor/SdkTests.js
 "$Build/LuiSchemaDump" > "$Build/schema.json"
 cmp types/schema.json "$Build/schema.json"
 echo '[LUI:Build] Linux qualification passed'

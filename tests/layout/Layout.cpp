@@ -1,11 +1,15 @@
 #include "LuiRuntime.h"
+#include "../../runtime/internal/State.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <limits>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 struct Bounds {
     double X = 0;
@@ -21,6 +25,10 @@ struct LayoutBackend {
     std::unordered_map<int, Bounds> Clips;
     std::unordered_map<int, int> Ranks;
     std::unordered_map<int, std::string> Styles;
+    LuiRuntime* Runtime = nullptr;
+    int SnapshotFailures = 0, PresentationQueries = 0, ArrangeQueries = 0;
+    bool QueueTextFromPresent = false;
+    int DeferredIngress = 0;
 };
 
 static int LUI_CALL OnCreate(void* Context, int, const char*) {
@@ -39,6 +47,12 @@ static int LUI_CALL OnArrange(void* Context, int Id, double X, double Y, double 
     auto* Backend = static_cast<LayoutBackend*>(Context);
     Backend->Arranged[Id] = {X, Y, Width, Height};
     if (Id == 1 && ResizeWindow) ++Backend->WindowResizeRequests;
+    if (Backend->Runtime) {
+        LuiPresentationEntryV1 Entry{};
+        LuiWindowPresentationV1 Snapshot{sizeof(Snapshot), LUI_WINDOW_PRESENTATION_ABI_VERSION, 1, 0, &Entry, 0};
+        if (Lui_GetWindowPresentation(Backend->Runtime, 1, &Snapshot) != 0) ++Backend->SnapshotFailures;
+        ++Backend->ArrangeQueries;
+    }
     return 1;
 }
 
@@ -48,12 +62,219 @@ static bool Near(double Actual, double Expected) {
 
 static int LUI_CALL OnPresent(void* Context, int Id, int, double X, double Y, double Width, double Height, int Rank, int) {
     auto& Backend = *static_cast<LayoutBackend*>(Context);
+    if (Backend.Runtime && Id == 1) {
+        std::vector<LuiPresentationEntryV1> Entries(LUI_WINDOW_PRESENTATION_MAX_ENTRIES);
+        LuiWindowPresentationV1 Snapshot{sizeof(Snapshot), LUI_WINDOW_PRESENTATION_ABI_VERSION,
+            static_cast<uint32_t>(Entries.size()), 0, Entries.data(), 0};
+        if (Lui_GetWindowPresentation(Backend.Runtime, Id, &Snapshot) != 1 || !Snapshot.Count ||
+            Lui_IsWindowPresentationCurrent(Backend.Runtime, Id, Snapshot.Revision) != 1) ++Backend.SnapshotFailures;
+        ++Backend.PresentationQueries;
+        if (Backend.QueueTextFromPresent) {
+            Backend.QueueTextFromPresent=false;
+            if (Lui_TextInput(Backend.Runtime,2,"deferred native callback",0,0)!=1) ++Backend.SnapshotFailures;
+            else ++Backend.DeferredIngress;
+        }
+    }
     Backend.Clips[Id] = {X, Y, Width, Height}; Backend.Ranks[Id] = Rank; return 1;
 }
 
 static int Check(bool Condition, const char* Message) {
     if (!Condition) std::fprintf(stderr, "[LUI:LayoutTest] %s\n", Message);
     return Condition ? 0 : 1;
+}
+
+static int PresentationTests() {
+    LuiRuntime* Runtime = Lui_Create();
+    LayoutBackend Backend; Backend.Runtime = Runtime;
+    Lui_SetBackend(Runtime, {&Backend, OnCreate, OnProperty, OnParent, OnArrange, OnDestroy});
+    LuiPresentationCallbacksV1 Presentation{sizeof(Presentation), 1, &Backend, OnPresent};
+    Lui_SetPresentationCallbacks(Runtime, &Presentation);
+    int Failures = Check(Lui_RunScript(Runtime, R"(
+        W = Instance.new('Window', {Visible=true,Size=UDim2.fromOffset(300,240)})
+        local function Frame(Parent, Z)
+            return Instance.new('Frame', {Parent=Parent, ZIndex=Z,
+                Size=UDim2.fromOffset(80,40), BackgroundColor3=Color3.fromRGB(20,30,40)})
+        end
+        Editor=Instance.new('TextBox',{Parent=W,Size=UDim2.fromOffset(280,220)})
+        Lower=Frame(W,1); Grandchild=Frame(Lower,999); Higher=Frame(W,2)
+        Disabled=Instance.new('TextButton',{Parent=W,ZIndex=3,Size=UDim2.fromOffset(80,40),Enabled=false})
+        Transparent=Frame(W,4); Transparent.BackgroundTransparency=0.5
+        Rounded=Frame(W,5); Rounded.CornerRadius=4
+        Scroll=Instance.new('ScrollingFrame',{Parent=W,ZIndex=6,Position=UDim2.fromOffset(10,10),
+            Size=UDim2.fromOffset(100,80),CanvasSize=UDim2.fromOffset(200,200),CanvasPosition=Vector2.new(20,30),
+            BackgroundColor3=Color3.fromRGB(20,30,40)})
+        Scrolled=Frame(Scroll,0); Scrolled.Position=UDim2.fromOffset(50,60)
+        Faded=Frame(W,7); Faded.Opacity=0.5; FadedChild=Frame(Faded,0)
+        Hidden=Frame(W,8); Hidden.Visible=false; HiddenChild=Frame(Hidden,0)
+        Other=Instance.new('Window',{Visible=true,Size=UDim2.fromOffset(300,240)})
+    )", "PresentationSnapshot") == 1, Lui_GetLastError(Runtime));
+    std::vector<LuiPresentationEntryV1> Entries(LUI_WINDOW_PRESENTATION_MAX_ENTRIES);
+    LuiWindowPresentationV1 Snapshot{sizeof(Snapshot), LUI_WINDOW_PRESENTATION_ABI_VERSION,
+        static_cast<uint32_t>(Entries.size()), 0, Entries.data(), 0};
+    Failures += Check(Lui_GetWindowPresentation(Runtime, 1, &Snapshot) == 1 && Snapshot.Count == 14,
+        "window presentation query failed");
+    Failures += Check(Backend.ArrangeQueries > 0 && Backend.PresentationQueries > 0 && !Backend.SnapshotFailures,
+        "snapshot admitted partial arrange or rejected committed native Present callback");
+    for (uint32_t Index=0; Index<Snapshot.Count; ++Index)
+        Failures += Check(Entries[Index].Id == static_cast<int>(Index+1) && Entries[Index].PaintOrder == Index,
+            "nested sibling paint order escaped ancestor stacking context");
+    Failures += Check((Entries[5].Flags & LUI_PRESENTATION_VISIBLE) &&
+        !(Entries[5].Flags & LUI_PRESENTATION_INPUT_ELIGIBLE) &&
+        !(Entries[5].Flags & LUI_PRESENTATION_OPAQUE_RECTANGLE), "disabled native control stopped painting or claimed opaque");
+    Failures += Check(!(Entries[6].Flags & LUI_PRESENTATION_OPAQUE_RECTANGLE) &&
+        !(Entries[7].Flags & LUI_PRESENTATION_OPAQUE_RECTANGLE) &&
+        !(Entries[10].Flags & LUI_PRESENTATION_OPAQUE_RECTANGLE) &&
+        !(Entries[11].Flags & LUI_PRESENTATION_OPAQUE_RECTANGLE) && !Entries[12].Flags && !Entries[13].Flags,
+        "transparent rounded ancestor-opacity or hidden coverage claimed opaque");
+    const auto& Scrolled = Entries[9];
+    Failures += Check(Near(Scrolled.X,40) && Near(Scrolled.Y,40) && Near(Scrolled.ClipX,10) &&
+        Near(Scrolled.ClipY,10) && Near(Scrolled.ClipWidth,100) && Near(Scrolled.ClipHeight,80),
+        "scrolled window-local bounds/ancestor clip differ");
+    Backend.QueueTextFromPresent=true;
+    Failures += Check(Lui_RunScript(Runtime,
+        "Lower.BorderSizePixel=2; Editor.TextChanged:Connect(function() Lower.ZIndex=1 end)",
+        "SnapshotNativeCallbackSetup")==1,Lui_GetLastError(Runtime));
+    Failures += Check(Lui_TextInput(Runtime,2,"native callback",0,0)==1 &&
+        Lui_GetWindowPresentation(Runtime,1,&Snapshot)==1 &&
+        !(Entries[2].Flags & LUI_PRESENTATION_OPAQUE_RECTANGLE) && !Backend.SnapshotFailures && Backend.DeferredIngress==1,
+        "native text callback presentation failed or border-only coverage overclaimed");
+    const uint64_t OldRevision = Snapshot.Revision;
+    Failures += Check(Lui_IsWindowPresentationCurrent(Runtime,1,OldRevision)==1 &&
+        Lui_IsWindowPresentationCurrent(Runtime,15,OldRevision)==1,
+        "committed window revision unavailable");
+    // The identity is the (WindowId, Revision) pair, not a globally unique revision.
+    Failures += Check(Lui_RunScript(Runtime,"Higher.Parent=Other", "SnapshotReparent")==1,Lui_GetLastError(Runtime));
+    Failures += Check(Lui_IsWindowPresentationCurrent(Runtime,1,OldRevision)==0 &&
+        Lui_GetWindowPresentation(Runtime,1,&Snapshot)==1 && Snapshot.Count==13,
+        "reparent retained stale window mask revision");
+    LuiPresentationEntryV1 Sentinel{}; Sentinel.Id=9876;
+    LuiWindowPresentationV1 Small{sizeof(Small),LUI_WINDOW_PRESENTATION_ABI_VERSION,1,77,&Sentinel,99};
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Small)==2 && Small.Count==0 &&
+        Small.Revision==0 && Sentinel.Id==9876,"capacity overflow leaked partial snapshot");
+    Small.Capacity=LUI_WINDOW_PRESENTATION_MAX_ENTRIES+1;
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Small)==0,"oversized output accepted");
+    Failures += Check(Lui_GetWindowPresentation(nullptr,1,&Snapshot)==0 && !Snapshot.Count &&
+        Lui_IsWindowPresentationCurrent(Runtime,1,0)==0,"invalid snapshot runtime/revision accepted");
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Snapshot)==1,"snapshot reset after rejection failed");
+    int OtherThreadResult=1;
+    std::thread OtherThread([&]{OtherThreadResult=Lui_IsWindowPresentationCurrent(Runtime,1,Snapshot.Revision);});
+    OtherThread.join();
+    Failures += Check(OtherThreadResult==0,"presentation freshness ignored owner thread");
+    Failures += Check(Lui_WindowClosed(Runtime,1)==1,"native closure acknowledgement rejected");
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Snapshot)==0 && !Snapshot.Count && !Snapshot.Revision &&
+        Lui_GetWindowPresentation(Runtime,2,&Snapshot)==0,"closed/wrong-class presentation owner accepted");
+    Lui_Destroy(Runtime);
+    Runtime=Lui_Create();
+    const std::string OverflowScript="W=Instance.new('Window',{}) for Index=1,"+
+        std::to_string(LUI_WINDOW_PRESENTATION_MAX_ENTRIES)+" do Instance.new('TextLabel',{Parent=W}) end";
+    Failures += Check(Lui_RunScript(Runtime,OverflowScript.c_str(),"SnapshotTraversalBound")==1,Lui_GetLastError(Runtime));
+    Entries[0].Id=9876;
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Snapshot)==2 && !Snapshot.Count &&
+        !Snapshot.Revision && Entries[0].Id==9876,"tree overflow emitted a truncated mask source");
+    Failures += Check(Lui_RunScript(Runtime,"W:Destroy()", "SnapshotDestroyed")==1,Lui_GetLastError(Runtime));
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Snapshot)==0,"destroyed window snapshot accepted");
+    Lui_Destroy(Runtime);
+    Runtime=Lui_Create();
+    Failures += Check(Lui_RunScript(Runtime,
+        "W=Instance.new('Window',{Size=UDim2.fromOffset(1e308,100)}) "
+        "Instance.new('Frame',{Parent=W,Size=UDim2.fromScale(1e308,1)})",
+        "SnapshotFiniteGeometry")==1,Lui_GetLastError(Runtime));
+    Failures += Check(Lui_GetWindowPresentation(Runtime,1,&Snapshot)==0 && !Snapshot.Count,
+        "nonfinite derived geometry escaped query validation");
+    Lui_Destroy(Runtime);
+    return Failures;
+}
+
+static int StyleGeometryTests() {
+    LuiRuntime* Runtime = Lui_Create();
+    int Failures = 0;
+    auto Number = [](const Node* Value, const char* Name, double Default) {
+        const auto Found = Value->StyleProperties.find(Name);
+        return Found == Value->StyleProperties.end() ? Default : std::strtod(Found->second.c_str(), nullptr);
+    };
+    auto HasBackground = [](const Node* Value) {
+        const auto Found = Value->StyleProperties.find("BackgroundColor3");
+        return Found != Value->StyleProperties.end() && Found->second != "null";
+    };
+    auto Verify = [&] {
+        // Recompute from authoritative serialized values, never from the facts.
+        for (const auto& Pair : Runtime->Nodes) {
+            const Node* Value = Pair.second.get();
+            if (Value->Destroyed) continue;
+            const unsigned char Expected = static_cast<unsigned char>(
+                (HasBackground(Value) ? StyleGeometryValue::Background : 0) |
+                (Number(Value,"BackgroundTransparency",0)==0 ? StyleGeometryValue::NoTransparency : 0) |
+                (Number(Value,"CornerRadius",0)==0 ? StyleGeometryValue::SquareCorners : 0) |
+                (Number(Value,"BorderSizePixel",0)==0 ? StyleGeometryValue::NoBorder : 0) |
+                (Number(Value,"Opacity",1)>0 ? StyleGeometryValue::VisibleOpacity : 0) |
+                (Number(Value,"Opacity",1)==1 ? StyleGeometryValue::UnitOpacity : 0));
+            Failures += Check(Value->StyleGeometry.Facts==Expected,"normalized style facts differ from authoritative values");
+        }
+        std::vector<LuiPresentationEntryV1> Entries(64);
+        LuiWindowPresentationV1 Snapshot{sizeof(Snapshot),1,static_cast<uint32_t>(Entries.size()),0,Entries.data(),0};
+        if (Lui_GetWindowPresentation(Runtime,1,&Snapshot)!=1) {Failures+=Check(false,"style snapshot unavailable");return;}
+        for (uint32_t Index=0; Index<Snapshot.Count; ++Index) {
+            const auto& Entry = Entries[Index];
+            const Node* Value = Runtime->Nodes.at(Entry.Id).get();
+            bool Visible=true, Eligible=true, UnitOpacity=true;
+            for (const Node* Ancestor=Value; Ancestor;
+                Ancestor=Ancestor->ParentId ? Runtime->Nodes.at(Ancestor->ParentId).get() : nullptr) {
+                Visible=Visible && Ancestor->Visible && Number(Ancestor,"Opacity",1)>0;
+                Eligible=Eligible && Ancestor->Visible && Ancestor->Enabled;
+                UnitOpacity=UnitOpacity && Number(Ancestor,"Opacity",1)==1;
+            }
+            const bool Intersects=std::min(Entry.X+Entry.Width,Entry.ClipX+Entry.ClipWidth)>std::max(Entry.X,Entry.ClipX) &&
+                std::min(Entry.Y+Entry.Height,Entry.ClipY+Entry.ClipHeight)>std::max(Entry.Y,Entry.ClipY);
+            const bool Opaque=(Value->ClassName=="Frame" || Value->ClassName=="ScrollingFrame") &&
+                HasBackground(Value) && Number(Value,"BackgroundTransparency",0)==0 &&
+                Number(Value,"CornerRadius",0)==0 && Number(Value,"BorderSizePixel",0)==0 && UnitOpacity;
+            const uint32_t Expected=(Visible && Intersects ? LUI_PRESENTATION_VISIBLE : 0) |
+                (Eligible && Intersects ? LUI_PRESENTATION_INPUT_ELIGIBLE : 0) |
+                (Visible && Intersects && Opaque ? LUI_PRESENTATION_OPAQUE_RECTANGLE : 0);
+            Failures += Check(Entry.Flags==Expected,"cached query flags differ from recomputed style/ancestor proof");
+        }
+    };
+    auto Run = [&](const char* Script) {
+        const int Result=Lui_RunScript(Runtime,Script,"StyleGeometry");
+        Failures += Check(Result==1,Lui_GetLastError(Runtime));
+        if (Result==1) Verify();
+    };
+    Run(R"(
+        W=Instance.new('Window',{Visible=true,Size=UDim2.fromOffset(300,240)})
+        F=Instance.new('Frame',{Parent=W,Size=UDim2.fromOffset(80,40)})
+        P=Instance.new('Frame',{Parent=W,Size=UDim2.fromOffset(160,120)})
+        C=Instance.new('Frame',{Parent=P,Size=UDim2.fromOffset(40,30),BackgroundColor3=Color3.fromRGB(20,30,40)})
+        Copy=C:Clone(); Copy.Parent=W
+        assert(F.BackgroundColor3==nil and F.Opacity==1 and F.BackgroundTransparency==0 and F.CornerRadius==0 and F.BorderSizePixel==0)
+    )");
+    Run("F.BackgroundColor3=Color3.fromRGB(1,2,3)");
+    Run("F.BackgroundColor3=nil; assert(F.BackgroundColor3==nil and Copy.BackgroundColor3~=nil)");
+    Run("F.BackgroundColor3=Color3.fromRGB(1,2,3); F.BackgroundTransparency=0.5; assert(F.BackgroundTransparency==0.5)");
+    Run("F.BackgroundTransparency=0; F.CornerRadius=7; assert(F.CornerRadius==7)");
+    Run("F.CornerRadius=0; F.BorderSizePixel=2; assert(F.BorderSizePixel==2)");
+    Run("F.BorderSizePixel=0; F.Opacity=0; assert(F.Opacity==0)");
+    Run("F.Opacity=0.5; assert(F.Opacity==0.5)");
+    Run("F.Opacity=1; P.Opacity=0; assert(C.Opacity==1)");
+    Run("P.Opacity=0.5; C.Parent=W");
+    Run("C.Parent=P; P.Opacity=1");
+    Run(R"(
+        assert(not pcall(function() F.Opacity=nil end))
+        assert(not pcall(function() F.Opacity=0/0 end))
+        assert(not pcall(function() F.BackgroundTransparency=-1 end))
+        assert(not pcall(function() F.CornerRadius=-1 end))
+        assert(not pcall(function() F.BorderSizePixel=math.huge end))
+        assert(not pcall(function() F.BackgroundColor3={R=2,G=0,B=0} end))
+        assert(F.Opacity==1 and F.BackgroundTransparency==0 and F.CornerRadius==0 and F.BorderSizePixel==0)
+        F.TextSize=nil; F.TextColor3=nil; F.FontFamily=nil
+        Copy2=F:Clone(); Copy2.Parent=W; Copy2.Opacity=0.5
+        assert(F.Opacity==1 and Copy2.Opacity==0.5)
+    )");
+    Node Measured;
+    std::printf("[LUI:StyleGeometry] NodeBytes=%zu ZIndexOffset=%zu StyleMapOffset=%zu FactsBytes=%zu\n",
+        sizeof(Node),static_cast<size_t>(reinterpret_cast<uintptr_t>(&Measured.ZIndex)-reinterpret_cast<uintptr_t>(&Measured)),
+        static_cast<size_t>(reinterpret_cast<uintptr_t>(&Measured.StyleProperties)-reinterpret_cast<uintptr_t>(&Measured)),sizeof(StyleGeometryValue));
+    Lui_Destroy(Runtime);
+    return Failures;
 }
 
 static int ViewportTests() {
@@ -381,6 +602,8 @@ int main() {
         "script size assignment did not request a window resize");
     Lui_Destroy(Runtime);
     Failures += ViewportTests();
+    Failures += PresentationTests();
+    Failures += StyleGeometryTests();
     if (!Failures) std::puts("[LUI:LayoutTest] Layout and headless viewport semantics passed");
     return Failures ? 1 : 0;
 }

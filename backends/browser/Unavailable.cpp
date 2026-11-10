@@ -29,7 +29,7 @@ int DrainUiCompletions(LuiRuntime*) { return 0; }
 bool HasNativeService(const LuiRuntime*, const std::string&) { return false; }
 bool NativeServiceNeedsHostGrant(const LuiRuntime*, const std::string&) { return false; }
 int PushNativeService(lua_State* State, LuiRuntime*, const std::string&) { return Unsupported(State); }
-int DrainNativeServices(LuiRuntime*) { return 0; }
+int DrainNativeServices(LuiRuntime*, size_t, std::chrono::steady_clock::time_point) { return 0; }
 void CloseNativeServices(LuiRuntime*) {}
 void ObserveNativeServices(const LuiRuntime*, Lui::Project::DeclarationSet&, bool) {}
 void PumpDesktopServices(LuiRuntime*) {}

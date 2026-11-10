@@ -7,10 +7,16 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <locale>
+#include <charconv>
+#include <cstring>
+#include <cstdint>
 #include "../../runtime/internal/Text.h"
 
 namespace Lui::Gtk {
 namespace {
+int PointerButton(guint Button) {
+    switch(Button) {case 1:return 1; case 3:return 2; case 2:return 3; case 8:return 4; case 9:return 5; default:return 0;}
+}
 GLogWriterOutput SafeLog(GLogLevelFlags,const GLogField*,gsize,gpointer) {
     std::fputs("[LUI:GTK] NativeDiagnostic\n",stderr); return G_LOG_WRITER_HANDLED;
 }
@@ -29,6 +35,10 @@ Backend::Backend(uint32_t Mode):OwnerThread(std::this_thread::get_id()) {
     if(!Runtime) throw std::runtime_error("[LUI:GTK] StartupFailed");
     Lui_SetBackend(Runtime,{this,Create,Property,Parent,Arrange,Destroy}); Lui_SetBackendName(Runtime,"gtk4");
     try {
+    LuiFocusCallbacksV1 Focus{sizeof(Focus),1,this,RequestFocus,0};
+    if(!Lui_SetFocusCallbacks(Runtime,&Focus)) throw std::runtime_error("[LUI:GTK] FocusBridgeFailed");
+    LuiWindowCallbacksV1 Windows{sizeof(Windows),1,this,CloseWindow,0};
+    if(!Lui_SetWindowCallbacks(Runtime,&Windows)) throw std::runtime_error("[LUI:GTK] WindowBridgeFailed");
     LuiPresentationCallbacksV1 Presentation{sizeof(Presentation),1,this,Present};
     if(!Lui_SetPresentationCallbacks(Runtime,&Presentation)) throw std::runtime_error("[LUI:GTK] PresentationFailed");
     StartImages();
@@ -74,6 +84,36 @@ bool Backend::Usable(const View& Target) const {
     }
     return false;
 }
+bool Backend::InWindow(int Id,int WindowId) const {
+    for(size_t Depth=0;Depth<=Views.size() && Id; ++Depth) {
+        if(Id==WindowId) return true;
+        auto Found=Views.find(Id); if(Found==Views.end()) return false;
+        Id=Found->second->ParentId;
+    }
+    return false;
+}
+int Backend::RequestFocus(void* Context,int Id) {
+    auto& Self=*static_cast<Backend*>(Context);
+    if(!Self.Owner() || Self.Stopping) return 0;
+    auto Found=Self.Views.find(Id);
+    if(Found==Self.Views.end() || !Self.Usable(*Found->second) || !Found->second->InputVisible ||
+        !gtk_widget_get_focusable(Found->second->Native)) return 0;
+    return gtk_widget_grab_focus(Found->second->Native) ? 1 : 0;
+}
+int Backend::CloseWindow(void* Context,int Id) {
+    auto& Self=*static_cast<Backend*>(Context);
+    if(!Self.Owner() || Self.Stopping) return 0;
+    auto Found=Self.Views.find(Id);
+    if(Found==Self.Views.end() || !Found->second->Alive || Found->second->Closed || Found->second->ClassName!="Window") return 0;
+    auto& Target=*Found->second;
+    Target.Closed=true; Target.Visible=false;
+    // The canonical Window and retained children outlive native closure. The
+    // frame clock belongs to the native surface and retires before unrealize.
+    if(Target.Clock) {g_signal_handlers_disconnect_by_data(Target.Clock,&Target); Target.Clock=nullptr;}
+    Target.PresentationPending=false;
+    gtk_window_destroy(GTK_WINDOW(Target.Native));
+    return Lui_WindowClosed(Self.Runtime,Id);
+}
 void Backend::Queue(View* Target,Event Value) noexcept {
     try {
         if(Stopping || !Target->Alive || Target->Applying || !Owner()) return;
@@ -90,9 +130,9 @@ void Backend::Queue(View* Target,Event Value) noexcept {
 void Backend::ResetInput() {
     std::vector<int> Ids; for(const auto& Pair:Views) Ids.push_back(Pair.first);
     for(int Id:Ids) {
-        auto Found=Views.find(Id); if(Found!=Views.end()) Found->second->Keys.clear();
+        auto Found=Views.find(Id); if(Found!=Views.end()) {Found->second->Keys.clear(); Found->second->ActiveButtons.clear();}
         Lui_FocusChanged(Runtime,Id,0); Lui_HoverChanged(Runtime,Id,0);
-        Lui_PointerInput(Runtime,Id,3,0,0,0,0);
+        Lui_PointerInputV2(Runtime,Id,3,0,0,0,0,0);
     }
 }
 void Backend::Drain() {
@@ -109,7 +149,7 @@ void Backend::Drain() {
         if(Value.TextRevision && (!Lui_GetTextInputRevision(Runtime,Value.Id,&Revision) || Revision!=Value.TextRevision)) continue;
         auto& Target=*Found->second;
         if(Value.Type==Kind::Close) {
-            Target.Closed=true; gtk_widget_set_visible(Target.Native,false);
+            Lui_WindowCloseRequested(Runtime,Value.Id);
             if(!HasWindows()) {Stopping=true; Events.clear(); EventBytes=0; break;}
             continue;
         }
@@ -117,6 +157,7 @@ void Backend::Drain() {
         if((Value.Type==Kind::Focus || Value.Type==Kind::Hover) && !Value.Phase) {
             if(Value.Type==Kind::Focus) Lui_FocusChanged(Runtime,Value.Id,0); else Lui_HoverChanged(Runtime,Value.Id,0); continue;
         }
+        if(Value.Type==Kind::Pointer && Value.Phase==3) {Lui_PointerInputV2(Runtime,Value.Id,3,Value.Device,0,0,0,0); continue;}
         if(!Usable(Target)) continue;
         switch(Value.Type) {
             case Kind::Activate: Lui_Activate(Runtime,Value.Id); break;
@@ -125,8 +166,9 @@ void Backend::Drain() {
             case Kind::Value: Target.Value=Value.Value; Lui_ValueChanged(Runtime,Value.Id,Value.Value); break;
             case Kind::Focus: Lui_FocusChanged(Runtime,Value.Id,Value.Phase); break;
             case Kind::Hover: Lui_HoverChanged(Runtime,Value.Id,Value.Phase); break;
-            case Kind::Pointer: Lui_PointerInput(Runtime,Value.Id,Value.Phase,Value.Device,0,Value.X,Value.Y); break;
+            case Kind::Pointer: Lui_PointerInputV2(Runtime,Value.Id,Value.Phase,Value.Device,0,Value.X,Value.Y,Value.Button); break;
             case Kind::Key: Lui_KeyInput(Runtime,Value.Id,Value.Phase,Value.Text.c_str()); break;
+            case Kind::Shortcut: Lui_WindowShortcut(Runtime,Value.Id,Value.Button,Value.Text.c_str(),Value.Device,Value.Phase); break;
             case Kind::Scroll: Lui_ScrollInput(Runtime,Value.Id,Value.X,Value.Y); break;
             case Kind::TextInput: Lui_TextInput(Runtime,Value.Id,Value.Text.c_str(),static_cast<int>(Value.X),static_cast<int>(Value.Y)); break;
             case Kind::Composition: Lui_TextComposition(Runtime,Value.Id,Value.Phase,Value.Text.c_str()); break;
@@ -192,6 +234,34 @@ std::string GetKey(guint Value) {
 void Backend::Connect(View& Target) {
     auto* Data=&Target;
     if(Target.ClassName=="Window") {
+        // Track physical repeat before a child can consume press/release. The
+        // application notification itself still runs only in the bubble phase.
+        auto* KeyState=gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(KeyState,GTK_PHASE_CAPTURE);
+        g_signal_connect(KeyState,"key-pressed",reinterpret_cast<GCallback>(+[](GtkEventControllerKey*,guint Code,guint,GdkModifierType,gpointer Context)->gboolean {
+            auto* Target=static_cast<View*>(Context); auto Name=GetKey(Code); if(Name.empty()) return false;
+            Target->ShortcutRepeat=Target->Keys.count(Name)!=0; Target->Keys.insert(Name); return false;
+        }),Data);
+        g_signal_connect(KeyState,"key-released",reinterpret_cast<GCallback>(+[](GtkEventControllerKey*,guint Code,guint,GdkModifierType,gpointer Context) {
+            static_cast<View*>(Context)->Keys.erase(GetKey(Code));
+        }),Data);
+        Target.Controllers.push_back(G_OBJECT(KeyState)); gtk_widget_add_controller(Target.Native,KeyState);
+        auto* Shortcuts=gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(Shortcuts,GTK_PHASE_BUBBLE);
+        g_signal_connect(Shortcuts,"key-pressed",reinterpret_cast<GCallback>(+[](GtkEventControllerKey*,guint Code,guint,GdkModifierType Modifiers,gpointer Context)->gboolean {
+            auto* Target=static_cast<View*>(Context);
+            auto Name=GetKey(Code);
+            if(Name.empty() || Name=="Control" || Name=="Shift" || Name=="Alt" || Name=="CapsLock") return false;
+            int OriginId=0;
+            for(GtkWidget* Focus=gtk_window_get_focus(GTK_WINDOW(Target->Native)); Focus && !OriginId; Focus=gtk_widget_get_parent(Focus))
+                for(const auto& Pair:Target->Owner->Views) if(Pair.second->Native==Focus) {OriginId=Pair.first; break;}
+            if(!OriginId || !Target->Owner->InWindow(OriginId,Target->Id)) return false;
+            Event Value{Kind::Shortcut,0,0}; Value.Button=OriginId; Value.Text=Name;
+            Value.Device=((Modifiers&GDK_CONTROL_MASK)?1:0) | ((Modifiers&GDK_SHIFT_MASK)?2:0) | ((Modifiers&GDK_ALT_MASK)?4:0);
+            Value.Phase=Target->ShortcutRepeat?1:0;
+            Target->Owner->Queue(Target,std::move(Value)); return false;
+        }),Data);
+        Target.Controllers.push_back(G_OBJECT(Shortcuts)); gtk_widget_add_controller(Target.Native,Shortcuts);
         g_signal_connect(Target.Native,"realize",reinterpret_cast<GCallback>(+[](GtkWidget* Widget,gpointer Context) {
             auto* Target=static_cast<View*>(Context); Target->Clock=gtk_widget_get_frame_clock(Widget);
             if(Target->Clock) g_signal_connect(Target->Clock,"after-paint",reinterpret_cast<GCallback>(+[](GdkFrameClock*,gpointer Context) {
@@ -209,7 +279,7 @@ void Backend::Connect(View& Target) {
     if(Target.ClassName=="TextButton") g_signal_connect(Target.Native,"clicked",reinterpret_cast<GCallback>(+[](GtkButton*,gpointer Context) {
         auto* Target=static_cast<View*>(Context); Target->Owner->Queue(Target,{Kind::Activate,0,0});
     }),Data);
-    if(Target.ClassName=="TextBox") ConnectText(Target);
+    if(Target.ClassName=="TextBox" || Target.ClassName=="CodeEditor") ConnectText(Target);
     if(Target.ClassName=="CheckBox") g_signal_connect(Target.Native,"toggled",reinterpret_cast<GCallback>(+[](GtkCheckButton* Check,gpointer Context) {
         auto* Target=static_cast<View*>(Context); Event Value{Kind::Checked,0,0}; Value.Phase=gtk_check_button_get_active(Check); Target->Owner->Queue(Target,std::move(Value));
     }),Data);
@@ -217,7 +287,7 @@ void Backend::Connect(View& Target) {
         auto* Target=static_cast<View*>(Context); Event Value{Kind::Value,0,0}; Value.Value=gtk_range_get_value(Range); Target->Owner->Queue(Target,std::move(Value));
     }),Data);
     auto Add=[&](GtkEventController* Controller) {Target.Controllers.push_back(G_OBJECT(Controller)); gtk_event_controller_set_propagation_phase(Controller,GTK_PHASE_CAPTURE); gtk_widget_add_controller(Target.Native,Controller);};
-    if(Target.ClassName=="TextBox" || Target.ClassName=="TextButton" || Target.ClassName=="CheckBox" || Target.ClassName=="Slider") {
+    if(Target.ClassName=="TextBox" || Target.ClassName=="CodeEditor" || Target.ClassName=="TextButton" || Target.ClassName=="CheckBox" || Target.ClassName=="Slider") {
         auto* Focus=gtk_event_controller_focus_new();
         g_signal_connect(Focus,"enter",reinterpret_cast<GCallback>(+[](GtkEventControllerFocus*,gpointer Context) {auto* Target=static_cast<View*>(Context); Event Value{Kind::Focus,0,0}; Value.Phase=1; Target->Owner->Queue(Target,std::move(Value));}),Data);
         g_signal_connect(Focus,"leave",reinterpret_cast<GCallback>(+[](GtkEventControllerFocus*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->Owner->Queue(Target,{Kind::Focus,0,0});}),Data); Add(Focus);
@@ -234,23 +304,25 @@ void Backend::Connect(View& Target) {
     }
     auto* Motion=gtk_event_controller_motion_new();
     g_signal_connect(Motion,"enter",reinterpret_cast<GCallback>(+[](GtkEventControllerMotion*,double,double,gpointer Context) {auto* Target=static_cast<View*>(Context); Event Value{Kind::Hover,0,0}; Value.Phase=1; Target->Owner->Queue(Target,std::move(Value));}),Data);
-    g_signal_connect(Motion,"leave",reinterpret_cast<GCallback>(+[](GtkEventControllerMotion*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->Owner->Queue(Target,{Kind::Hover,0,0}); Event Value{Kind::Pointer,0,0}; Value.Phase=3; Target->Owner->Queue(Target,std::move(Value));}),Data);
+    g_signal_connect(Motion,"leave",reinterpret_cast<GCallback>(+[](GtkEventControllerMotion*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->Owner->Queue(Target,{Kind::Hover,0,0}); if(Target->ActiveButtons.empty()) {Event Value{Kind::Pointer,0,0}; Value.Phase=3; Target->Owner->Queue(Target,std::move(Value));}}),Data);
     g_signal_connect(Motion,"motion",reinterpret_cast<GCallback>(+[](GtkEventControllerMotion* Controller,double X,double Y,gpointer Context) {
         auto* Device=gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(Controller));
         if(!Device || gdk_device_get_source(Device)!=GDK_SOURCE_MOUSE) return;
         auto* Target=static_cast<View*>(Context); Event Value{Kind::Pointer,0,0}; Value.Phase=1; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
     }),Data); Add(Motion);
-    auto* Click=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(Click),1);
+    auto* Click=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(Click),0);
     // GTK callback ABI needs noncapturing adapters. Mouse only in this initial profile.
     g_signal_connect(Click,"pressed",reinterpret_cast<GCallback>(+[](GtkGestureClick* Gesture,int,double X,double Y,gpointer Context) {
         auto* Device=gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(Gesture)); if(!Device || gdk_device_get_source(Device)!=GDK_SOURCE_MOUSE) return;
-        auto* Target=static_cast<View*>(Context); Event Value{Kind::Pointer,0,0}; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
+        int Button=PointerButton(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(Gesture))); if(!Button) return;
+        auto* Target=static_cast<View*>(Context); Target->ActiveButtons.insert(Button); Event Value{Kind::Pointer,0,0}; Value.Button=Button; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
     }),Data);
     g_signal_connect(Click,"released",reinterpret_cast<GCallback>(+[](GtkGestureClick* Gesture,int,double X,double Y,gpointer Context) {
         auto* Device=gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(Gesture)); if(!Device || gdk_device_get_source(Device)!=GDK_SOURCE_MOUSE) return;
-        auto* Target=static_cast<View*>(Context); Event Value{Kind::Pointer,0,0}; Value.Phase=2; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
+        int Button=PointerButton(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(Gesture))); if(!Button) return;
+        auto* Target=static_cast<View*>(Context); Target->ActiveButtons.erase(Button); Event Value{Kind::Pointer,0,0}; Value.Phase=2; Value.Button=Button; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
     }),Data);
-    g_signal_connect(Click,"cancel",reinterpret_cast<GCallback>(+[](GtkGesture*,GdkEventSequence*,gpointer Context) {auto* Target=static_cast<View*>(Context); Event Value{Kind::Pointer,0,0}; Value.Phase=3; Target->Owner->Queue(Target,std::move(Value));}),Data);
+    g_signal_connect(Click,"cancel",reinterpret_cast<GCallback>(+[](GtkGesture*,GdkEventSequence*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->ActiveButtons.clear(); Event Value{Kind::Pointer,0,0}; Value.Phase=3; Target->Owner->Queue(Target,std::move(Value));}),Data);
     Add(GTK_EVENT_CONTROLLER(Click));
     if(Target.ClassName=="ScrollingFrame") {
         auto* Scroll=gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
@@ -277,15 +349,70 @@ void Backend::TextEvent(View& Target) {
         if(!gtk_editable_get_selection_bounds(GTK_EDITABLE(Target.Native),&Start,&End)) Start=End=gtk_editable_get_position(GTK_EDITABLE(Target.Native));
     }
     int Characters;
-    if(!LuiText::Count(Text,Characters) || Characters>Target.MaxLength) {
+    if(!(Target.ClassName=="CodeEditor"?LuiText::CountCodeEditor(Text,Characters):
+        LuiText::Count(Text,Characters)) || Characters>Target.MaxLength) {
+        if(Target.ClassName=="CodeEditor") return; // Insert-text admission rejects invalid edits before the native buffer changes.
         Target.Applying=true;
         if(Target.Multiline) gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native)),Target.Text.c_str(),static_cast<int>(Target.Text.size()));
         else gtk_editable_set_text(GTK_EDITABLE(Target.Native),Target.Text.c_str());
         ApplySelection(Target); Target.Applying=false; return;
     }
-    Target.Text=Text; Target.SelectionStart=Target.Secret?0:std::min(Start,End); Target.SelectionLength=Target.Secret?0:std::abs(End-Start);
+    if(Target.ClassName!="CodeEditor") Target.Text=Text;
+    Target.SelectionStart=Target.Secret?0:std::min(Start,End); Target.SelectionLength=Target.Secret?0:std::abs(End-Start);
     if(Target.Composing) return;
     Event Value{Kind::TextInput,0,0}; Value.Text=Text; Value.X=Target.SelectionStart; Value.Y=Target.SelectionLength; Queue(&Target,std::move(Value));
+}
+void Backend::ClearCodeStyles(View& Target) {
+    if(Target.ClassName!="CodeEditor" || !GTK_IS_TEXT_VIEW(Target.Native)) return;
+    auto* Buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native)); GtkTextIter First,Last;
+    gtk_text_buffer_get_bounds(Buffer,&First,&Last);
+    for(auto* Tag:Target.CodeTags) gtk_text_buffer_remove_tag(Buffer,Tag,&First,&Last);
+}
+bool Backend::ApplyCodeStyles(View& Target,const std::string& Encoded) {
+    if(Target.ClassName!="CodeEditor" || !GTK_IS_TEXT_VIEW(Target.Native)) return false;
+    struct Span {int Start,End; unsigned int Color;};
+    std::vector<Span> Spans;
+    auto Number=[](const char* Begin,const char* End,auto& Value) {
+        if(Begin==End) return false;
+        const auto Result=std::from_chars(Begin,End,Value);
+        return Result.ec==std::errc{} && Result.ptr==End;
+    };
+    if(!Encoded.empty()) {
+        const auto Header=Encoded.find(';'); unsigned long long Revision=0;
+        if(!Number(Encoded.data(),Encoded.data()+(Header==std::string::npos?Encoded.size():Header),Revision) || !Revision) return false;
+        std::uint64_t CurrentRevision=0;
+        if(!Lui_GetCodeEditorTextRevision(Runtime,Target.Id,&CurrentRevision)) return false;
+        if(Revision!=CurrentRevision) return true;
+        size_t Position=Header;
+        while(Position!=std::string::npos) {
+            const size_t Start=Position+1,Next=Encoded.find(';',Start);
+            const size_t End=Next==std::string::npos?Encoded.size():Next;
+            const size_t First=Encoded.find(',',Start),Second=First==std::string::npos?First:Encoded.find(',',First+1);
+            if(First==std::string::npos || Second==std::string::npos || First>=End || Second>=End) return false;
+            unsigned int From=0,To=0,Color=0;
+            if(!Number(Encoded.data()+Start,Encoded.data()+First,From) ||
+                !Number(Encoded.data()+First+1,Encoded.data()+Second,To) ||
+                !Number(Encoded.data()+Second+1,Encoded.data()+End,Color) ||
+                From>262144 || To>262144 || From>=To || Color>0xFFFFFF ||
+                (!Spans.empty() && From<static_cast<unsigned int>(Spans.back().End)) || Spans.size()>=128) return false;
+            Spans.push_back({static_cast<int>(From),static_cast<int>(To),Color}); Position=Next;
+        }
+    }
+    auto* Buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native));
+    if(!Spans.empty() && Spans.back().End>gtk_text_buffer_get_char_count(Buffer)) return false;
+    ClearCodeStyles(Target);
+    for(size_t Index=0;Index<Spans.size();++Index) {
+        if(Index==Target.CodeTags.size()) Target.CodeTags.push_back(gtk_text_buffer_create_tag(Buffer,nullptr,nullptr));
+        const auto& Span=Spans[Index];
+        GdkRGBA Color{static_cast<float>((Span.Color>>16)&255)/255.0f,
+            static_cast<float>((Span.Color>>8)&255)/255.0f,static_cast<float>(Span.Color&255)/255.0f,1.0f};
+        g_object_set(Target.CodeTags[Index],"foreground-rgba",&Color,nullptr);
+        GtkTextIter First,Last;
+        gtk_text_buffer_get_iter_at_offset(Buffer,&First,Span.Start);
+        gtk_text_buffer_get_iter_at_offset(Buffer,&Last,Span.End);
+        gtk_text_buffer_apply_tag(Buffer,Target.CodeTags[Index],&First,&Last);
+    }
+    return true;
 }
 void Backend::ApplySelection(View& Target) {
     if(Target.Multiline) {
@@ -304,7 +431,53 @@ void Backend::ConnectText(View& Target) {
     };
     if(Target.Multiline) {
         auto* Buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native)); Target.TextSources.push_back(G_OBJECT(Buffer));
-        g_signal_connect(Buffer,"changed",reinterpret_cast<GCallback>(+[](GtkTextBuffer*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->Owner->TextEvent(*Target);}),Data);
+        if(Target.ClassName=="CodeEditor") g_signal_connect(Buffer,"insert-text",reinterpret_cast<GCallback>(+[](GtkTextBuffer* Buffer,GtkTextIter* Position,const gchar* Insert,gint Length,gpointer Context) {
+            auto* Target=static_cast<View*>(Context);
+            if(Target->Applying || !Target->Alive) return;
+            try {
+            if(Length<0) {
+                Length=0;
+                while(Length<=524288 && Insert[Length]) ++Length;
+            }
+            if(Length>524288 || !g_utf8_validate(Insert,Length,nullptr) ||
+                std::memchr(Insert,'\0',static_cast<size_t>(Length))) {
+                g_signal_stop_emission_by_name(Buffer,"insert-text");return;
+            }
+            std::string Canonical;Canonical.reserve(static_cast<size_t>(Length));
+            for(gint Index=0;Index<Length;++Index) {
+                if(Canonical.size()==LuiText::CodeEditorMaxBytes) {
+                    g_signal_stop_emission_by_name(Buffer,"insert-text");return;
+                }
+                if(Insert[Index]=='\r') {
+                    if(Index+1<Length && Insert[Index+1]=='\n') ++Index;
+                    Canonical.push_back('\n');
+                } else Canonical.push_back(Insert[Index]);
+            }
+            GtkTextIter First,Last;gtk_text_buffer_get_bounds(Buffer,&First,&Last);
+            char* Current=gtk_text_buffer_get_text(Buffer,&First,&Last,false);
+            if(!Current) {g_signal_stop_emission_by_name(Buffer,"insert-text");return;}
+            const size_t CurrentBytes=std::strlen(Current);g_free(Current);
+            const glong InsertChars=g_utf8_strlen(Canonical.data(),static_cast<gssize>(Canonical.size()));
+            if(InsertChars<0 || CurrentBytes>LuiText::CodeEditorMaxBytes ||
+                gtk_text_buffer_get_char_count(Buffer)+InsertChars>Target->MaxLength ||
+                Canonical.size()>LuiText::CodeEditorMaxBytes-CurrentBytes) {
+                g_signal_stop_emission_by_name(Buffer,"insert-text");
+                return;
+            }
+            if(Canonical.size()!=static_cast<size_t>(Length) ||
+                std::memcmp(Canonical.data(),Insert,Canonical.size())!=0) {
+                g_signal_stop_emission_by_name(Buffer,"insert-text");
+                gtk_text_buffer_begin_user_action(Buffer);
+                gtk_text_buffer_insert(Buffer,Position,Canonical.c_str(),static_cast<gint>(Canonical.size()));
+                gtk_text_buffer_end_user_action(Buffer);
+            }
+            } catch(...) {g_signal_stop_emission_by_name(Buffer,"insert-text");}
+        }),Data);
+        g_signal_connect(Buffer,"changed",reinterpret_cast<GCallback>(+[](GtkTextBuffer*,gpointer Context) {
+            auto* Target=static_cast<View*>(Context);
+            if(Target->ClassName=="CodeEditor" && !Target->Applying) Target->Owner->ClearCodeStyles(*Target);
+            Target->Owner->TextEvent(*Target);
+        }),Data);
         g_signal_connect(Buffer,"mark-set",reinterpret_cast<GCallback>(+[](GtkTextBuffer*,GtkTextIter*,GtkTextMark*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->Owner->TextEvent(*Target);}),Data);
         g_signal_connect(Target.Native,"preedit-changed",reinterpret_cast<GCallback>(Preedit),Data);
     } else {
@@ -320,7 +493,9 @@ void Backend::ReplaceText(View& Target,bool Multiline,bool Secret,bool Force) {
     for(auto* Source:Target.TextSources) g_signal_handlers_disconnect_by_data(Source,&Target);
     Target.TextSources.clear(); g_signal_handlers_disconnect_by_data(Target.Native,&Target);
     for(auto* Controller:Target.Controllers) g_signal_handlers_disconnect_by_data(Controller,&Target);
-    Target.Controllers.clear(); Target.Keys.clear(); Target.Epoch=NextEpoch++;
+    Target.Controllers.clear(); Target.Keys.clear(); Target.ActiveButtons.clear(); Target.Epoch=NextEpoch++;
+    Target.CodeTags.clear(); // Tags belong to the old GtkTextBuffer.
+    Lui_PointerInputV2(Runtime,Target.Id,3,0,0,0,0,0);
     gtk_widget_unparent(Target.Native); g_object_unref(Target.Native);
     Target.Multiline=Multiline; Target.Secret=Secret; Target.Composing=Target.CompositionEnding=false;
     Target.Native=Multiline?LuiGtkTextView():gtk_entry_new(); g_object_ref_sink(Target.Native);
@@ -339,11 +514,32 @@ int Backend::Create(void* Context,int Id,const char* ClassName) {
     try {
     if(!Self.Owner() || Self.Stopping || Self.Views.size()>=1024 || Self.Views.count(Id)) return Self.Fail();
     auto Target=std::make_unique<View>(); Target->Owner=&Self; Target->Id=Id; Target->Epoch=Self.NextEpoch++; Target->ClassName=ClassName;
-    if(Target->ClassName=="Window") {Target->Native=gtk_window_new(); Target->Container=LuiGtkSurface(); gtk_window_set_child(GTK_WINDOW(Target->Native),Target->Container); Target->Visible=false;}
+    if(Target->ClassName=="Window") {
+        Target->Native=gtk_window_new(); Target->Container=LuiGtkSurface();
+        // Keep the layout container valid after gtk_window_destroy unparents it.
+        // Its Instance-owned children can then survive and redock after closure.
+        g_object_ref_sink(Target->Container);
+        gtk_window_set_child(GTK_WINDOW(Target->Native),Target->Container); Target->Visible=false;
+        g_signal_connect(Target->Native,"notify::is-active",reinterpret_cast<GCallback>(+[](GObject* Object,GParamSpec*,gpointer Context) {
+            if(gtk_window_is_active(GTK_WINDOW(Object))) return;
+            auto* Window=static_cast<View*>(Context);
+            if(!Window->Alive) return;
+            for(auto& Pair:Window->Owner->Views) {
+                if(!Window->Owner->InWindow(Pair.first,Window->Id)) continue;
+                auto* Current=Pair.second.get();
+                Current->Keys.clear();
+                Current->ActiveButtons.clear();
+                Current->Owner->Queue(Current,{Kind::Focus,0,0});
+                Event Cancel{Kind::Pointer,0,0}; Cancel.Phase=3; Current->Owner->Queue(Current,std::move(Cancel));
+            }
+        }),Target.get());
+    }
     else if(Target->ClassName=="Frame" || Target->ClassName=="ScrollingFrame") Target->Native=Target->Container=LuiGtkSurface();
     else if(Target->ClassName=="TextLabel") {Target->Native=gtk_label_new(""); gtk_label_set_wrap(GTK_LABEL(Target->Native),true); gtk_label_set_xalign(GTK_LABEL(Target->Native),0);}
     else if(Target->ClassName=="TextButton") Target->Native=gtk_button_new();
     else if(Target->ClassName=="TextBox") Target->Native=gtk_entry_new();
+    else if(Target->ClassName=="CodeEditor") {Target->Native=LuiGtkTextView(); Target->Multiline=true;
+        Target->MaxLength=LuiText::CodeEditorMaxCharacters;}
     else if(Target->ClassName=="CheckBox") Target->Native=gtk_check_button_new();
     else if(Target->ClassName=="Slider") {Target->Native=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0,100,1); gtk_scale_set_draw_value(GTK_SCALE(Target->Native),false);}
     else if(Target->ClassName=="ProgressBar") Target->Native=gtk_progress_bar_new();
@@ -377,7 +573,7 @@ int Backend::Property(void* Context,int Id,const char* Name,const char* Text) {
             };
             if(!Target.Container) Color("BackgroundColor3","background-color",1-Style.at("BackgroundTransparency").get<double>());
             Color("TextColor3","color",1); Color("BorderColor3","border-color",1);
-            const double BorderWidth=Target.Container?0:Contrast && (Target.ClassName=="TextButton" || Target.ClassName=="TextBox" || Target.ClassName=="CheckBox")?
+            const double BorderWidth=Target.Container?0:Contrast && (Target.ClassName=="TextButton" || Target.ClassName=="TextBox" || Target.ClassName=="CodeEditor" || Target.ClassName=="CheckBox")?
                 std::max(1.0,Style.at("BorderSizePixel").get<double>()):Style.at("BorderSizePixel").get<double>();
             Css<<"border-width:"<<BorderWidth<<"px;border-style:solid;border-radius:"<<Style.at("CornerRadius").get<double>()<<"px;";
             Css<<"font-size:"<<Style.at("TextSize").get<double>()<<"px;font-family:\""<<(Style.at("FontFamily")=="System"?"sans":Style.at("FontFamily").get<std::string>())<<"\";";
@@ -402,22 +598,26 @@ int Backend::Property(void* Context,int Id,const char* Name,const char* Text) {
                 gtk_label_set_yalign(GTK_LABEL(Label),Style.at("TextYAlignment")=="Center"?0.5:Style.at("TextYAlignment")=="Bottom"?1:0);
             }
             if(GTK_IS_TEXT_VIEW(Target.Native)) gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(Target.Native),Style.at("TextWrapped").get<bool>()?GTK_WRAP_WORD_CHAR:GTK_WRAP_NONE);
-        } else if(Property=="__TextConfig" && Target.ClassName=="TextBox") {
+        } else if(Property=="__CodeStyles" && Target.ClassName=="CodeEditor") {
+            if(!Self.ApplyCodeStyles(Target,Value)) return Self.Fail();
+        } else if(Property=="__TextConfig" && (Target.ClassName=="TextBox" || Target.ClassName=="CodeEditor")) {
             const auto First=Value.find(','),Second=Value.find(',',First+1),Third=Value.find(',',Second+1);
             if(First==std::string::npos || Second==std::string::npos || Third==std::string::npos) return Self.Fail();
             Target.MaxLength=std::stoi(Value.substr(Second+1,Third-Second-1)); Target.Placeholder=Value.substr(Third+1);
-            Self.ReplaceText(Target,Value.substr(0,First)=="1",Value.substr(First+1,Second-First-1)=="1",Target.Composing);
+            Self.ReplaceText(Target,Value.substr(0,First)=="1",Value.substr(First+1,Second-First-1)=="1",
+                Target.Composing && Target.ClassName!="CodeEditor");
             if(!Target.Multiline) {gtk_entry_set_max_length(GTK_ENTRY(Target.Native),Target.MaxLength); gtk_entry_set_placeholder_text(GTK_ENTRY(Target.Native),Target.Placeholder.c_str());}
             else LuiGtkTextHint(Target.Native,Target.Placeholder.c_str());
-        } else if(Property=="__Selection" && Target.ClassName=="TextBox") {
+        } else if(Property=="__Selection" && (Target.ClassName=="TextBox" || Target.ClassName=="CodeEditor")) {
             const auto Comma=Value.find(','); if(Comma==std::string::npos) return Self.Fail();
             Target.SelectionStart=std::stoi(Value.substr(0,Comma)); Target.SelectionLength=std::stoi(Value.substr(Comma+1)); Self.ApplySelection(Target);
         } else if(Property=="Title" && Target.ClassName=="Window") gtk_window_set_title(GTK_WINDOW(Target.Native),Text);
         else if(Property=="Text") {
             if(Target.ClassName=="TextLabel") gtk_label_set_text(GTK_LABEL(Target.Native),Text);
             else if(Target.ClassName=="TextButton") gtk_button_set_label(GTK_BUTTON(Target.Native),Text);
-            else if(Target.ClassName=="TextBox") {
-                Target.Text=Value;
+            else if(Target.ClassName=="TextBox" || Target.ClassName=="CodeEditor") {
+                if(Target.ClassName=="CodeEditor" && Target.Text!=Value) Self.ClearCodeStyles(Target);
+                if(Target.ClassName!="CodeEditor") Target.Text=Value;
                 if(Target.Multiline) gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native)),Text,static_cast<int>(Value.size()));
                 else gtk_editable_set_text(GTK_EDITABLE(Target.Native),Text);
                 Self.ApplySelection(Target);
@@ -431,9 +631,10 @@ int Backend::Property(void* Context,int Id,const char* Name,const char* Text) {
             }
         } else if(Property=="Visible") {
             Target.Visible=Value=="true";
+            if(!Target.Visible) Target.ActiveButtons.clear();
             if(Target.ClassName=="Window") {if(Target.Visible && !Target.Closed) gtk_window_present(GTK_WINDOW(Target.Native)); else gtk_widget_set_visible(Target.Native,false);}
             else gtk_widget_set_visible(Target.Slot,Target.Visible);
-        } else if(Property=="Enabled") {Target.Enabled=Value=="true"; gtk_widget_set_sensitive(Target.Native,Target.Enabled);}
+        } else if(Property=="Enabled") {Target.Enabled=Value=="true"; if(!Target.Enabled) Target.ActiveButtons.clear(); gtk_widget_set_sensitive(Target.Native,Target.Enabled);}
         else if(Property=="Checked") gtk_check_button_set_active(GTK_CHECK_BUTTON(Target.Native),Value=="true");
         else if(Property=="Minimum" || Property=="Maximum" || Property=="Value") {
             char* End=nullptr; const double Number=g_ascii_strtod(Text,&End);
@@ -488,6 +689,7 @@ int Backend::Present(void* Context,int Id,int HasClip,double X,double Y,double W
     auto& Self=*static_cast<Backend*>(Context); auto Found=Self.Views.find(Id);
     if(!Self.Owner() || Found==Self.Views.end()) return Self.Fail();
     auto& Target=*Found->second; Target.InputVisible=InputVisible!=0;
+    if(!Target.InputVisible) Target.ActiveButtons.clear();
     if(Target.ClassName=="Window") Target.PresentationPending=true;
     if(!Target.Container) gtk_widget_set_sensitive(Target.Native,Target.Enabled && Target.InputVisible);
     auto* Widget=Target.Slot?Target.Slot:Target.Container;
@@ -516,7 +718,7 @@ int Backend::Destroy(void* Context,int Id) {
     if(Target->Clock) g_signal_handlers_disconnect_by_data(Target->Clock,Target.get());
     for(auto* Controller:Target->Controllers) g_signal_handlers_disconnect_by_data(Controller,Target.get());
     for(auto* Source:Target->TextSources) g_signal_handlers_disconnect_by_data(Source,Target.get());
-    if(Target->ClassName=="Window") gtk_window_destroy(GTK_WINDOW(Target->Native));
+    if(Target->ClassName=="Window") {if(!Target->Closed) gtk_window_destroy(GTK_WINDOW(Target->Native)); g_object_unref(Target->Container);}
     else {LuiGtkPlace(nullptr,Target->Slot); g_object_unref(Target->Slot);}
     g_object_unref(Target->Native); if(Target->Style) g_object_unref(Target->Style); return 1;
 }

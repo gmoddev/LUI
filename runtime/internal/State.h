@@ -8,6 +8,7 @@
 #include <chrono>
 #include <atomic>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,6 +23,8 @@ namespace Lui::Tls { class Settings; }
 namespace Lui::Native { struct Domain; }
 struct NativeServiceBinding;
 struct DesktopServiceState;
+struct FrameDomain;
+struct FrameSurfaceSlot;
 
 struct Dimension {
     double Scale = 0;
@@ -50,6 +53,8 @@ struct PointerInputValue {
     std::string Device;
     VectorValue Position;
     bool IsCanceled = false;
+    std::string Button;
+    bool IsV2 = false;
 };
 
 struct SourceLocation {
@@ -60,7 +65,29 @@ struct SourceLocation {
 struct KeyboardInputValue {
     std::string Key;
     bool IsRepeat = false;
+    bool IsShortcut = false;
+    unsigned int Modifiers = 0;
+    bool TextEditing = false;
 };
+
+// Disposable facts normalized from validated local style properties. Keep the
+// authoritative values in StyleProperties; ancestor composition stays in layout.
+struct StyleGeometryValue {
+    enum Fact : unsigned char {
+        Background = 1u, NoTransparency = 2u, SquareCorners = 4u,
+        NoBorder = 8u, VisibleOpacity = 16u, UnitOpacity = 32u,
+    };
+    unsigned char Facts = NoTransparency | SquareCorners | NoBorder | VisibleOpacity | UnitOpacity;
+    void Set(Fact Flag, bool Enabled) {
+        Facts = static_cast<unsigned char>(Enabled ? Facts | Flag : Facts & ~Flag);
+    }
+    bool Has(Fact Flag) const {return (Facts & Flag) != 0;}
+    bool FillsOpaqueRectangle() const {
+        constexpr unsigned char Mask = Background | NoTransparency | SquareCorners | NoBorder | UnitOpacity;
+        return (Facts & Mask) == Mask;
+    }
+};
+static_assert(sizeof(StyleGeometryValue) == 1, "Style geometry facts must stay compact");
 
 struct NodeHandle;
 struct Node {
@@ -80,7 +107,12 @@ struct Node {
     bool Checked = false;
     bool IsFocused = false;
     bool IsHovered = false;
-    std::unordered_map<unsigned int, PointerInputValue> ActivePointers;
+    bool WindowClosed = false, WindowClosePending = false;
+    uint64_t PresentationRevision = 0;
+    bool NativeWindowClosedPending = false;
+    bool WindowCloseRequestQueued = false;
+    bool WindowCloseDispatch = false, WindowClosePrevented = false;
+    std::map<std::pair<unsigned int, int>, PointerInputValue> ActivePointers;
     std::unordered_map<std::string, KeyboardInputValue> ActiveKeys;
     std::string ClassName;
     std::string Name;
@@ -89,11 +121,19 @@ struct Node {
     bool Multiline = false, Secret = false, IsComposing = false;
     int SelectionStart = 0, SelectionLength = 0, MaxLength = 65534;
     uint64_t InputRevision = 1;
+    uint64_t TextRevision = 1;
+    int CodeEditorUndoMaxLength = 0;
     std::string PlaceholderText, CompositionText;
     std::string Source;
     uint64_t ImageToken = 0;
     std::string LoadState = "Idle";
     bool ImageStatePending = false;
+    std::string ScaleMode = "Fit", FrameState = "Empty";
+    uint64_t FrameEpoch = 1, FrameSequence = 0;
+    std::shared_ptr<FrameSurfaceSlot> FrameSlot;
+    LuiFrame* PendingFrame = nullptr;
+    LuiFrame* InFlightFrame = nullptr;
+    LuiFrame* DisplayedFrame = nullptr;
     std::string AccessibilityLabel;
     std::string AccessibilityDescription;
     double Minimum = 0;
@@ -108,6 +148,7 @@ struct Node {
     VectorValue AbsoluteCanvasSize;
     VectorValue AbsoluteCanvasPosition;
     bool ClipsDescendants = false;
+    StyleGeometryValue StyleGeometry;
     int ZIndex = 0;
     std::unordered_map<std::string, std::string> StyleProperties;
     std::string StyleProjection;
@@ -169,11 +210,13 @@ struct BackendChange {
 };
 
 struct BackendEvent {
-    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, WindowResized, FocusChanged, HoverChanged, PointerInput, KeyInput, ScrollInput, TextInput, Composition } Type;
+    enum class Kind { Activate, TextChanged, CheckedChanged, ValueChanged, WindowResized, WindowCloseRequested, WindowClosed, FocusChanged, HoverChanged, PointerInput, KeyInput, WindowShortcut, ScrollInput, TextInput, Composition } Type;
     int Id = 0;
     int Value = 0;
     int Phase = 0;
     int Device = 0;
+    int Button = 0;
+    bool PointerV2 = false;
     unsigned int PointerId = 0;
     double Number = 0;
     double X = 0;
@@ -232,8 +275,17 @@ struct LuiRuntime {
     lua_State* State = nullptr;
     std::thread::id Owner;
     LuiBackendCallbacks Backend{};
+    LuiFocusCallbacksV1 Focus{};
+    LuiWindowCallbacksV1 Windows{};
     LuiPresentationCallbacksV1 Presentation{};
     LuiImageCallbacksV1 Images{};
+    LuiFrameCallbacksV1 Frames{};
+    std::shared_ptr<FrameDomain> FrameResources;
+    // Internal pixel allocation seam; null selects malloc. Returned storage must
+    // be free-compatible. Tests inject failure without changing host protocols.
+    void* (*FrameAllocator)(size_t) = nullptr;
+    uint64_t FramesAccepted = 0, FramesReplaced = 0, FramesRejected = 0;
+    uint64_t FramesConsumed = 0, FramesStale = 0;
     uint64_t NextImageToken = 1;
     size_t PendingImages = 0;
     std::vector<int> CanvasSignals;
@@ -295,6 +347,10 @@ struct LuiRuntime {
     std::string CurrentTheme = "Light";
     std::string PendingTheme;
     std::vector<ScheduledCall> Tasks;
+    size_t TaskLimit = 0, TaskRoundIndex = 0;
+    std::vector<ScheduledCall> TaskRound;
+    std::chrono::steady_clock::time_point TaskRoundTime;
+    bool TaskRoundActive = false;
     int ActiveTaskReference = 0;
     lua_State* ActiveTaskThread = nullptr;
     bool ActiveTaskHasWaiter = false;
@@ -316,9 +372,11 @@ struct LuiRuntime {
     int NextNodeId = 1;
     int NextListenerId = 1;
     bool LayoutDirty = false;
+    int LayoutDepth = 0, PresentationWindowId = 0;
     int VmDepth = 0;
     int BackendDepth = 0;
     bool DrainingBackendEvents = false;
+    bool PendingWindowClosures = false;
     bool BackendFailed = false;
 };
 

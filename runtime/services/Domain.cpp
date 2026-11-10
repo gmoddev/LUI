@@ -1,4 +1,5 @@
 #include "Domain.h"
+#include "LuiOwnerWake.h"
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +31,13 @@ struct Request {
     bool NotifyCancel = false;
 };
 struct Event { uint64_t Sequence; LuiNativeIdV2 Request, Buffer; uint64_t Bytes; };
+struct WakeState {
+    LuiNativeWakeV1 Callbacks{};
+    std::atomic<bool> Active{true};
+    uint64_t Identity=0, Attempt=0;
+    bool Pending=false, OwnsContext=false;
+    ~WakeState() { if(OwnsContext)try{Callbacks.Release(Callbacks.Context);}catch(...){} }
+};
 struct Domain {
     std::thread::id Owner = std::this_thread::get_id();
     std::mutex Mutex;
@@ -37,6 +45,7 @@ struct Domain {
     uint64_t Bytes = 0, Reserved = 0, Requests = 0, Handles = 0, Buffers = 0;
     uint64_t EventCount = 0, EventBytes = 0, NextSequence = 1;
     bool Pumping = false;
+    std::shared_ptr<WakeState> Wake;
 };
 }
 
@@ -84,6 +93,10 @@ bool Identifier(const char* Text) {
     return false;
 }
 bool PinHostCode() {
+#if defined(LUI_STATIC_NATIVE_HOST)
+    // Statically linked portable qualification executable lives until exit.
+    return true;
+#else
     // A worker may be returning through one of these host entries after the
     // embedding host drops its original library reference. Keep host code
     // resident for the process after the first v2 session. Provider images
@@ -102,6 +115,7 @@ bool PinHostCode() {
 #endif
     }();
     return Pinned;
+#endif
 }
 template<class Function> uint32_t Boundary(Function&& Callback) noexcept {
     try { return Callback(); } catch (...) { return LUI_NATIVE_LIMIT_EXCEEDED; }
@@ -175,6 +189,28 @@ uint32_t NextLocked(LuiNativeSessionV2* Session,LuiNativeDeliveryV2* Delivery) {
     *Delivery = {sizeof(*Delivery),2,LUI_NATIVE_TERMINAL,Value.Status,Value.Sequence,
         {Session->Identity,Terminal->first},Value.Buffer,Value.Handle};
     Session->Requests.erase(Terminal); --Session->Domain->Requests; return LUI_NATIVE_OK;
+}
+struct WakeDispatch {
+    std::shared_ptr<Domain> Owner;
+    std::shared_ptr<WakeState> State;
+    uint64_t Attempt=0;
+    void Send() noexcept {
+        if(!State)return;
+        uint32_t Accepted=0;
+        if(State->Active.load())try{Accepted=State->Callbacks.Request(State->Callbacks.Context);}catch(...){}
+        if(Accepted!=1){
+            std::lock_guard<std::mutex> Lock(Owner->Mutex);
+            // An owner acknowledgment and newer attempt may overtake this
+            // callback's return. A failed older attempt cannot clear that wake.
+            if(State->Attempt==Attempt)State->Pending=false;
+        }
+    }
+};
+WakeDispatch WakeLocked(const std::shared_ptr<Domain>& Owner) {
+    const auto& State=Owner->Wake;
+    if(!State||State->Pending||State->Attempt==UINT64_MAX)return {};
+    State->Pending=true;++State->Attempt;
+    return {Owner,State,State->Attempt};
 }
 uint32_t LUI_CALL RetainSession(LuiNativeSessionV2* Session) {
     if (!Session) return LUI_NATIVE_INVALID_ARGUMENT;
@@ -277,7 +313,7 @@ uint32_t LUI_CALL ReleaseHandle(LuiNativeSessionV2* Session, LuiNativeIdV2 Id) {
 uint32_t LUI_CALL Complete(LuiNativeSessionV2* Session, LuiNativeIdV2 Id, uint32_t Status,
     LuiNativeIdV2 Bytes, LuiNativeIdV2 HandleId) {
     if (!Session || !Own(Session, Id) || Status > LUI_NATIVE_PROVIDER_FAILURE) return LUI_NATIVE_INVALID_ARGUMENT;
-    std::lock_guard<std::mutex> Lock(Session->Domain->Mutex);
+    std::unique_lock<std::mutex> Lock(Session->Domain->Mutex);
     if (Session->Retired) return LUI_NATIVE_CLOSED;
     auto Found = Session->Requests.find(Id.Value);
     if (Found == Session->Requests.end()) return LUI_NATIVE_CLOSED;
@@ -306,11 +342,13 @@ uint32_t LUI_CALL Complete(LuiNativeSessionV2* Session, LuiNativeIdV2 Id, uint32
     if (Output) ++Output->References;
     if (Resource) ++Resource->References;
     Value.Buffer = Bytes; Value.Handle = HandleId;
-    Settle(Session, Value, Status, false); return LUI_NATIVE_OK;
+    Settle(Session, Value, Status, false);
+    auto Wake=WakeLocked(Session->Domain);Lock.unlock();Wake.Send();return LUI_NATIVE_OK;
 }
 uint32_t LUI_CALL Emit(LuiNativeSessionV2* Session, LuiNativeIdV2 Id, LuiNativeIdV2 Bytes) {
     if (!Session || !Own(Session, Id) || !Own(Session, Bytes)) return LUI_NATIVE_INVALID_ARGUMENT;
-    return Boundary([&]() -> uint32_t {
+    WakeDispatch Wake;
+    const auto Status=Boundary([&]() -> uint32_t {
         auto& Domain = *Session->Domain;
         std::lock_guard<std::mutex> Lock(Domain.Mutex);
         if (Session->Retired) return LUI_NATIVE_CLOSED;
@@ -328,8 +366,10 @@ uint32_t LUI_CALL Emit(LuiNativeSessionV2* Session, LuiNativeIdV2 Id, LuiNativeI
         Session->Events.push_back({Domain.NextSequence, Id, Bytes, Length});
         ++Domain.NextSequence; ++Found->second.References;
         ++Domain.EventCount; Domain.EventBytes += Length; Session->EventBytes += Length;
+        Wake=WakeLocked(Session->Domain);
         return LUI_NATIVE_OK;
     });
+    Wake.Send();return Status;
 }
 }
 
@@ -446,9 +486,55 @@ static void PumpWork(const std::shared_ptr<Domain>& Value) {
 void Pump(const std::shared_ptr<Domain>& Value) noexcept {
     try { PumpWork(Value); } catch (...) { /* Preserve bounded ownership for a later owner pump. */ }
 }
+void WakePending(const std::shared_ptr<Domain>& Value,LuiNativeSessionV2* const* Sessions,uint32_t Count) noexcept {
+    if(!Value)return;
+    WakeDispatch Wake;
+    {
+        std::lock_guard<std::mutex> Lock(Value->Mutex);
+        if(!Value->Wake)return;
+        if(Sessions){for(uint32_t Index=0;Index<Count;++Index)if(PeekLocked(Sessions[Index])!=UINT64_MAX){Wake=WakeLocked(Value);break;}}
+        else for(const auto& Session:Value->Sessions)if(PeekLocked(Session.get())!=UINT64_MAX){Wake=WakeLocked(Value);break;}
+    }
+    Wake.Send();
+}
 }
 
 extern "C" {
+LUI_API uint32_t LUI_CALL Lui_SetNativeWakeV1(LuiNativeDomainV2* Domain,
+    const LuiNativeWakeV1* Callbacks,uint64_t* Registration) {
+    if(Registration)*Registration=0;
+    if(!Domain||Domain->State->Owner!=std::this_thread::get_id()||
+        (Callbacks&&(!Registration||Callbacks->StructSize!=sizeof(*Callbacks)||Callbacks->AbiVersion!=1||
+            !Callbacks->Request||!Callbacks->Release)))return LUI_NATIVE_INVALID_ARGUMENT;
+    return Boundary([&]() -> uint32_t {
+        std::shared_ptr<WakeState> NextWake,Previous;
+        if(Callbacks){
+            NextWake=std::make_shared<WakeState>();NextWake->Callbacks=*Callbacks;
+            static std::atomic<uint64_t> Identity{1};auto Id=Identity.load();
+            while(Id!=UINT64_MAX&&!Identity.compare_exchange_weak(Id,Id+1)){}
+            if(Id==UINT64_MAX)return LUI_NATIVE_LIMIT_EXCEEDED;
+            NextWake->Identity=Id;
+        }
+        {
+            std::lock_guard<std::mutex> Lock(Domain->State->Mutex);
+            Previous=std::move(Domain->State->Wake);
+            if(Previous)Previous->Active=false;
+            Domain->State->Wake=NextWake;
+            if(NextWake){NextWake->OwnsContext=true;*Registration=NextWake->Identity;}
+        }
+        // Release context outside the domain lock; in-flight notifications hold
+        // their own reference and may release it later on a worker.
+        Previous.reset();
+        Lui::Native::WakePending(Domain->State);
+        return LUI_NATIVE_OK;
+    });
+}
+LUI_API uint32_t LUI_CALL Lui_AcknowledgeNativeWakeV1(LuiNativeDomainV2* Domain,uint64_t Registration) {
+    if(!Domain||!Registration||Domain->State->Owner!=std::this_thread::get_id())return LUI_NATIVE_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> Lock(Domain->State->Mutex);
+    if(!Domain->State->Wake||Domain->State->Wake->Identity!=Registration)return LUI_NATIVE_CLOSED;
+    Domain->State->Wake->Pending=false;return LUI_NATIVE_OK;
+}
 LUI_API LuiNativeDomainV2* LUI_CALL Lui_CreateNativeDomainV2(void) {
     try { return new LuiNativeDomainV2{std::make_shared<Lui::Native::Domain>()}; } catch (...) { return nullptr; }
 }
@@ -549,12 +635,13 @@ LUI_API uint32_t LUI_CALL Lui_StartNativeRequestV2(LuiNativeSessionV2* Session, 
 }
 LUI_API uint32_t LUI_CALL Lui_CancelNativeRequestV2(LuiNativeSessionV2* Session, LuiNativeIdV2 Id) {
     if (!Session || !Own(Session, Id)) return LUI_NATIVE_INVALID_ARGUMENT;
-    std::lock_guard<std::mutex> Lock(Session->Domain->Mutex);
+    std::unique_lock<std::mutex> Lock(Session->Domain->Mutex);
     if (Session->Retired) return LUI_NATIVE_CLOSED;
     auto Found = Session->Requests.find(Id.Value);
     if (Found == Session->Requests.end()) return LUI_NATIVE_CLOSED;
     if (Found->second.Sequence) return LUI_NATIVE_ALREADY_SETTLED;
-    Settle(Session, Found->second, LUI_NATIVE_CANCELED, true); return LUI_NATIVE_OK;
+    Settle(Session, Found->second, LUI_NATIVE_CANCELED, true);
+    auto Wake=WakeLocked(Session->Domain);Lock.unlock();Wake.Send();return LUI_NATIVE_OK;
 }
 LUI_API uint32_t LUI_CALL Lui_CloseNativeHandleV2(LuiNativeSessionV2* Session, LuiNativeIdV2 Id) {
     if (!Session || !Own(Session, Id)) return LUI_NATIVE_INVALID_ARGUMENT;

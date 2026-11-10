@@ -4,11 +4,15 @@ const Fs = require('node:fs');
 const Path = require('node:path');
 const { TypeCheckSession } = require('./TypeCheckClient');
 const {SafeSource}=require('./ProjectProtocol');
+const { UsesSdk, GetBinding, ResolveSdk, GetManifest } = require('./SdkClient');
 
 function GetTypePaths(Folder, Vscode) {
     const Root = Folder.uri.fsPath;
     const Repo = Path.resolve(__dirname, '..');
     const Settings = Vscode.workspace.getConfiguration('lui', Folder.uri);
+    const Sdk = GetBinding(Folder, Vscode);
+    if (Sdk) return { Manifest: Path.resolve(Root, Settings.get('manifestPath', 'lui.json')), Cli: Sdk.Components.Cli,
+        Checker: Sdk.Components.Checker, Definitions: Sdk.Components.Definitions };
     const Configured = Name => {
         const Value = Settings.get(Name, '');
         return Value ? Path.resolve(Root, Value) : '';
@@ -84,13 +88,22 @@ class TypeDiagnostics {
 
     Log(Message) { this.Output.appendLine('[LUI:Types] ' + Message); }
 
-    Check(Folder, Explicit = false) {
+    async Check(Folder, Explicit = false) {
         this.Invalidate();
         if (!Folder) { if (Explicit) this.Log('Open an application workspace folder to check types.'); return; }
         const Vscode = this.Vscode;
         if (!Vscode.workspace.isTrusted) { if (Explicit) this.Log('Type checking requires a trusted workspace.'); return; }
         if (!Explicit && !Vscode.workspace.getConfiguration('lui', Folder.uri).get('autoCheck', true)) return;
         try {
+            if (!Fs.existsSync(GetManifest(Folder, Vscode))) {
+                if (Explicit) this.Log('Application manifest was not found.');
+                return;
+            }
+            if (UsesSdk(Folder, Vscode)) {
+                const Request = this.SdkRequest = (this.SdkRequest || 0) + 1;
+                await ResolveSdk(Folder, Vscode);
+                if (this.Disposed || Request !== this.SdkRequest || !Vscode.workspace.isTrusted) return;
+            }
             const Paths = GetTypePaths(Folder, Vscode);
             if (!Fs.existsSync(Paths.Manifest)) { if (Explicit) this.Log('Application manifest was not found.'); return; }
             for (const [Name, Value] of [['CLI', Paths.Cli], ['checker', Paths.Checker], ['definitions', Paths.Definitions]])
@@ -125,6 +138,10 @@ class TypeDiagnostics {
         if (Document.uri.scheme !== 'file') return;
         const Folder = this.Vscode.workspace.getWorkspaceFolder(Document.uri);
         if (!Folder) return;
+        if (UsesSdk(Folder, this.Vscode)) {
+            if (Fs.existsSync(GetManifest(Folder, this.Vscode))) this.Check(Folder);
+            return;
+        }
         try {
             const { Manifest } = GetTypePaths(Folder, this.Vscode);
             const File = Path.resolve(Document.uri.fsPath);
@@ -135,7 +152,7 @@ class TypeDiagnostics {
         } catch { /* No matching readable entry script yet. Explicit checks report setup errors. */ }
     }
 
-    Invalidate() { this.Session.Stop(); this.Diagnostics.clear(); }
+    Invalidate() { this.SdkRequest = (this.SdkRequest || 0) + 1; this.Session.Stop(); this.Diagnostics.clear(); }
     Dispose() {
         if (this.Disposed) return;
         this.Disposed = true;

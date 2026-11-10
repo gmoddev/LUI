@@ -29,9 +29,31 @@ and Orca sessions pass. [The browser guide](backends/browser/README.md) and
 HTTP, native raw sockets, arbitrary extensions and other uninstalled browser
 services remain explicitly unavailable.
 
-## Next: Android and iOS
+## Dynamic Surface Presentation (DSP-1)
 
-Select host approaches and qualify each OS independently on real devices, including touch, IME, safe areas, accessibility, suspend/resume, background restrictions and process recreation.
+A dedicated FrameSurface adds bounded owned CPU pixels and latest-frame-wins
+scheduling. Shared/headless qualification and the Windows native qualification
+helper do not close the production fenced-presenter gate. GTK frame presentation
+remains unimplemented. No browser/mobile, GPU, zero-copy, 4K or physical latency support
+is implied. Completed advanced UI/native-service exits retain their original scope.
+
+## Developer usability
+
+The initial SDK tooling prepares a portable Windows preview, an offline VSIX,
+matched component discovery, exact project pins and modular starters. Native
+Run is the first application testing loop; the independent inspector visualizes
+shared layout. Native restart supervision and application-authored tests follow
+separately. Signing, downloaded-file launch and clean-machine qualification
+remain prerequisites for a supported SDK download. See [the SDK guide](docs/SDK.md).
+
+## Android and iOS
+
+Native Android Views and UIKit are the selected host approaches. Android has
+experimental emulator coverage for controls, input, accessibility metadata,
+offline storage/recovery and application workloads. Qualify each OS independently
+on real devices, including touch, IME, safe areas, accessibility, suspend/resume,
+background restrictions and process recreation. Emulator results do not qualify
+physical Android devices; the Apple build/device path remains open.
 
 ## Stable distribution
 

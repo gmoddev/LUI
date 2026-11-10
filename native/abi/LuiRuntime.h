@@ -78,6 +78,27 @@ typedef struct LuiBackendCallbacks {
     int (LUI_CALL* Destroy)(void* Context, int Id);
 } LuiBackendCallbacks;
 
+/* Optional internal host focus request, independent of extension ABI v1/v2.
+   A successful request is followed by the normal Lui_FocusChanged notification;
+   it does not itself change canonical focus. Register before objects/scripts. */
+typedef struct LuiFocusCallbacksV1 {
+    uint32_t StructSize, AbiVersion;
+    void* Context;
+    int (LUI_CALL* RequestFocus)(void* Context, int Id);
+    uint64_t Reserved;
+} LuiFocusCallbacksV1;
+
+/* Optional internal Window lifecycle bridge, independent of extension ABI v1/v2.
+   Register once before objects/scripts. Close must request terminal native closure
+   and acknowledge through Lui_WindowClosed. Native close intent is canceled by
+   the backend before calling Lui_WindowCloseRequested on the owner scheduler. */
+typedef struct LuiWindowCallbacksV1 {
+    uint32_t StructSize, AbiVersion;
+    void* Context;
+    int (LUI_CALL* Close)(void* Context, int Id);
+    uint64_t Reserved;
+} LuiWindowCallbacksV1;
+
 /* Private presentation bridge, separate from the extension ABI and old callback
    table. Register once on the owner thread before objects/scripts. Clip is local
    to this node; HasClip bit 0 means a clip rectangle is present, bit 1 means
@@ -100,6 +121,48 @@ typedef struct LuiImageCallbacksV1 {
     int (LUI_CALL* Load)(void* Context, int Id, uint64_t Token, const char* Source);
     void (LUI_CALL* Cancel)(void* Context, uint64_t Token);
 } LuiImageCallbacksV1;
+
+/* Private DSP-1 bridge; not either extension ABI. Exact size/version, Reserved=0.
+   Owner callbacks must return promptly. Submit borrows Frame until return; retain
+   it for async use and release only after toolkit/worker references are gone.
+   Submit prepares/uploads only: it MUST NOT change visible content. Accepted
+   submissions call FrameComplete (possibly synchronously). The owner then calls
+   Publish only after checking current epoch/sequence. Publish synchronously swaps
+   already prepared content, returns 1 on success and must never await an upload.
+   Clear
+   detaches content and requests cancellation; completion/release may follow later.
+   Never retain a Runtime pointer for a late callback. See decision 0058. */
+typedef struct LuiFrame LuiFrame;
+typedef struct LuiFrameViewV1 {
+    uint32_t StructSize, AbiVersion;
+    const void* Pixels;
+    uint64_t ByteCount, Epoch, Sequence;
+    uint32_t Width, Height, RowStride, Format; /* Format 1 = BGRA8Premultiplied */
+} LuiFrameViewV1;
+typedef struct LuiFrameCallbacksV1 {
+    uint32_t StructSize, AbiVersion;
+    void* Context;
+    int (LUI_CALL* Submit)(void* Context, int Id, LuiFrame* Frame, uint32_t ScaleMode);
+    int (LUI_CALL* Publish)(void* Context, int Id, LuiFrame* Frame, uint32_t ScaleMode);
+    void (LUI_CALL* Clear)(void* Context, int Id, uint64_t Epoch);
+    uint64_t Reserved;
+} LuiFrameCallbacksV1;
+typedef struct LuiFrameStatsV1 {
+    uint32_t StructSize, AbiVersion;
+    uint64_t Surfaces, Frames, PixelBytes, StagingBytes, PeakBytes;
+    uint64_t Pending, InFlight, Accepted, Replaced, Rejected, Consumed, Stale;
+} LuiFrameStatsV1;
+/* Lease operations are thread-safe for a valid borrowed/owned reference. View's
+   pixels stay valid while that reference is held. No exceptions cross these APIs.
+   ReserveStaging must precede any native allocation; one reservation <=8 MiB,
+   conservatively charged until final release. ScaleMode: 0 Fit, 1 Fill, 2 Stretch. */
+LUI_API int LUI_CALL Lui_SetFrameCallbacks(LuiRuntime* Runtime, const LuiFrameCallbacksV1* Callbacks);
+LUI_API int LUI_CALL Lui_FrameRetain(LuiFrame* Frame);
+LUI_API void LUI_CALL Lui_FrameRelease(LuiFrame* Frame);
+LUI_API int LUI_CALL Lui_FrameView(LuiFrame* Frame, LuiFrameViewV1* View);
+LUI_API int LUI_CALL Lui_FrameComplete(LuiFrame* Frame, int Success);
+LUI_API int LUI_CALL Lui_FrameReserveStaging(LuiFrame* Frame, uint64_t Bytes);
+LUI_API int LUI_CALL Lui_GetFrameStats(LuiRuntime* Runtime, LuiFrameStatsV1* Stats);
 
 /* Internal platform bridge. Async completions must return to the owner thread. */
 typedef struct LuiPlatformCallbacksV1 {
@@ -124,6 +187,12 @@ LUI_API const char* LUI_CALL Lui_GetDiagnosticsJson(LuiRuntime* Runtime);
 LUI_API int LUI_CALL Lui_BeginInspection(LuiRuntime* Runtime);
 LUI_API const char* LUI_CALL Lui_GetInspectionTreeJson(LuiRuntime* Runtime);
 LUI_API void LUI_CALL Lui_SetBackend(LuiRuntime* Runtime, LuiBackendCallbacks Callbacks);
+LUI_API int LUI_CALL Lui_SetFocusCallbacks(LuiRuntime* Runtime, const LuiFocusCallbacksV1* Callbacks);
+LUI_API int LUI_CALL Lui_SetWindowCallbacks(LuiRuntime* Runtime, const LuiWindowCallbacksV1* Callbacks);
+/* Owner-thread ingress. CloseRequested returns admission, including prevention;
+   Closed acknowledges actual closure exactly once. Dead/wrong-class IDs reject. */
+LUI_API int LUI_CALL Lui_WindowCloseRequested(LuiRuntime* Runtime, int Id);
+LUI_API int LUI_CALL Lui_WindowClosed(LuiRuntime* Runtime, int Id);
 LUI_API int LUI_CALL Lui_SetPresentationCallbacks(LuiRuntime* Runtime, const LuiPresentationCallbacksV1* Callbacks);
 LUI_API int LUI_CALL Lui_SetImageCallbacks(LuiRuntime* Runtime, const LuiImageCallbacksV1* Callbacks);
 LUI_API int LUI_CALL Lui_ImageCompleted(LuiRuntime* Runtime, int Id, uint64_t Token, int Success);
@@ -132,6 +201,38 @@ LUI_API int LUI_CALL Lui_ImageCompleted(LuiRuntime* Runtime, int Id, uint64_t To
 LUI_API int LUI_CALL Lui_RecordPerformance(LuiRuntime* Runtime, int Kind, double Milliseconds);
 /* Owner aggregate projection, no content/IDs/paths; valid until next query. */
 LUI_API const char* LUI_CALL Lui_GetPerformanceJson(LuiRuntime* Runtime);
+/* Private owner-side presentation geometry, never a script inspection grant.
+   Coordinates are Window-local logical units. PaintOrder is a total preorder
+   across nested sibling stacking contexts; Bounds and Clip are independent.
+   OpaqueRectangle proves only a filled rectangular Frame/ScrollingFrame with
+   explicit opaque background and effective opacity 1. Other native controls,
+   glyphs, rounded or translucent content have no such proof. */
+#define LUI_WINDOW_PRESENTATION_ABI_VERSION 1u
+#define LUI_WINDOW_PRESENTATION_MAX_ENTRIES 4096u
+#define LUI_PRESENTATION_VISIBLE 1u
+#define LUI_PRESENTATION_INPUT_ELIGIBLE 2u
+#define LUI_PRESENTATION_OPAQUE_RECTANGLE 4u
+typedef struct LuiPresentationEntryV1 {
+    int32_t Id, ParentId;
+    uint32_t PaintOrder, Flags;
+    double X, Y, Width, Height;
+    double ClipX, ClipY, ClipWidth, ClipHeight;
+} LuiPresentationEntryV1;
+typedef struct LuiWindowPresentationV1 {
+    uint32_t StructSize, AbiVersion, Capacity, Count;
+    LuiPresentationEntryV1* Entries;
+    uint64_t Revision;
+} LuiWindowPresentationV1;
+/* 1 complete; 2 capacity/traversal limit exceeded; 0 invalid/not quiescent.
+   Count is zero and Entries untouched unless complete. No callbacks, layout
+   flush, native handles or text. Caller applies synchronously on the owner
+   thread; any later mutation requires another query. Maximum work/storage is
+   bounded by MAX_ENTRIES, including hierarchy depth and sibling scans. */
+LUI_API int LUI_CALL Lui_GetWindowPresentation(LuiRuntime* Runtime, int WindowId,
+    LuiWindowPresentationV1* Snapshot);
+/* Recheck immediately before applying a derived native mask. A mutation, dirty
+   layout, changed revision, closed owner or wrong thread invalidates it. */
+LUI_API int LUI_CALL Lui_IsWindowPresentationCurrent(LuiRuntime* Runtime, int WindowId, uint64_t Revision);
 LUI_API int LUI_CALL Lui_SetPlatformCallbacks(LuiRuntime* Runtime, const LuiPlatformCallbacksV1* Callbacks);
 /* Result is UTF-8 or null for cancellation. Error is UTF-8 or null on success. */
 LUI_API int LUI_CALL Lui_CompletePlatformRequest(LuiRuntime* Runtime, uint64_t RequestId,
@@ -171,6 +272,8 @@ LUI_API int LUI_CALL Lui_TextInput(LuiRuntime* Runtime, int Id, const char* Text
 /* Private adapter read-only owner query, permitted during dispatch. Capture when
    queuing text/preedit and compare before admission; script writes retire it. */
 LUI_API int LUI_CALL Lui_GetTextInputRevision(LuiRuntime* Runtime, int Id, uint64_t* Revision);
+/* Current committed CodeEditor source revision; zeroes the output on failure. */
+LUI_API int LUI_CALL Lui_GetCodeEditorTextRevision(LuiRuntime* Runtime, int Id, uint64_t* Revision);
 /* Phase: 0 start, 1 preedit change, 2 end/cancel. Preedit is capped at 4KiB;
    committed text is reported separately. All callbacks run on the owner. */
 LUI_API int LUI_CALL Lui_TextComposition(LuiRuntime* Runtime, int Id, int Phase, const char* Preedit);
@@ -189,8 +292,18 @@ LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, int Hovered);
 /* Phase: 0 pressed, 1 moved, 2 released, 3 canceled. Device: 0 mouse, 1 pen, 2 touch, 3 touchpad. */
 LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
     unsigned int PointerId, double X, double Y);
+/* Additive internal host entry. Mouse press/release Button: 1 Left, 2 Right,
+   3 Middle, 4 Auxiliary1, 5 Auxiliary2. Move/cancel and nonmouse use 0.
+   Existing Lui_PointerInput retains its button-unknown behavior. */
+LUI_API int LUI_CALL Lui_PointerInputV2(LuiRuntime* Runtime, int Id, int Phase, int Device,
+    unsigned int PointerId, double X, double Y, int Button);
 /* Phase: 0 pressed, 1 repeated, 2 released. Key is a canonical portable key name. */
 LUI_API int LUI_CALL Lui_KeyInput(LuiRuntime* Runtime, int Id, int Phase, const char* Key);
+/* Additive host notification after native/default key handling. OriginId must
+   remain the focused descendant of WindowId. Modifiers: Control=1, Shift=2,
+   Alt=4; Repeat is 0 or 1. Does not consume a native event or synthesize keys. */
+LUI_API int LUI_CALL Lui_WindowShortcut(LuiRuntime* Runtime, int WindowId, int OriginId,
+    const char* Key, unsigned int Modifiers, int Repeat);
 LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime);
 /* Host notification. Delivered to ThemeService listeners by the next owner-thread pump. */
 LUI_API int LUI_CALL Lui_SystemThemeChanged(LuiRuntime* Runtime, const char* Theme);

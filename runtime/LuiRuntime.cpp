@@ -5,6 +5,7 @@
 #include "internal/Input.h"
 #include "internal/Text.h"
 #include "internal/Images.h"
+#include "internal/Frames.h"
 #include "../ui/style/Style.h"
 #include "internal/Extensions.h"
 #include "internal/NativeServices.h"
@@ -192,11 +193,15 @@ static void PushNode(lua_State* State, const Node* Value) {
     }
 }
 
-static void QueueProperty(LuiRuntime* Runtime, const Node* Value, const char* Name, const std::string& Text) {
+void QueueProperty(LuiRuntime* Runtime, const Node* Value, const char* Name, const std::string& Text) {
     if (!LuiSchema::IsNative(Value->ClassName)) return;
-    for (BackendChange& Change : Runtime->PendingChanges) {
-        if (Change.Type == BackendChange::Kind::Property && Change.Id == Value->Id && Change.Name == Name) {
-            Change.Value = Text;
+    for (auto Change = Runtime->PendingChanges.begin(); Change != Runtime->PendingChanges.end(); ++Change) {
+        if (Change->Type == BackendChange::Kind::Property && Change->Id == Value->Id && Change->Name == Name) {
+            if (std::string(Name) == "__CodeStyles") {
+                Runtime->PendingChanges.erase(Change);
+                break;
+            }
+            Change->Value = Text;
             return;
         }
     }
@@ -307,7 +312,7 @@ static std::string FormatSize(const SizeValue& Value) {
 }
 
 void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
-    const PointerInputValue* Pointer, const KeyboardInputValue* Keyboard) {
+    const PointerInputValue* Pointer, const KeyboardInputValue* Keyboard, bool* Failed) {
     if ((Runtime->Modules && Runtime->ShuttingDown) || Runtime->ModuleDepth) return;
     const std::vector<int> Snapshot = Value->Listeners;
     for (int Id : Snapshot) {
@@ -316,7 +321,7 @@ void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
         if (Found == Runtime->Listeners.end() || !Found->second.Active || Found->second.Signal != Signal || Value->Destroyed) continue;
         lua_getref(Runtime->State, Found->second.Reference);
         if (Pointer) {
-            lua_createtable(Runtime->State, 0, 4);
+            lua_createtable(Runtime->State, 0, Pointer->Button.empty() ? 4 : 5);
             lua_pushstring(Runtime->State, Pointer->Device.c_str());
             lua_setfield(Runtime->State, -2, "Device");
             lua_pushnumber(Runtime->State, Pointer->PointerId);
@@ -325,6 +330,10 @@ void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
             lua_setfield(Runtime->State, -2, "Position");
             lua_pushboolean(Runtime->State, Pointer->IsCanceled);
             lua_setfield(Runtime->State, -2, "IsCanceled");
+            if (!Pointer->Button.empty()) {
+                lua_pushstring(Runtime->State, Pointer->Button.c_str());
+                lua_setfield(Runtime->State, -2, "Button");
+            }
             lua_setreadonly(Runtime->State, -1, true);
         } else if (Keyboard) {
             lua_createtable(Runtime->State, 0, 3);
@@ -334,10 +343,21 @@ void FireSignal(LuiRuntime* Runtime, Node* Value, const char* Signal,
             lua_setfield(Runtime->State, -2, "Key");
             lua_pushboolean(Runtime->State, Keyboard->IsRepeat);
             lua_setfield(Runtime->State, -2, "IsRepeat");
+            if (Keyboard->IsShortcut) {
+                lua_pushboolean(Runtime->State, (Keyboard->Modifiers & 1) != 0);
+                lua_setfield(Runtime->State, -2, "Control");
+                lua_pushboolean(Runtime->State, (Keyboard->Modifiers & 2) != 0);
+                lua_setfield(Runtime->State, -2, "Shift");
+                lua_pushboolean(Runtime->State, (Keyboard->Modifiers & 4) != 0);
+                lua_setfield(Runtime->State, -2, "Alt");
+                lua_pushboolean(Runtime->State, Keyboard->TextEditing);
+                lua_setfield(Runtime->State, -2, "TextEditing");
+            }
             lua_setreadonly(Runtime->State, -1, true);
         }
         DepthGuard Guard(Runtime->VmDepth, Runtime);
         if (lua_pcall(Runtime->State, Pointer || Keyboard ? 1 : 0, 0, 0) != LUA_OK) {
+            if (Failed) *Failed = true;
             const char* Message = lua_tostring(Runtime->State, -1);
             Runtime->LastError = Message ? Message : "Luau callback failed";
             EmitLog(Runtime, "Error", "Signal: " + Runtime->LastError);
@@ -355,6 +375,8 @@ static void Disconnect(LuiRuntime* Runtime, int ListenerId) {
 }
 
 static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
+    if (Parent && (Parent->WindowClosed || Parent->WindowClosePending || Parent->NativeWindowClosedPending))
+        luaL_error(Runtime->State, "[LUI:Window] Closed or closing parent");
     const std::string ParentRule = LuiSchema::GetParentRule(Value->ClassName);
     if (Parent && ParentRule == "none") luaL_error(Runtime->State, "%s cannot have a Parent", Value->ClassName.c_str());
     if (Parent) {
@@ -404,8 +426,10 @@ static void SetParent(LuiRuntime* Runtime, Node* Value, Node* Parent) {
 static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     if (Value->Destroyed || Value->DestroyingInProgress) return;
     Value->DestroyingInProgress = true;
+    ClearFrameSurface(Runtime, Value, true);
     CancelImage(Runtime, Value);
-    if (!Runtime->BackendFailed) FireSignal(Runtime, Value, "Destroying");
+    if (!Runtime->BackendFailed && !(Runtime->ShuttingDown && Value->ClassName == "FrameSurface"))
+        FireSignal(Runtime, Value, "Destroying");
     if (Value->ClassName == "UISizeConstraint") {
         auto Parent = Runtime->Nodes.find(Value->ParentId);
         if (Parent != Runtime->Nodes.end() && Parent->second->ClassName == "Window")
@@ -457,6 +481,8 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
     CheckModuleEffect(State);
     auto* Runtime = GetRuntime(State);
     const std::string Key = Name;
+    if ((Value->WindowClosed || Value->WindowClosePending) && Key != "Name" && Key != "Sensitive")
+        luaL_error(State, "[LUI:Window] Closed or closing");
     const double PreviousValue = Value->Value;
     const LuiSchema::PropertyDefinition* Definition = LuiSchema::FindProperty(Value->ClassName, Key);
     if (!Definition || Definition->ReadOnly) luaL_error(State, "unknown or read-only property '%s'", Name);
@@ -467,9 +493,19 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         SetParent(Runtime, Value, lua_isnil(State, ValueIndex) ? nullptr : GetNode(State, ValueIndex));
         return;
     }
-    if (LuiStyle::Set(State, Value, Key, ValueIndex)) {
+    if (Key == "ScaleMode") {
+        if (lua_type(State, ValueIndex) != LUA_TSTRING) luaL_error(State, "[LUI:FrameSurface] InvalidArgument");
+        size_t Length = 0; const char* Mode = lua_tolstring(State, ValueIndex, &Length);
+        if (!((Length == 3 && std::memcmp(Mode, "Fit", 3) == 0) ||
+            (Length == 4 && std::memcmp(Mode, "Fill", 4) == 0) ||
+            (Length == 7 && std::memcmp(Mode, "Stretch", 7) == 0))) luaL_error(State, "[LUI:FrameSurface] InvalidArgument");
+        Value->ScaleMode.assign(Mode, Length);
+        QueueProperty(Runtime, Value, "ScaleMode", Value->ScaleMode);
+    } else if (LuiStyle::Set(State, Value, Key, ValueIndex)) {
         Runtime->LayoutDirty = true;
     } else if (Key == "Secret" || Key == "Multiline" || Key == "MaxLength" || Key == "PlaceholderText") {
+        if (Value->ClassName == "CodeEditor" && (Key == "Secret" || Key == "Multiline"))
+            luaL_error(State, "[LUI:CodeEditor] Editing mode is immutable");
         if (HasNativeBackend(Runtime->Backend) && !Runtime->Presentation.Present)
             luaL_error(State, "[LUI:Text] Native mapping is not implemented");
         if (Key == "Secret" || Key == "Multiline") {
@@ -484,9 +520,14 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         } else if (Key == "MaxLength") {
             if (lua_type(State, ValueIndex) != LUA_TNUMBER) luaL_error(State, "[LUI:Text] Expected integer");
             const double Parsed = lua_tonumber(State, ValueIndex); int Characters;
-            if (!std::isfinite(Parsed) || Parsed != std::floor(Parsed) || Parsed < 0 || Parsed > LuiText::MaxCharacters ||
-                !LuiText::Count(Value->Text, Characters) || Characters > Parsed)
+            const bool CodeEditor=Value->ClassName=="CodeEditor";
+            const int Maximum=CodeEditor?LuiText::CodeEditorMaxCharacters:LuiText::MaxCharacters;
+            if (!std::isfinite(Parsed) || Parsed != std::floor(Parsed) || Parsed < 0 || Parsed > Maximum ||
+                !(CodeEditor?LuiText::CountCodeEditor(Value->Text,Characters):LuiText::Count(Value->Text,Characters)) ||
+                Characters > Parsed)
                 luaL_error(State, "[LUI:Text] Invalid character limit");
+            if (Value->ClassName == "CodeEditor" && Parsed < Value->CodeEditorUndoMaxLength)
+                luaL_error(State, "[LUI:CodeEditor] MaxLength would reject native Undo");
             Value->MaxLength = static_cast<int>(Parsed);
         } else {
             if (lua_type(State, ValueIndex) != LUA_TSTRING) luaL_error(State, "[LUI:Text] Expected string");
@@ -505,8 +546,11 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
             luaL_error(State, "[LUI:Text] Native mapping is not implemented");
         if (lua_type(State, ValueIndex) != LUA_TNUMBER) luaL_error(State, "[LUI:Text] Expected integer");
         const double Parsed = lua_tonumber(State, ValueIndex); int Characters;
-        if (!std::isfinite(Parsed) || Parsed != std::floor(Parsed) || Parsed < 0 || Parsed > LuiText::MaxCharacters ||
-            !LuiText::Count(Value->Text, Characters) || (Value->Secret && Parsed != 0))
+        const bool CodeEditor=Value->ClassName=="CodeEditor";
+        const int Maximum=CodeEditor?LuiText::CodeEditorMaxCharacters:LuiText::MaxCharacters;
+        if (!std::isfinite(Parsed) || Parsed != std::floor(Parsed) || Parsed < 0 || Parsed > Maximum ||
+            !(CodeEditor?LuiText::CountCodeEditor(Value->Text,Characters):LuiText::Count(Value->Text,Characters)) ||
+            (Value->Secret && Parsed != 0))
             luaL_error(State, "[LUI:Text] Invalid selection");
         if (Key == "SelectionStart") Value->SelectionStart = std::min(static_cast<int>(Parsed), Characters);
         else Value->SelectionLength = static_cast<int>(Parsed);
@@ -565,12 +609,18 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
             Key == "AccessibilityDescription" ? &Value->AccessibilityDescription : &Value->Text;
         if (Key == "Title" && Value->ClassName != "Window") luaL_error(State, "Title belongs to Window");
         if (Key == "Text" && Value->ClassName != "TextLabel" && Value->ClassName != "TextButton" &&
-            Value->ClassName != "TextBox" && Value->ClassName != "CheckBox") luaL_error(State, "Text belongs to text controls");
-        if (Key == "Text" && Value->ClassName == "TextBox") {
+            !LuiSchema::IsA(Value->ClassName, "TextBox") && Value->ClassName != "CheckBox") luaL_error(State, "Text belongs to text controls");
+        if (Key == "Text" && LuiSchema::IsA(Value->ClassName, "TextBox")) {
             size_t Bytes; const char* Input = lua_tolstring(State, ValueIndex, &Bytes); int Characters;
-            const std::string Candidate(Input, Bytes);
-            if (!LuiText::Count(Candidate, Characters) || Characters > Value->MaxLength)
+            const bool CodeEditor=Value->ClassName=="CodeEditor";
+            if (Bytes > (CodeEditor?LuiText::CodeEditorMaxBytes:LuiText::MaxBytes))
                 luaL_error(State, "[LUI:Text] Invalid or oversized UTF-8 text");
+            const std::string Candidate(Input, Bytes);
+            if (!(CodeEditor?LuiText::CountCodeEditor(Candidate,Characters):LuiText::Count(Candidate,Characters)) ||
+                Characters > Value->MaxLength)
+                luaL_error(State, "[LUI:Text] Invalid or oversized UTF-8 text");
+            if (Value->ClassName == "CodeEditor" && Candidate.find('\r') != std::string::npos)
+                luaL_error(State, "[LUI:CodeEditor] Text must use LF line endings");
             ++Value->InputRevision;
             if (Value->IsComposing) {
                 CancelComposition(Runtime, Value);
@@ -580,9 +630,12 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
             Value->SelectionStart = std::min(Value->SelectionStart, Characters);
             Value->SelectionLength = std::min(Value->SelectionLength, Characters - Value->SelectionStart);
         }
+        const bool CodeTextChanged = Key == "Text" && Value->ClassName == "CodeEditor" && *Target != Text;
         *Target = Text;
+        if (CodeTextChanged) ++Value->TextRevision;
         QueueProperty(Runtime, Value, Name, *Target);
-        if (Key == "Text" && Value->ClassName == "TextBox")
+        if (CodeTextChanged) QueueProperty(Runtime, Value, "__CodeStyles", "");
+        if (Key == "Text" && LuiSchema::IsA(Value->ClassName, "TextBox"))
             QueueProperty(Runtime, Value, "__Selection", std::to_string(Value->SelectionStart) + "," + std::to_string(Value->SelectionLength));
     } else if (Key == "Visible") {
         if (IsComponent) luaL_error(State, "Visible does not belong to UI components");
@@ -695,7 +748,7 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
     }
     RecordSourceMutation(State, Value, Name);
     FireSignal(Runtime, Value, "Changed");
-    if (Key == "Text" && Value->ClassName == "TextBox") FireSignal(Runtime, Value, "TextChanged");
+    if (Key == "Text" && LuiSchema::IsA(Value->ClassName, "TextBox")) FireSignal(Runtime, Value, "TextChanged");
     if (Key == "Checked") FireSignal(Runtime, Value, "CheckedChanged");
     if ((Key == "Value" || Key == "Minimum" || Key == "Maximum") && Value->Value != PreviousValue)
         FireSignal(Runtime, Value, "ValueChanged");
@@ -709,6 +762,75 @@ static int NodeDestroy(lua_State* State) {
     const auto Found = Runtime->Nodes.find(Id);
     if (Found != Runtime->Nodes.end()) DestroyNode(Runtime, Found->second.get());
     return 0;
+}
+
+static void CommitWindowClosed(LuiRuntime* Runtime, Node* Value) {
+    if (Value->Destroyed || Value->WindowClosed) return;
+    // Closure retires the native top level, not the application-owned tree.
+    // A document owner may still move retained children into another Window.
+    Value->WindowClosed = true;
+    Value->NativeWindowClosedPending = false;
+    Value->WindowClosePending = false;
+    Value->WindowCloseRequestQueued = false;
+    Value->WindowClosePrevented = false;
+    Value->Visible = false;
+    Runtime->LayoutDirty = true;
+    ClearInvalidInput(Runtime);
+    if (Value->Destroyed) return;
+    FireSignal(Runtime, Value, "Changed");
+    if (!Value->Destroyed) FireSignal(Runtime, Value, "Closed");
+}
+
+static const char* RequestWindowClose(LuiRuntime* Runtime, Node* Value) {
+    if (Value->Destroyed || Value->DestroyingInProgress || Value->WindowClosed) return "Closed";
+    if (Value->WindowCloseDispatch || Value->WindowClosePending || Value->WindowCloseRequestQueued) return "InProgress";
+    if (Runtime->BackendFailed || Runtime->ShuttingDown) return "Unavailable";
+    if (HasNativeBackend(Runtime->Backend) && !Runtime->Windows.Close) return "Unsupported";
+    Value->WindowCloseDispatch = true;
+    Value->WindowClosePrevented = false;
+    bool Failed = false;
+    FireSignal(Runtime, Value, "CloseRequested", nullptr, nullptr, &Failed);
+    Value->WindowCloseDispatch = false;
+    if (Value->Destroyed || Value->DestroyingInProgress || Value->WindowClosed) return "Closed";
+    if (Failed || Runtime->BackendFailed || Runtime->ShuttingDown) return "CallbackFailed";
+    if (Value->WindowClosePrevented) return "Prevented";
+    Value->WindowClosePending = true;
+    if (!HasNativeBackend(Runtime->Backend)) {
+        CommitWindowClosed(Runtime, Value);
+    } else {
+        int Accepted = 0;
+        {
+            DepthGuard Guard(Runtime->BackendDepth);
+            // A close handler may have redocked retained controls. Publish those
+            // native parent changes before retiring the old top-level surface.
+            FlushChanges(Runtime);
+            if (!Runtime->BackendFailed) Accepted = Runtime->Windows.Close(Runtime->Windows.Context, Value->Id);
+        }
+        if (!Accepted && !Value->NativeWindowClosedPending && !Value->WindowClosed) {
+            Value->WindowClosePending = false; return "BackendRejected";
+        }
+    }
+    return nullptr;
+}
+
+static int NodeRequestClose(lua_State* State) {
+    CheckModuleEffect(State);
+    Node* Value = GetNode(State, 1);
+    if (Value->ClassName != "Window") luaL_error(State, "[LUI:Window] InvalidReceiver");
+    const char* Error = RequestWindowClose(GetRuntime(State), Value);
+    lua_pushboolean(State, Error == nullptr);
+    if (Error) lua_pushstring(State, Error); else lua_pushnil(State);
+    return 2;
+}
+
+static int NodePreventClose(lua_State* State) {
+    CheckModuleEffect(State);
+    Node* Value = GetNode(State, 1);
+    if (Value->ClassName != "Window") luaL_error(State, "[LUI:Window] InvalidReceiver");
+    const bool Valid = Value->WindowCloseDispatch && !Value->Destroyed && !Value->WindowClosed;
+    if (Valid) Value->WindowClosePrevented = true;
+    lua_pushboolean(State, Valid);
+    return 1;
 }
 
 static int NodeGetChildren(lua_State* State) {
@@ -747,6 +869,18 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->LastChangedAt = Value->CreatedAt;
     if (Value->LastChangedAt.Line > 0) Value->LastChangedProperty = "Clone";
     Value->ClassName = Source->ClassName;
+    if (Value->ClassName == "FrameSurface") {
+        if (Runtime->ShuttingDown) {
+            Runtime->LastError = "[LUI:FrameSurface] Closed"; return false;
+        }
+        if (!FrameBackendAvailable(Runtime)) {
+            Runtime->LastError = "[LUI:FrameSurface] Unsupported"; return false;
+        }
+        if (!RegisterFrameSurface(Runtime, Value.get())) {
+            Runtime->LastError = "[LUI:FrameSurface] LimitExceeded"; return false;
+        }
+        Value->ScaleMode = Source->ScaleMode;
+    }
     Value->Sensitive=Source->Sensitive; Value->EffectiveSensitive=Source->EffectiveSensitive;
     Value->Name = Source->Name;
     Value->Title = Source->Title;
@@ -770,6 +904,7 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->ClipsDescendants = Source->ClipsDescendants;
     Value->ZIndex = Source->ZIndex;
     Value->StyleProperties = Source->StyleProperties;
+    Value->StyleGeometry = Source->StyleGeometry;
     Value->CellSize = Source->CellSize;
     Value->CellPadding = Source->CellPadding;
     Value->AnchorPoint = Source->AnchorPoint;
@@ -804,16 +939,17 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     }
     if (Parent) SetParent(Runtime, Copy, Parent);
     if (LuiSchema::IsNative(Copy->ClassName)) {
-        if (Copy->ClassName == "TextBox") {
+        if (LuiSchema::IsA(Copy->ClassName, "TextBox")) {
             QueueProperty(Runtime, Copy, "__TextConfig", std::string(Copy->Multiline ? "1" : "0") + "," +
                 (Copy->Secret ? "1" : "0") + "," + std::to_string(Copy->MaxLength) + "," + Copy->PlaceholderText);
             QueueProperty(Runtime, Copy, "__Selection", std::to_string(Copy->SelectionStart) + "," + std::to_string(Copy->SelectionLength));
         }
         if (Copy->ClassName == "Window") QueueProperty(Runtime, Copy, "Title", Copy->Title);
+        if (Copy->ClassName == "FrameSurface") QueueProperty(Runtime, Copy, "ScaleMode", Copy->ScaleMode);
         if (Copy->ClassName == "ImageLabel" && !Copy->Source.empty())
             QueueProperty(Runtime, Copy, "Source", Copy->Source);
         if (Copy->ClassName == "TextLabel" || Copy->ClassName == "TextButton" ||
-            Copy->ClassName == "TextBox" || Copy->ClassName == "CheckBox")
+            LuiSchema::IsA(Copy->ClassName, "TextBox") || Copy->ClassName == "CheckBox")
             QueueProperty(Runtime, Copy, "Text", Copy->Text);
         if (!Copy->AccessibilityLabel.empty())
             QueueProperty(Runtime, Copy, "AccessibilityLabel", Copy->AccessibilityLabel);
@@ -907,6 +1043,114 @@ static void PushSignal(lua_State* State, Node* Value, const char* Name) {
     lua_setmetatable(State, -2);
 }
 
+static int NodeSubmitFrame(lua_State* State) {
+    CheckModuleEffect(State);
+    Node* Value = GetNode(State, 1, true);
+    if (Value->ClassName != "FrameSurface") luaL_error(State, "[LUI:FrameSurface] InvalidArgument");
+    auto* Runtime = GetRuntime(State);
+    const char* Failure = "InvalidArgument";
+    if (Value->Destroyed || Value->DestroyingInProgress) Failure = "Closed";
+    else if (lua_gettop(State) == 6 && lua_type(State, 2) == LUA_TBUFFER &&
+        lua_type(State, 3) == LUA_TNUMBER && lua_type(State, 4) == LUA_TNUMBER &&
+        lua_type(State, 5) == LUA_TNUMBER && lua_type(State, 6) == LUA_TSTRING) {
+        size_t Length = 0, FormatLength = 0;
+        const void* Pixels = lua_tobuffer(State, 2, &Length);
+        const char* Format = lua_tolstring(State, 6, &FormatLength);
+        Failure = SubmitFrameSurface(Runtime, Value, Pixels, Length, lua_tonumber(State, 3),
+            lua_tonumber(State, 4), lua_tonumber(State, 5), Format, FormatLength);
+    }
+    if (Failure) ++Runtime->FramesRejected;
+    lua_pushboolean(State, Failure == nullptr);
+    if (Failure) lua_pushstring(State, Failure); else lua_pushnil(State);
+    return 2;
+}
+static int NodeClearFrame(lua_State* State) {
+    CheckModuleEffect(State);
+    Node* Value = GetNode(State, 1, true);
+    if (Value->ClassName != "FrameSurface" || lua_gettop(State) != 1) luaL_error(State, "[LUI:FrameSurface] InvalidArgument");
+    if (!Value->Destroyed && !Value->DestroyingInProgress) ClearFrameSurface(GetRuntime(State), Value);
+    return 0;
+}
+
+static int NodeFocus(lua_State* State) {
+    CheckModuleEffect(State);
+    Node* Value = GetNode(State, 1, true);
+    if (lua_gettop(State) != 1 || !LuiSchema::IsA(Value->ClassName, "GuiObject"))
+        luaL_error(State, "[LUI:Input] InvalidArgument");
+    auto* Runtime = GetRuntime(State);
+    // Focus eligibility and native focus must observe the same submitted tree.
+    // A preceding enable, hide, reparent or layout change is still queued here.
+    FlushLayout(Runtime);
+    bool Accepted = false;
+    if (!Runtime->BackendFailed && !Value->Destroyed && !Value->DestroyingInProgress && CanReceiveInput(Runtime, Value)) {
+        if (Runtime->Backend.Create) {
+            if (Runtime->Focus.RequestFocus) {
+                DepthGuard Guard(Runtime->BackendDepth);
+                Accepted = Runtime->Focus.RequestFocus(Runtime->Focus.Context, Value->Id) == 1;
+            }
+        } else Accepted = Lui_FocusChanged(Runtime, Value->Id, 1) == 1;
+    }
+    lua_pushboolean(State, Accepted);
+    return 1;
+}
+
+static int NodeSetStyles(lua_State* State) {
+    CheckModuleEffect(State);
+    Node* Value = GetNode(State, 1);
+    if (Value->ClassName != "CodeEditor") luaL_error(State, "[LUI:CodeEditor] Invalid instance");
+    if (lua_type(State, 2) != LUA_TNUMBER) luaL_error(State, "[LUI:CodeEditor] Expected revision");
+    const double Requested = lua_tonumber(State, 2);
+    luaL_checktype(State, 3, LUA_TTABLE);
+    if (!std::isfinite(Requested) || Requested < 1 || Requested != std::floor(Requested) || Requested > 9007199254740991.0)
+        luaL_error(State, "[LUI:CodeEditor] Invalid revision");
+    if (static_cast<uint64_t>(Requested) != Value->TextRevision || Value->IsComposing) {
+        lua_pushboolean(State, false);
+        return 1;
+    }
+    const size_t Count = lua_objlen(State, 3);
+    if (Count > 128) luaL_error(State, "[LUI:CodeEditor] Too many style ranges");
+    lua_pushnil(State);
+    size_t Entries = 0;
+    while (lua_next(State, 3) != 0) {
+        ++Entries;
+        if (lua_type(State, -2) != LUA_TNUMBER ||
+            lua_tonumber(State, -2) < 1 || lua_tonumber(State, -2) > static_cast<double>(Count) ||
+            lua_tonumber(State, -2) != std::floor(lua_tonumber(State, -2)))
+            luaL_error(State, "[LUI:CodeEditor] Ranges must be a dense array");
+        lua_pop(State, 1);
+    }
+    if (Entries != Count) luaL_error(State, "[LUI:CodeEditor] Ranges must be a dense array");
+    int Characters = 0;
+    if (!LuiText::CountCodeEditor(Value->Text, Characters)) luaL_error(State, "[LUI:CodeEditor] Invalid source");
+    std::string Encoded = std::to_string(Value->TextRevision);
+    int PreviousEnd = 0;
+    for (size_t Index = 1; Index <= Count; ++Index) {
+        lua_rawgeti(State, 3, static_cast<int>(Index));
+        if (lua_type(State, -1) != LUA_TTABLE) luaL_error(State, "[LUI:CodeEditor] Expected style range");
+        auto Number = [&](const char* Key, int Maximum) -> int {
+            lua_pushstring(State, Key);
+            lua_rawget(State, -2);
+            if (lua_type(State, -1) != LUA_TNUMBER) luaL_error(State, "[LUI:CodeEditor] Invalid style %s", Key);
+            const double Parsed = lua_tonumber(State, -1);
+            if (!std::isfinite(Parsed) || Parsed != std::floor(Parsed) || Parsed < 0 || Parsed > Maximum)
+                luaL_error(State, "[LUI:CodeEditor] Invalid style %s", Key);
+            lua_pop(State, 1);
+            return static_cast<int>(Parsed);
+        };
+        const int Start = Number("Start", Characters);
+        const int End = Number("End", Characters);
+        const int Color = Number("Color", 0xFFFFFF);
+        if (Start < PreviousEnd || End <= Start) luaL_error(State, "[LUI:CodeEditor] Unordered style ranges");
+        PreviousEnd = End;
+        Encoded += ";" + std::to_string(Start) + "," + std::to_string(End) + "," + std::to_string(Color);
+        lua_pop(State, 1);
+    }
+    // Keep the native prototype private until editable styling admission passes.
+    // Valid requests remain observable as unsupported and cannot reach a backend.
+    lua_pushboolean(State, false);
+    return 1;
+}
+
 static int NodeIndex(lua_State* State) {
     Node* Value = GetNode(State, 1, true);
     const std::string Key = luaL_checkstring(State, 2);
@@ -917,6 +1161,12 @@ static int NodeIndex(lua_State* State) {
         else if (Key == "GetDescendants") lua_pushcfunction(State, NodeGetDescendants, Method->Name);
         else if (Key == "FindFirstChild") lua_pushcfunction(State, NodeFindFirstChild, Method->Name);
         else if (Key == "IsA") lua_pushcfunction(State, NodeIsA, Method->Name);
+        else if (Key == "SubmitFrame") lua_pushcfunction(State, NodeSubmitFrame, Method->Name);
+        else if (Key == "ClearFrame") lua_pushcfunction(State, NodeClearFrame, Method->Name);
+        else if (Key == "Focus") lua_pushcfunction(State, NodeFocus, Method->Name);
+        else if (Key == "SetStyles") lua_pushcfunction(State, NodeSetStyles, Method->Name);
+        else if (Key == "RequestClose") lua_pushcfunction(State, NodeRequestClose, Method->Name);
+        else if (Key == "PreventClose") lua_pushcfunction(State, NodePreventClose, Method->Name);
         else lua_pushnil(State);
         return 1;
     }
@@ -938,6 +1188,7 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "Secret") lua_pushboolean(State, Value->Secret);
     else if (Key == "Multiline") lua_pushboolean(State, Value->Multiline);
     else if (Key == "MaxLength") lua_pushinteger(State, Value->MaxLength);
+    else if (Key == "TextRevision") lua_pushnumber(State, static_cast<double>(Value->TextRevision));
     else if (Key == "SelectionStart") lua_pushinteger(State, Value->SelectionStart);
     else if (Key == "SelectionLength") lua_pushinteger(State, Value->SelectionLength);
     else if (Key == "IsComposing") lua_pushboolean(State, Value->IsComposing);
@@ -947,7 +1198,10 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "AccessibilityDescription") lua_pushstring(State, Value->AccessibilityDescription.c_str());
     else if (Key == "Source") lua_pushstring(State, Value->Source.c_str());
     else if (Key == "LoadState") lua_pushstring(State, Value->LoadState.c_str());
+    else if (Key == "ScaleMode") lua_pushstring(State, Value->ScaleMode.c_str());
+    else if (Key == "FrameState") lua_pushstring(State, Value->FrameState.c_str());
     else if (Key == "Visible") lua_pushboolean(State, Value->Visible);
+    else if (Key == "IsClosed") lua_pushboolean(State, Value->WindowClosed);
     else if (Key == "Enabled") lua_pushboolean(State, Value->Enabled);
     else if (Key == "Checked") lua_pushboolean(State, Value->Checked);
     else if (Key == "IsFocused") lua_pushboolean(State, Value->IsFocused);
@@ -1006,7 +1260,7 @@ static int InitializeNode(lua_State* State) {
     lua_getfield(State,2,"Parent");
     if(!lua_isnil(State,-1) && GetNode(State,-1)->EffectiveSensitive) ClassifyNode(GetRuntime(State),Value);
     lua_pop(State,1);
-    const bool IsTextBox = Value->ClassName == "TextBox";
+    const bool IsTextBox = LuiSchema::IsA(Value->ClassName, "TextBox");
     if (IsTextBox) for (const char* Property : {"Secret", "Multiline", "MaxLength", "PlaceholderText", "Text", "SelectionStart", "SelectionLength"}) {
         lua_getfield(State, 2, Property);
         if (!lua_isnil(State, -1)) SetProperty(State, Value, Property, -1);
@@ -1092,14 +1346,25 @@ static int InstanceNew(lua_State* State) {
         luaL_error(State, "unknown class '%s'", ClassName.c_str());
     }
     auto* Runtime = GetRuntime(State);
+    if (ClassName == "CodeEditor" && HasNativeBackend(Runtime->Backend) &&
+        Runtime->BackendName != "winui3" && Runtime->BackendName != "gtk4")
+        luaL_error(State, "[LUI:CodeEditor] Unsupported backend");
     if (ClassName == "ScrollingFrame" && HasNativeBackend(Runtime->Backend) && !Runtime->Presentation.Present)
         luaL_error(State, "[LUI:Viewport] Native mapping is not implemented");
+    if (ClassName == "FrameSurface" && Runtime->ShuttingDown)
+        luaL_error(State, "[LUI:FrameSurface] Closed");
+    if (ClassName == "FrameSurface" && !FrameBackendAvailable(Runtime))
+        luaL_error(State, "[LUI:FrameSurface] Unsupported");
     auto Value = std::make_unique<Node>();
+    if (ClassName == "FrameSurface" && !RegisterFrameSurface(Runtime, Value.get()))
+        luaL_error(State, "[LUI:FrameSurface] LimitExceeded");
     Value->Id = Runtime->NextNodeId++;
     Value->CreatedAt = CaptureSourceLocation(State);
     Value->ClassName = ClassName;
+    if (ClassName == "CodeEditor") Value->MaxLength=LuiText::CodeEditorMaxCharacters;
     Value->Name = ClassName;
     Value->Visible = ClassName != "Window";
+    Value->Multiline = ClassName == "CodeEditor";
     Value->ClipsDescendants = ClassName == "ScrollingFrame";
     Value->Size = ClassName == "Window" ? SizeValue{{0, 800}, {0, 600}} : SizeValue{{1, 0}, {1, 0}};
     int Id = Value->Id;
@@ -1176,6 +1441,8 @@ static int TaskSchedule(lua_State* State) {
     CheckModuleEffect(State);
     luaL_checktype(State, 1, LUA_TFUNCTION);
     auto* Runtime = GetRuntime(State);
+    if (Runtime->TaskLimit && Runtime->Tasks.size() + Runtime->TaskRound.size() - Runtime->TaskRoundIndex >= Runtime->TaskLimit)
+        luaL_error(State, "[LUI:Scheduler] PendingLimit");
     lua_State* Thread = lua_newthread(State);
     if (Runtime->Sandboxed) luaL_sandboxthread(Thread);
     int Reference = lua_ref(State, -1);
@@ -1192,6 +1459,10 @@ static int TaskDelay(lua_State* State) {
     luaL_checktype(State, 2, LUA_TFUNCTION);
     if (!std::isfinite(Seconds) || Seconds < 0) luaL_error(State, "delay must be finite and nonnegative");
     auto* Runtime = GetRuntime(State);
+    if (Runtime->TaskLimit && Runtime->Tasks.size() + Runtime->TaskRound.size() - Runtime->TaskRoundIndex >= Runtime->TaskLimit)
+        luaL_error(State, "[LUI:Scheduler] PendingLimit");
+    if (Runtime->TaskLimit && Seconds > 31536000)
+        luaL_error(State, "[LUI:Scheduler] DelayLimit");
     lua_State* Thread = lua_newthread(State);
     if (Runtime->Sandboxed) luaL_sandboxthread(Thread);
     int Reference = lua_ref(State, -1);
@@ -1230,6 +1501,7 @@ void FlushLayout(LuiRuntime* Runtime) {
     bool Arranged = false;
     {
         DepthGuard Guard(Runtime->BackendDepth);
+        DepthGuard LayoutGuard(Runtime->LayoutDepth);
         FlushChanges(Runtime);
         if (!Runtime->BackendFailed && Runtime->LayoutDirty) {
             Runtime->LayoutDirty = false;
@@ -1237,11 +1509,19 @@ void FlushLayout(LuiRuntime* Runtime) {
             const auto Started = std::chrono::steady_clock::now();
             for (auto& Pair : Runtime->Nodes) {
                 Node* Value = Pair.second.get();
-                if (!Value->Destroyed && Value->ClassName == "Window") {
+                if (!Value->Destroyed && !Value->WindowClosed && Value->ClassName == "Window") {
                     const VectorValue Resolved = Value->HasViewportSize
                         ? Value->ViewportSize : LuiLayout::ResolveConstrainedSize(Runtime, Value, 0, 0);
                     LuiLayout::ArrangeNode(Runtime, Value, {0, 0, Resolved.X, Resolved.Y});
-                    if (Runtime->Presentation.Present) LuiLayout::PresentTree(Runtime, Value);
+                    Value->PresentationRevision = Runtime->LayoutPasses + 1;
+                    if (Runtime->Presentation.Present) {
+                        struct PresentationScope {
+                            int& WindowId;
+                            explicit PresentationScope(int& Target, int Id) : WindowId(Target) {WindowId = Id;}
+                            ~PresentationScope() {WindowId = 0;}
+                        } Scope(Runtime->PresentationWindowId, Value->Id);
+                        LuiLayout::PresentTree(Runtime, Value);
+                    }
                 }
             }
             ++Runtime->LayoutPasses;
@@ -1299,7 +1579,7 @@ static int WindowServiceGetWindows(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     std::vector<int> WindowIds;
     for (const auto& Pair : Runtime->Nodes) {
-        if (!Pair.second->Destroyed && Pair.second->ClassName == "Window") WindowIds.push_back(Pair.first);
+        if (!Pair.second->Destroyed && !Pair.second->WindowClosed && Pair.second->ClassName == "Window") WindowIds.push_back(Pair.first);
     }
     std::sort(WindowIds.begin(), WindowIds.end());
     lua_createtable(State, static_cast<int>(WindowIds.size()), 0);
@@ -1324,6 +1604,8 @@ static int PlatformServiceSupports(lua_State* State) {
         (Name == "Storage" && HasNativeService(Runtime, "StorageService")) ||
         (Name == "Notifications" && HasNativeService(Runtime, "NotificationService")) ||
         (Name == "Tray" && HasNativeService(Runtime, "TrayService")) ||
+        (Name == "FrameSurface" && Runtime->Frames.Submit != nullptr) ||
+        (Name == "WindowLifecycle" && (!HasNativeBackend(Runtime->Backend) || Runtime->Windows.Close != nullptr)) ||
         (Name == "network.client" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT) != 0) ||
         (Name == "network.server" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) != 0) ||
         (Name == "network.raw" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW) != 0));
@@ -1552,6 +1834,11 @@ extern "C" LUI_API LuiRuntime* LUI_CALL Lui_CreateWithPolicy(const LuiDiagnostic
 
 extern "C" LUI_API void LUI_CALL Lui_SetBackend(LuiRuntime* Runtime, LuiBackendCallbacks Callbacks) {
     if (!CheckOwner(Runtime)) return;
+    if (HasNativeBackend(Callbacks) && !Runtime->Frames.Submit) {
+        for (const auto& Pair : Runtime->Nodes) if (!Pair.second->Destroyed && Pair.second->FrameSlot) {
+            Runtime->LastError = "[LUI:FrameSurface] Unsupported"; return;
+        }
+    }
     if (HasNativeBackend(Callbacks) && !Runtime->Presentation.Present) {
         for (const auto& Pair : Runtime->Nodes) {
             if (!Pair.second->Destroyed && UsesViewportFeatures(Pair.second.get())) {
@@ -1569,6 +1856,24 @@ extern "C" LUI_API int LUI_CALL Lui_SetPresentationCallbacks(LuiRuntime* Runtime
         Runtime->NextNodeId != 1 || Runtime->VmDepth || Runtime->BackendDepth || Runtime->ApplicationStarted ||
         Runtime->ShuttingDown) return 0;
     Runtime->Presentation = *Callbacks;
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_SetFocusCallbacks(LuiRuntime* Runtime, const LuiFocusCallbacksV1* Callbacks) {
+    if (!CheckOwner(Runtime) || !Callbacks || Callbacks->StructSize != sizeof(*Callbacks) ||
+        Callbacks->AbiVersion != 1 || !Callbacks->RequestFocus || Callbacks->Reserved ||
+        Runtime->Focus.RequestFocus || Runtime->NextNodeId != 1 || Runtime->VmDepth ||
+        Runtime->BackendDepth || Runtime->ApplicationStarted || Runtime->ShuttingDown) return 0;
+    Runtime->Focus = *Callbacks;
+    return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_SetWindowCallbacks(LuiRuntime* Runtime, const LuiWindowCallbacksV1* Callbacks) {
+    if (!CheckOwner(Runtime) || !Callbacks || Callbacks->StructSize != sizeof(*Callbacks) ||
+        Callbacks->AbiVersion != 1 || !Callbacks->Close || Callbacks->Reserved || Runtime->Windows.Close ||
+        Runtime->NextNodeId != 1 || Runtime->VmDepth || Runtime->BackendDepth ||
+        Runtime->ApplicationStarted || Runtime->ShuttingDown) return 0;
+    Runtime->Windows = *Callbacks;
     return 1;
 }
 
@@ -1615,6 +1920,41 @@ extern "C" LUI_API const char* LUI_CALL Lui_GetPerformanceJson(LuiRuntime* Runti
         Distribution("Layout",Runtime->LayoutSamples); Distribution("Input",Runtime->InputSamples); Distribution("Render",Runtime->RenderSamples);
         Runtime->PerformanceJson = Output.dump(); return Runtime->PerformanceJson.c_str();
     } catch (...) {return nullptr;}
+}
+
+static const Node* PresentationOwner(LuiRuntime* Runtime, int WindowId) {
+    if (!CheckOwner(Runtime) || Runtime->ShuttingDown || Runtime->BackendFailed || Runtime->LayoutDirty ||
+        !Runtime->PendingChanges.empty() ||
+        ((Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) && Runtime->PresentationWindowId != WindowId) ||
+        Runtime->ProjectBootstrap || Runtime->ModuleDepth ||
+        (Runtime->LayoutDepth && Runtime->PresentationWindowId != WindowId) ||
+        (Runtime->VmDepth && Runtime->PresentationWindowId != WindowId)) return nullptr;
+    const auto Found = Runtime->Nodes.find(WindowId);
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || Found->second->WindowClosed ||
+        Found->second->WindowClosePending || Found->second->NativeWindowClosedPending ||
+        Found->second->ClassName != "Window" || !Found->second->PresentationRevision) return nullptr;
+    return Found->second.get();
+}
+
+extern "C" LUI_API int LUI_CALL Lui_GetWindowPresentation(LuiRuntime* Runtime, int WindowId,
+    LuiWindowPresentationV1* Snapshot) {
+    if (!Snapshot || Snapshot->StructSize != sizeof(*Snapshot) ||
+        Snapshot->AbiVersion != LUI_WINDOW_PRESENTATION_ABI_VERSION) return 0;
+    Snapshot->Count = 0; Snapshot->Revision = 0;
+    if (!Snapshot->Entries || !Snapshot->Capacity || Snapshot->Capacity > LUI_WINDOW_PRESENTATION_MAX_ENTRIES) return 0;
+    const Node* Window = PresentationOwner(Runtime, WindowId);
+    if (!Window) return 0;
+    try {
+        const int Result = LuiLayout::GetWindowPresentation(Runtime, Window, Snapshot);
+        if (Result == 1) Snapshot->Revision = Window->PresentationRevision;
+        return Result;
+    }
+    catch (...) {return 0;}
+}
+
+extern "C" LUI_API int LUI_CALL Lui_IsWindowPresentationCurrent(LuiRuntime* Runtime, int WindowId, uint64_t Revision) {
+    const Node* Window = PresentationOwner(Runtime, WindowId);
+    return Window && Revision && Window->PresentationRevision == Revision ? 1 : 0;
 }
 
 extern "C" LUI_API int LUI_CALL Lui_ConfigureSandbox(LuiRuntime* Runtime, const LuiSandboxLimitsV1* Limits) {
@@ -1784,21 +2124,32 @@ extern "C" LUI_API int LUI_CALL Lui_Activate(LuiRuntime* Runtime, int Id) {
 
 extern "C" LUI_API int LUI_CALL Lui_TextChanged(LuiRuntime* Runtime, int Id, const char* Text) {
     if (!CheckOwner(Runtime) || Runtime->BackendFailed || !Text) return 0;
-    BackendEvent Event{BackendEvent::Kind::TextChanged, Id};
-    if (!LuiText::Capture(Text, Event.Text)) return 0;
     const auto Target = Runtime->Nodes.find(Id);
     if (Target == Runtime->Nodes.end() || Target->second->Destroyed) return 0;
+    const bool CodeEditor=Target->second->ClassName=="CodeEditor";
+    BackendEvent Event{BackendEvent::Kind::TextChanged, Id};
+    if (!(CodeEditor?LuiText::CaptureCodeEditor(Text,Event.Text):LuiText::Capture(Text,Event.Text))) return 0;
     Event.InputRevision = Target->second->InputRevision;
-    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    const int Deferred = QueueBackendEventIfBusy(Runtime, Event);
     if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->ClassName != "TextBox" ||
+    if (Found == Runtime->Nodes.end() || !LuiSchema::IsA(Found->second->ClassName, "TextBox") ||
         !CanReceiveInput(Runtime, Found->second.get())) return 0;
     Node* Value = Found->second.get();
-    int Characters; LuiText::Count(Event.Text, Characters);
-    if (Characters > Value->MaxLength) return 0;
+    int Characters;
+    if (!(CodeEditor?LuiText::CountCodeEditor(Event.Text,Characters):LuiText::Count(Event.Text,Characters))) return 0;
+    if (Characters > Value->MaxLength ||
+        (Value->ClassName == "CodeEditor" && Event.Text.find('\r') != std::string::npos)) return 0;
     if (Value->Text != Text) {
+        if (Value->ClassName == "CodeEditor") {
+            int OldCharacters=0;LuiText::CountCodeEditor(Value->Text,OldCharacters);
+            Value->CodeEditorUndoMaxLength=std::max(Value->CodeEditorUndoMaxLength,std::max(OldCharacters,Characters));
+        }
         Value->Text = Text;
+        if (Value->ClassName == "CodeEditor") {
+            ++Value->TextRevision;
+            QueueProperty(Runtime, Value, "__CodeStyles", "");
+        }
         Value->SelectionStart = std::min(Value->SelectionStart, Characters);
         Value->SelectionLength = std::min(Value->SelectionLength, Characters - Value->SelectionStart);
         FireSignal(Runtime, Value, "Changed");
@@ -1857,7 +2208,7 @@ extern "C" LUI_API int LUI_CALL Lui_WindowResized(LuiRuntime* Runtime, int Id, d
     const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
     if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || Found->second->ClassName != "Window") return 0;
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || Found->second->WindowClosed || Found->second->ClassName != "Window") return 0;
     Node* Value = Found->second.get();
     if (!Value->HasViewportSize || Value->ViewportSize.X != Width || Value->ViewportSize.Y != Height) {
         Value->ViewportSize = {Width, Height};
@@ -1868,10 +2219,63 @@ extern "C" LUI_API int LUI_CALL Lui_WindowResized(LuiRuntime* Runtime, int Id, d
     return 1;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_WindowCloseRequested(LuiRuntime* Runtime, int Id) {
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || Runtime->ShuttingDown) return 0;
+    const auto Found = Runtime->Nodes.find(Id);
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || Found->second->ClassName != "Window" ||
+        Found->second->WindowClosed || Found->second->WindowClosePending || Found->second->WindowCloseDispatch) return 0;
+    if (Found->second->WindowCloseRequestQueued) return 1;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, {BackendEvent::Kind::WindowCloseRequested, Id});
+    if (Deferred >= 0) {
+        if (Deferred) Found->second->WindowCloseRequestQueued = true;
+        return Deferred;
+    }
+    const char* Error = RequestWindowClose(Runtime, Found->second.get());
+    FlushLayout(Runtime);
+    return !Error || std::strcmp(Error, "Prevented") == 0 || std::strcmp(Error, "CallbackFailed") == 0 ||
+        std::strcmp(Error, "Closed") == 0;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_WindowClosed(LuiRuntime* Runtime, int Id) {
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || Runtime->ShuttingDown) return 0;
+    const auto Found = Runtime->Nodes.find(Id);
+    if (Found == Runtime->Nodes.end() || Found->second->Destroyed || Found->second->WindowClosed || Found->second->NativeWindowClosedPending ||
+        Found->second->ClassName != "Window") return 0;
+    if (Runtime->VmDepth || Runtime->BackendDepth) {
+        // A native surface has already closed. Its acknowledgement must survive
+        // ordinary input queue saturation without re-entering Luau callbacks.
+        Found->second->NativeWindowClosedPending = true;
+        Found->second->WindowClosePending = true;
+        Runtime->PendingWindowClosures = true;
+        return 1;
+    }
+    CommitWindowClosed(Runtime, Found->second.get());
+    FlushLayout(Runtime);
+    return 1;
+}
+
 static void DrainBackendEvents(LuiRuntime* Runtime) {
     if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents) return;
     Runtime->DrainingBackendEvents = true;
     try {
+        // At most one terminal acknowledgement is retained per live Window.
+        // Snapshot IDs because a Closed callback may create/destroy objects.
+        size_t ClosureTurns = 0;
+        const auto DrainClosures = [&] {
+        while (Runtime->PendingWindowClosures && ClosureTurns++ < 4096) {
+            std::vector<int> Closed;
+            for (const auto& Pair : Runtime->Nodes)
+                if (Pair.second->NativeWindowClosedPending && !Pair.second->Destroyed) Closed.push_back(Pair.first);
+            std::sort(Closed.begin(), Closed.end());
+            Runtime->PendingWindowClosures = false;
+            for (int Id : Closed) {
+                auto Found = Runtime->Nodes.find(Id);
+                if (Found != Runtime->Nodes.end() && !Found->second->Destroyed && Found->second->NativeWindowClosedPending)
+                    CommitWindowClosed(Runtime, Found->second.get());
+            }
+        }
+        };
+        DrainClosures();
         size_t Count = 0;
         while (!Runtime->PendingBackendEvents.empty() && Count < 4096) {
             BackendEvent Event = std::move(Runtime->PendingBackendEvents.front());
@@ -1889,18 +2293,30 @@ static void DrainBackendEvents(LuiRuntime* Runtime) {
             case BackendEvent::Kind::CheckedChanged: Lui_CheckedChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::ValueChanged: Lui_ValueChanged(Runtime, Event.Id, Event.Number); break;
             case BackendEvent::Kind::WindowResized: Lui_WindowResized(Runtime, Event.Id, Event.X, Event.Y); break;
+            case BackendEvent::Kind::WindowCloseRequested: {
+                auto Found = Runtime->Nodes.find(Event.Id);
+                if (Found != Runtime->Nodes.end()) Found->second->WindowCloseRequestQueued = false;
+                Lui_WindowCloseRequested(Runtime, Event.Id); break;
+            }
+            case BackendEvent::Kind::WindowClosed: Lui_WindowClosed(Runtime, Event.Id); break;
             case BackendEvent::Kind::FocusChanged: Lui_FocusChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::HoverChanged: Lui_HoverChanged(Runtime, Event.Id, Event.Value); break;
             case BackendEvent::Kind::PointerInput:
-                Lui_PointerInput(Runtime, Event.Id, Event.Phase, Event.Device, Event.PointerId, Event.X, Event.Y);
+                if (Event.PointerV2)
+                    Lui_PointerInputV2(Runtime, Event.Id, Event.Phase, Event.Device, Event.PointerId, Event.X, Event.Y, Event.Button);
+                else Lui_PointerInput(Runtime, Event.Id, Event.Phase, Event.Device, Event.PointerId, Event.X, Event.Y);
                 break;
             case BackendEvent::Kind::KeyInput:
                 Lui_KeyInput(Runtime, Event.Id, Event.Phase, Event.Text.c_str());
+                break;
+            case BackendEvent::Kind::WindowShortcut:
+                Lui_WindowShortcut(Runtime, Event.Id, Event.Value, Event.Text.c_str(), Event.Device, Event.Phase);
                 break;
             case BackendEvent::Kind::ScrollInput:
                 Lui_ScrollInput(Runtime, Event.Id, Event.X, Event.Y);
                 break;
             }
+            DrainClosures();
             ++Count;
         }
         if (!Runtime->PendingBackendEvents.empty())
@@ -1957,8 +2373,52 @@ void ResumeScheduledTask(LuiRuntime* Runtime, int Reference, int ArgumentCount, 
     lua_unref(Runtime->State, Reference);
 }
 
+bool ConfigureBoundedTasks(LuiRuntime* Runtime, size_t Maximum) {
+    if (!CheckOwner(Runtime) || !Maximum || Maximum > 4096 || Runtime->TaskLimit ||
+        Runtime->ApplicationStarted || !Runtime->CapabilitiesDeclared || (Runtime->GrantedCapabilities & ~LUI_CAPABILITY_STORAGE) ||
+        Runtime->VmDepth || Runtime->BackendDepth || Runtime->NextNodeId != 1) return false;
+    Runtime->TaskLimit = Maximum;
+    return true;
+}
+
+bool PumpBoundedTasks(LuiRuntime* Runtime, size_t MaximumEntries,
+    std::chrono::steady_clock::time_point Deadline, size_t* Dispatched) {
+    if (Dispatched) *Dispatched = 0;
+    if (!CheckOwner(Runtime) || !Runtime->TaskLimit || !MaximumEntries || MaximumEntries > 4096 ||
+        Runtime->BackendFailed || Runtime->ShuttingDown || Runtime->VmDepth || Runtime->BackendDepth ||
+        Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) return false;
+    // Restricted hosts drain their bounded built-in storage completions before
+    // entering this scheduler. Network/platform/dynamic providers are excluded.
+    // Fix one round's due-time cutoff across slices. Future tasks and tasks
+    // scheduled by callbacks enter Tasks in the same order as legacy Lui_Pump.
+    if (!Runtime->TaskRoundActive) {
+        DeliverTheme(Runtime);
+        Runtime->TaskRound.swap(Runtime->Tasks);
+        Runtime->TaskRoundIndex = 0;
+        Runtime->TaskRoundTime = std::chrono::steady_clock::now();
+        Runtime->TaskRoundActive = true;
+    }
+    size_t Entries = 0, Count = 0;
+    while (Runtime->TaskRoundIndex < Runtime->TaskRound.size() && Entries < MaximumEntries &&
+        std::chrono::steady_clock::now() < Deadline && !Runtime->BackendFailed) {
+        const auto Call = Runtime->TaskRound[Runtime->TaskRoundIndex++];
+        ++Entries;
+        if (Call.Due > Runtime->TaskRoundTime) Runtime->Tasks.push_back(Call);
+        else { ResumeScheduledTask(Runtime, Call.Reference, Call.ArgumentCount); ++Count; }
+    }
+    if (Runtime->TaskRoundIndex == Runtime->TaskRound.size()) {
+        Runtime->TaskRound.clear(); Runtime->TaskRoundIndex = 0; Runtime->TaskRoundActive = false;
+    }
+    FlushLayout(Runtime);
+    if (Dispatched) *Dispatched = Count;
+    return !Runtime->BackendFailed && Runtime->InterruptCount <= Runtime->MaxInterrupts;
+}
+
 extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
     if (!CheckOwner(Runtime)) return 0;
+    // A private bounded host may not accidentally bypass its profile by entering
+    // the legacy whole-round path. All ordinary desktop/browser callers keep it.
+    if (Runtime->TaskLimit) return 0;
     if (Runtime->BackendFailed) return 0;
     if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning) {
         Runtime->LastError = "[LUI:Scheduler] Cannot pump during an active dispatch";
@@ -1978,6 +2438,7 @@ extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {
         ++Count;
     }
     FlushLayout(Runtime);
+    Count += PumpFrameSurfaces(Runtime);
     return Runtime->BackendFailed ? 0 : Count;
 }
 
@@ -2021,6 +2482,9 @@ static void StopGeneration(LuiRuntime* Runtime) {
     for (auto& Pair : Runtime->Nodes) if (!Pair.second->Destroyed) DestroyNode(Runtime, Pair.second.get());
     for (const auto& Call : Runtime->Tasks) lua_unref(Runtime->State, Call.Reference);
     Runtime->Tasks.clear();
+    for (size_t Index = Runtime->TaskRoundIndex; Index < Runtime->TaskRound.size(); ++Index)
+        lua_unref(Runtime->State, Runtime->TaskRound[Index].Reference);
+    Runtime->TaskRound.clear(); Runtime->TaskRoundIndex = 0; Runtime->TaskRoundActive = false;
     ClosePlatformRequests(Runtime);
     for (int Id : Runtime->ThemeListeners) Disconnect(Runtime, Id);
     CloseExtensionListeners(Runtime);

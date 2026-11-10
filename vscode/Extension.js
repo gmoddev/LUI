@@ -7,6 +7,8 @@ const { PreviewClient } = require('./PreviewClient');
 const { InspectorProvider } = require('./InspectorProvider');
 const { NativePreview, ResolveNativeHost } = require('./NativePreview');
 const { TypeDiagnostics } = require('./TypeDiagnostics');
+const { UsesSdk, GetBinding, ResolveSdk } = require('./SdkClient');
+const { ChooseSdk, CreateProject } = require('./Onboarding');
 
 function GetFolder() {
     const ActivePath = Vscode.window.activeTextEditor?.document.uri.fsPath;
@@ -25,6 +27,8 @@ function FindFirstFile(Paths) { return Paths.find(Value => Fs.existsSync(Value))
 function GetPaths(Folder) {
     const Root = Folder.uri.fsPath;
     const Settings = Vscode.workspace.getConfiguration('lui', Folder.uri);
+    const Sdk = GetBinding(Folder, Vscode);
+    if (Sdk) return { Manifest: Path.resolve(Root, Settings.get('manifestPath', 'lui.json')), Host: Sdk.Components.PreviewHost, Runtime: Sdk.Components.Runtime };
     const Manifest = GetConfiguredPath(Settings.get('manifestPath', 'lui.json'), Root);
     const Repo = Path.resolve(__dirname, '..');
     const Host = GetConfiguredPath(Settings.get('previewHostPath', ''), Root) || FindFirstFile([
@@ -46,6 +50,8 @@ function GetPaths(Folder) {
 }
 
 function GetNativeHostPath(Folder) {
+    const Sdk = GetBinding(Folder, Vscode);
+    if (Sdk) return Sdk.Components.NativeHost;
     const Root = Folder.uri.fsPath;
     const Settings = Vscode.workspace.getConfiguration('lui', Folder.uri);
     const Configured = GetConfiguredPath(Settings.get('nativeHostPath', ''), Root);
@@ -139,6 +145,8 @@ class EditorController {
         Context.subscriptions.push(this.Output, this.Diagnostics, this.TreeView, this.Explorer,
             Vscode.window.registerWebviewViewProvider('lui.inspector', this.Inspector),
             Vscode.commands.registerCommand('lui.startPreview', () => this.Start()),
+            Vscode.commands.registerCommand('lui.chooseSdk', () => ChooseSdk(Vscode, this.Output)),
+            Vscode.commands.registerCommand('lui.createProject', () => CreateProject(Vscode, this.Output, Context)),
             Vscode.commands.registerCommand('lui.reloadPreview', () => this.Client?.RequestReload()),
             Vscode.commands.registerCommand('lui.stopPreview', () => this.Stop()),
             Vscode.commands.registerCommand('lui.openNativePreview', () => this.OpenNative()),
@@ -175,14 +183,18 @@ class EditorController {
             this.Client?.InputTarget(this.SelectedId) || false);
     }
 
-    Start(PreferredFolder) {
+    async Start(PreferredFolder) {
         this.Stop();
+        const Request = this.PreviewRequest = (this.PreviewRequest || 0) + 1;
         if (!Vscode.workspace.isTrusted) {
             this.SetStatus('Preview requires a trusted workspace.', 'Trust this workspace before running application Luau.');
             return;
         }
         const Folder = PreferredFolder || GetFolder();
         if (!Folder) { this.SetStatus('Open a workspace folder to start preview.'); return; }
+        try { if (UsesSdk(Folder, Vscode)) await ResolveSdk(Folder, Vscode); }
+        catch (Error) { this.SetStatus('Preview could not start.', Error.message); return; }
+        if (this.Disposed || Request !== this.PreviewRequest || !Vscode.workspace.isTrusted) return;
         const { Manifest, Host, Runtime } = GetPaths(Folder);
         for (const [Name, Value] of [['manifest', Manifest], ['preview host', Host], ['native runtime', Runtime]]) {
             if (!Value || !Fs.existsSync(Value)) {
@@ -236,6 +248,7 @@ class EditorController {
     }
 
     Stop() {
+        this.PreviewRequest = (this.PreviewRequest || 0) + 1;
         if (this.ReloadTimer) { clearTimeout(this.ReloadTimer); this.ReloadTimer = null; }
         const Client = this.Client;
         this.Client = null;
@@ -248,7 +261,7 @@ class EditorController {
         this.SetStatus('Preview stopped');
     }
 
-    OpenNative() {
+    async OpenNative() {
         if (process.platform!=='win32' && process.platform!=='linux') {
             this.NativeMessage('Native preview requires Windows or Linux.');
             return;
@@ -263,6 +276,10 @@ class EditorController {
         }
         const Folder = GetFolder();
         if (!Folder) { this.NativeMessage('Open a workspace folder to launch native preview.'); return; }
+        const Request = this.NativeRequest = (this.NativeRequest || 0) + 1;
+        try { if (UsesSdk(Folder, Vscode)) await ResolveSdk(Folder, Vscode); }
+        catch (Error) { this.NativeMessage(Error.message); return; }
+        if (!Vscode.workspace.isTrusted || this.Disposed || this.Native?.Process || Request !== this.NativeRequest) return;
         const Manifest = GetPaths(Folder).Manifest;
         if (!Fs.existsSync(Manifest)) { this.NativeMessage('Native preview manifest was not found.'); return; }
         let Host;
@@ -270,6 +287,7 @@ class EditorController {
         catch (Error) { this.NativeMessage(Error.message + ' Set lui.nativeHostPath to the built native host.'); return; }
         const Native = new NativePreview(Manifest, Host);
         this.Native = Native;
+        Native.once('started', () => { if (this.Native === Native) Vscode.commands.executeCommand('setContext', 'lui.appLaunched', true); });
         Native.on('failure', Message => this.NativeMessage(Message));
         Native.on('exit', ({ Code, Signal, WasStopped, LaunchFailed }) => {
             if (this.Native === Native) this.Native = null;
@@ -285,7 +303,7 @@ class EditorController {
         } catch (Error) { this.Native = null; this.NativeMessage('Could not launch native preview: ' + Error.message); }
     }
 
-    StopNative() { this.Native?.Stop(); }
+    StopNative() { this.NativeRequest = (this.NativeRequest || 0) + 1; this.Native?.Stop(); }
 
     Select(Id) {
         if (!this.Client?.Tree.ById.has(Id)) return;
@@ -384,9 +402,14 @@ class EditorController {
 function OperatingSystemIsWindows() { return process.platform === 'win32'; }
 
 let Controller;
-function activate(Context) {
+async function activate(Context) {
     Controller = new EditorController(Context);
     Context.subscriptions.push({ dispose: () => Controller?.Dispose() });
+    const Pending = Context.globalState.get('LuiPendingProject');
+    if (Pending && Vscode.workspace.workspaceFolders?.some(Folder => Path.resolve(Folder.uri.fsPath) === Path.resolve(Pending))) {
+        await Context.globalState.update('LuiPendingProject', undefined);
+        await Vscode.window.showTextDocument(Vscode.Uri.file(Path.join(Pending, 'Src', 'Main.luau')));
+    }
 }
 function deactivate() { Controller?.Dispose(); Controller = undefined; }
 

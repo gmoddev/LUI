@@ -4,10 +4,12 @@ export type Signal = { read Connect: (Self: Signal, Callback: (...any) -> ()) ->
 export type Vector2 = { read X: number, read Y: number }
 export type UDim = { read Scale: number, read Offset: number }
 export type UDim2 = { read X: UDim, read Y: UDim }
-export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2, read IsCanceled: boolean }
+export type PointerInput = { read Device: "Mouse" | "Pen" | "Touch" | "Touchpad", read PointerId: number, read Position: Vector2, read IsCanceled: boolean, read Button: ("Left" | "Right" | "Middle" | "Auxiliary1" | "Auxiliary2")? }
 export type KeyboardInput = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean }
 export type InputEvent = PointerInput | KeyboardInput
 export type InputSignal = { read Connect: (Self: InputSignal, Callback: (Input: InputEvent) -> ()) -> Connection }
+export type KeyboardShortcut = { read Device: "Keyboard", read Key: string, read IsRepeat: boolean, read Control: boolean, read Shift: boolean, read Alt: boolean, read TextEditing: boolean }
+export type ShortcutSignal = { read Connect: (Self: ShortcutSignal, Callback: (Input: KeyboardShortcut) -> ()) -> Connection }
 export type ThemeSignal = { read Connect: (Self: ThemeSignal, Callback: (Theme: string) -> ()) -> Connection }
 
 export type Instance = {
@@ -29,9 +31,15 @@ export type Instance = {
 export type Window = Instance & {
     Title: string,
     Visible: boolean,
+    read IsClosed: boolean,
     Size: UDim2,
     read AbsolutePosition: Vector2,
     read AbsoluteSize: Vector2,
+    read RequestClose: (Self: Window) -> (boolean, string?),
+    read PreventClose: (Self: Window) -> boolean,
+    read Shortcut: ShortcutSignal,
+    read CloseRequested: Signal,
+    read Closed: Signal,
 }
 
 export type GuiObject = Instance & {
@@ -60,6 +68,7 @@ export type GuiObject = Instance & {
     read IsFocused: boolean,
     read AbsolutePosition: Vector2,
     read AbsoluteSize: Vector2,
+    read Focus: (Self: GuiObject) -> boolean,
     read Focused: Signal,
     read FocusLost: Signal,
     read MouseEnter: Signal,
@@ -103,6 +112,14 @@ export type TextBox = GuiObject & {
     read CompositionEnded: Signal,
 }
 
+export type CodeEditor = TextBox & {
+    read Multiline: boolean,
+    read Secret: boolean,
+    MaxLength: number,
+    read TextRevision: number,
+    read SetStyles: (Self: CodeEditor, ExpectedRevision: number, Ranges: {{Start: number, End: number, Color: number}}) -> boolean,
+}
+
 export type CheckBox = GuiObject & {
     Text: string,
     Checked: boolean,
@@ -129,6 +146,13 @@ export type ImageLabel = GuiObject & {
     Source: string,
     read LoadState: string,
     read LoadChanged: Signal,
+}
+
+export type FrameSurface = GuiObject & {
+    ScaleMode: string,
+    read FrameState: string,
+    read SubmitFrame: (Self: FrameSurface, Pixels: buffer, Width: number, Height: number, RowStride: number, Format: string) -> (boolean, string?),
+    read ClearFrame: (Self: FrameSurface) -> (),
 }
 
 export type UIComponent = Instance & {
@@ -514,6 +538,40 @@ export type TextBoxInit = {
     SelectionLength: number?,
 }
 
+export type CodeEditorInit = {
+    Name: string?,
+    Sensitive: boolean?,
+    Parent: (Window | Frame | ScrollingFrame)?,
+    Visible: boolean?,
+    AccessibilityLabel: string?,
+    AccessibilityDescription: string?,
+    Size: UDim2?,
+    Position: UDim2?,
+    AnchorPoint: Vector2?,
+    LayoutOrder: number?,
+    BackgroundColor3: Color3?,
+    BackgroundTransparency: number?,
+    BorderColor3: Color3?,
+    BorderSizePixel: number?,
+    CornerRadius: number?,
+    Opacity: number?,
+    TextColor3: Color3?,
+    TextSize: number?,
+    FontFamily: string?,
+    FontWeight: string?,
+    TextWrapped: boolean?,
+    TextXAlignment: string?,
+    TextYAlignment: string?,
+    ZIndex: number?,
+    ClipsDescendants: boolean?,
+    Text: string?,
+    Enabled: boolean?,
+    PlaceholderText: string?,
+    SelectionStart: number?,
+    SelectionLength: number?,
+    MaxLength: number?,
+}
+
 export type CheckBoxInit = {
     Name: string?,
     Sensitive: boolean?,
@@ -637,6 +695,35 @@ export type ImageLabelInit = {
     Source: string?,
 }
 
+export type FrameSurfaceInit = {
+    Name: string?,
+    Sensitive: boolean?,
+    Parent: (Window | Frame | ScrollingFrame)?,
+    Visible: boolean?,
+    AccessibilityLabel: string?,
+    AccessibilityDescription: string?,
+    Size: UDim2?,
+    Position: UDim2?,
+    AnchorPoint: Vector2?,
+    LayoutOrder: number?,
+    BackgroundColor3: Color3?,
+    BackgroundTransparency: number?,
+    BorderColor3: Color3?,
+    BorderSizePixel: number?,
+    CornerRadius: number?,
+    Opacity: number?,
+    TextColor3: Color3?,
+    TextSize: number?,
+    FontFamily: string?,
+    FontWeight: string?,
+    TextWrapped: boolean?,
+    TextXAlignment: string?,
+    TextYAlignment: string?,
+    ZIndex: number?,
+    ClipsDescendants: boolean?,
+    ScaleMode: string?,
+}
+
 export type UIPaddingInit = {
     Name: string?,
     Sensitive: boolean?,
@@ -701,7 +788,25 @@ export type ScrollingFrameInit = {
     CanvasPosition: Vector2?,
 }
 
-declare Instance: { read new: (((((ClassName: "Window", Properties: any) -> Window) & ((ClassName: "Frame", Properties: any) -> Frame)) & (((ClassName: "TextLabel", Properties: any) -> TextLabel) & ((ClassName: "TextButton", Properties: any) -> TextButton))) & ((((ClassName: "TextBox", Properties: any) -> TextBox) & ((ClassName: "CheckBox", Properties: any) -> CheckBox)) & (((ClassName: "Slider", Properties: any) -> Slider) & ((ClassName: "ProgressBar" | "ImageLabel" | "UIPadding" | "UIListLayout" | "UIGridLayout" | "UISizeConstraint" | "ScrollingFrame", Properties: any) -> (ProgressBar | ImageLabel | UIPadding | UIListLayout | UIGridLayout | UISizeConstraint | ScrollingFrame))))) }
+type LUIInstanceClassMap = {
+    Window: Window,
+    Frame: Frame,
+    TextLabel: TextLabel,
+    TextButton: TextButton,
+    TextBox: TextBox,
+    CodeEditor: CodeEditor,
+    CheckBox: CheckBox,
+    Slider: Slider,
+    ProgressBar: ProgressBar,
+    ImageLabel: ImageLabel,
+    FrameSurface: FrameSurface,
+    UIPadding: UIPadding,
+    UIListLayout: UIListLayout,
+    UIGridLayout: UIGridLayout,
+    UISizeConstraint: UISizeConstraint,
+    ScrollingFrame: ScrollingFrame,
+}
+declare Instance: { read new: <Name>(ClassName: Name & keyof<LUIInstanceClassMap>, Properties: any) -> index<LUIInstanceClassMap, Name> }
 declare Vector2: { read new: (X: number, Y: number) -> Vector2 }
 declare UDim: { read new: (Scale: number, Offset: number) -> UDim }
 declare UDim2: {

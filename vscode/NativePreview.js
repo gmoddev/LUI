@@ -49,6 +49,7 @@ class NativePreview extends EventEmitter {
         this.Process = Child;
         let Finished = false;
         let LaunchFailed = false;
+        Child.once('spawn', () => { if (!this.Stopping) this.emit('started'); });
         Child.once('error', Error => {
             if (Finished) return;
             LaunchFailed = true;

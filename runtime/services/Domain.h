@@ -21,4 +21,5 @@ uint32_t HandleKind(LuiNativeSessionV2* Session, LuiNativeIdV2 Handle);
 bool HandleOpen(LuiNativeSessionV2* Session, LuiNativeIdV2 Handle);
 uint32_t KindCount(LuiNativeSessionV2* Session);
 void Pump(const std::shared_ptr<Domain>& Domain) noexcept;
+void WakePending(const std::shared_ptr<Domain>& Domain, LuiNativeSessionV2* const* Sessions=nullptr, uint32_t Count=0) noexcept;
 }

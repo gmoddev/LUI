@@ -18,9 +18,16 @@ struct Qualification {
         for(auto* Value:Host.Views.at(Id)->Controllers) if(G_TYPE_CHECK_INSTANCE_TYPE(Value,Type)) return Value;
         throw std::runtime_error("controller absent");
     }
+    static GObject* BubbleKey(Backend& Host,int Id) {
+        for(auto* Value:Host.Views.at(Id)->Controllers) if(GTK_IS_EVENT_CONTROLLER_KEY(Value) &&
+            gtk_event_controller_get_propagation_phase(GTK_EVENT_CONTROLLER(Value))==GTK_PHASE_BUBBLE) return Value;
+        throw std::runtime_error("bubble key controller absent");
+    }
     static size_t Events(Backend& Host) {return Host.Events.size();}
     static uint64_t Dropped(Backend& Host) {return Host.Dropped;}
     static size_t Views(Backend& Host) {return Host.Views.size();}
+    static size_t CodeTags(Backend& Host,int Id) {return Host.Views.at(Id)->CodeTags.size();}
+    static GtkTextTag* CodeTag(Backend& Host,int Id,int Index) {return Host.Views.at(Id)->CodeTags.at(static_cast<size_t>(Index));}
     static size_t ImageBytes(Backend& Host) {return Host.ImageCacheUsage();}
     static size_t ImageRequests(Backend& Host) {return Host.ImageRequestCount();}
     static size_t ImageStaging(Backend& Host) {return Host.ImageStagingUsage();}
@@ -266,6 +273,104 @@ static void AdvancedText() {
     const auto Snapshot=Tree(Host).dump(); Require(Snapshot.find("SECRET_WIDGET_CANARY")==std::string::npos,"secret widget leaked into preview");
 }
 
+static void CodeEditor() {
+    Backend Host;
+    Run(Host,R"(
+        W=Instance.new('Window',{Title='GTK CodeEditor',Visible=true,Size=UDim2.fromOffset(420,280)})
+        Editor=Instance.new('CodeEditor',{Name='CodeEditor',Parent=W,Text='A\u{1F600}\nreturn',SelectionStart=1,SelectionLength=1,Size=UDim2.fromOffset(340,200)})
+        Changes=0
+        Editor.TextChanged:Connect(function()
+            Changes+=1
+            assert(not Editor:SetStyles(Editor.TextRevision,{{Start=0,End=1,Color=0xD12A44}}))
+        end)
+        assert(Editor:IsA('TextBox') and Editor.Multiline and Editor.TextRevision==2)
+        assert(not Editor:SetStyles(Editor.TextRevision,{{Start=0,End=1,Color=0xD12A44}}))
+    )","CodeEditor bootstrap"); Settle(Host);
+    const int EditorId=Id(Host,"CodeEditor");
+    auto* Native=Qualification::Native(Host,EditorId);
+    Require(GTK_IS_TEXT_VIEW(Native),"CodeEditor did not own GtkTextView");
+    auto* Buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(Native));
+    GtkTextIter First,Last;
+    gtk_text_buffer_get_selection_bounds(Buffer,&First,&Last);
+    Require(gtk_text_iter_get_offset(&First)==1 && gtk_text_iter_get_offset(&Last)==2,
+        "CodeEditor selection split Unicode scalar");
+    gtk_text_buffer_get_start_iter(Buffer,&First);
+    Require(Qualification::CodeTags(Host,EditorId)==0,
+        "Unadmitted CodeEditor styles created native tags");
+    gtk_text_buffer_begin_irreversible_action(Buffer);
+    gtk_text_buffer_end_irreversible_action(Buffer);
+    gtk_text_buffer_set_modified(Buffer,false);
+    gtk_text_buffer_get_start_iter(Buffer,&First);
+    gtk_text_buffer_insert(Buffer,&First,"x",1);
+    Host.Pump();
+    Run(Host,"assert(Editor.Text=='xA\\u{1F600}\\nreturn' and Editor.TextRevision==3 and Changes==1)","CodeEditor native edit");
+    Require(gtk_text_buffer_get_modified(Buffer) && Qualification::CodeTags(Host,EditorId)==0,
+        "Unadmitted CodeEditor styles changed edit modified flag or tag pool");
+    Require(gtk_text_buffer_get_can_undo(Buffer),"CodeEditor style retired native Undo");
+    gtk_text_buffer_undo(Buffer); Host.Pump();
+    Run(Host,"assert(Editor.Text=='A\\u{1F600}\\nreturn' and Editor.TextRevision==4 and Changes==2)","CodeEditor native Undo");
+    Require(gtk_text_buffer_get_can_redo(Buffer),"CodeEditor style retired native Redo");
+    gtk_text_buffer_redo(Buffer); Host.Pump();
+    Run(Host,"assert(Editor.Text=='xA\\u{1F600}\\nreturn' and Editor.TextRevision==5 and Changes==3)","CodeEditor native Redo");
+    Require(Qualification::CodeTags(Host,EditorId)==0,"Unadmitted CodeEditor styles created tags across edits");
+    gtk_text_buffer_get_end_iter(Buffer,&Last);
+    gtk_text_buffer_insert(Buffer,&Last,"\r\nz",3);Host.Pump();
+    Run(Host,"assert(Editor.Text=='xA\\u{1F600}\\nreturn\\nz' and Editor.TextRevision==6 and Changes==4)",
+        "CodeEditor canonical paste ingress");
+    Require(gtk_text_buffer_get_can_undo(Buffer),"CodeEditor canonical paste lost native Undo");
+    gtk_text_buffer_undo(Buffer);Host.Pump();
+    Run(Host,"assert(Editor.Text=='xA\\u{1F600}\\nreturn' and Editor.TextRevision==7 and Changes==5)",
+        "CodeEditor canonical paste Undo");
+    Require(gtk_text_buffer_get_can_redo(Buffer),"CodeEditor canonical paste lost Redo");
+    std::string Oversized(524289,'x');
+    gtk_text_buffer_get_end_iter(Buffer,&Last);
+    gtk_text_buffer_insert(Buffer,&Last,Oversized.c_str(),static_cast<gint>(Oversized.size()));Host.Pump();
+    Run(Host,"assert(Editor.Text=='xA\\u{1F600}\\nreturn' and Editor.TextRevision==7 and Changes==5)",
+        "CodeEditor oversized paste admission");
+    Require(gtk_text_buffer_get_can_redo(Buffer),"CodeEditor rejected paste changed Redo");
+    Run(Host,"Editor:Destroy();assert(not pcall(function() Editor:SetStyles(5,{}) end))");
+    Host.Stop(); Require(Qualification::Views(Host)==0,"CodeEditor host leaked native views");
+}
+
+static void CodeEditorEnvelope() {
+    Backend Host;
+    Run(Host,R"(
+        W=Instance.new('Window',{Title='GTK editor envelope',Visible=true})
+        Editor=Instance.new('CodeEditor',{Name='LargeEditor',Parent=W})
+        assert(Editor.MaxLength==262144)
+    )","CodeEditor envelope bootstrap");Settle(Host);
+    auto* Buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(Qualification::Native(Host,Id(Host,"LargeEditor"))));
+    std::string Full(262144,'a');
+    GtkTextIter End;
+    gtk_text_buffer_get_end_iter(Buffer,&End);
+    gtk_text_buffer_insert(Buffer,&End,Full.c_str(),static_cast<gint>(Full.size()));Host.Pump();
+    Require(gtk_text_buffer_get_char_count(Buffer)==262144 && gtk_text_buffer_get_can_undo(Buffer),
+        "CodeEditor full native source/Undo admission failed");
+    Run(Host,R"(
+        assert(#Editor.Text==262144 and Editor.Text==string.rep('a',262144))
+        assert(not Editor:SetStyles(Editor.TextRevision,{{Start=262143,End=262144,Color=0x1255AA}}))
+    )","CodeEditor full native source/style");Host.Pump();
+    gtk_text_buffer_get_end_iter(Buffer,&End);
+    gtk_text_buffer_insert(Buffer,&End,"x",1);Host.Pump();
+    Run(Host,"assert(#Editor.Text==262144)","CodeEditor full native rejection");
+    Require(gtk_text_buffer_get_char_count(Buffer)==262144 && gtk_text_buffer_get_can_undo(Buffer),
+        "CodeEditor overflow changed native buffer/Undo");
+    gtk_text_buffer_undo(Buffer);Host.Pump();
+    Run(Host,"assert(Editor.Text=='')","CodeEditor full native Undo");
+    Require(gtk_text_buffer_get_can_redo(Buffer),"CodeEditor full native Redo missing");
+    std::string CrLf;CrLf.reserve(524288);
+    for(int Index=0;Index<262144;++Index) CrLf+="\r\n";
+    gtk_text_buffer_get_end_iter(Buffer,&End);
+    gtk_text_buffer_insert(Buffer,&End,CrLf.c_str(),static_cast<gint>(CrLf.size()));Host.Pump();
+    Run(Host,"assert(#Editor.Text==262144 and Editor.Text==string.rep('\\n',262144))",
+        "CodeEditor full CRLF paste normalization");
+    Require(gtk_text_buffer_get_char_count(Buffer)==262144 && gtk_text_buffer_get_can_undo(Buffer),
+        "CodeEditor full CRLF native buffer/Undo admission failed");
+    gtk_text_buffer_undo(Buffer);Host.Pump();
+    Run(Host,"assert(Editor.Text=='')","CodeEditor full CRLF Undo");
+    Host.Stop();Require(Qualification::Views(Host)==0,"CodeEditor envelope leaked views");
+}
+
 static size_t WorkingSet() {
     std::ifstream File("/proc/self/statm"); size_t Pages=0,Resident=0; File>>Pages>>Resident;
     return Resident*static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -361,10 +466,90 @@ static void Conversation() {
     Host.Stop(); Require(Qualification::Views(Host)==0 && Qualification::ImageRequests(Host)==0,"conversation retirement leaked ownership");
 }
 
+static void WindowShortcuts() {
+    Backend Host;
+    Run(Host,R"(
+        W=Instance.new('Window',{Visible=true})
+        Input=Instance.new('TextBox',{Parent=W,Text='retained'})
+        Seen=0
+        W.Shortcut:Connect(function(Event)
+            assert(Event.Key=='S' and Event.Control and Event.Shift and not Event.Alt and Event.TextEditing)
+            assert(not pcall(function() Event.Control=false end))
+            LastRepeat=Event.IsRepeat; Seen+=1
+        end)
+    )","shortcut bootstrap");
+    Settle(Host);
+    auto* Key=Qualification::BubbleKey(Host,1);
+    auto* State=Qualification::Controller(Host,1,GTK_TYPE_EVENT_CONTROLLER_KEY);
+    Require(gtk_event_controller_get_propagation_phase(GTK_EVENT_CONTROLLER(Key))==GTK_PHASE_BUBBLE,"shortcut capture bypasses native editing");
+    Require(gtk_widget_grab_focus(Qualification::Native(Host,2)),"shortcut native focus rejected");
+    Settle(Host);
+    gboolean Handled=false;
+    g_signal_emit_by_name(State,"key-pressed",GDK_KEY_s,0,GdkModifierType(GDK_CONTROL_MASK|GDK_SHIFT_MASK),&Handled);
+    g_signal_emit_by_name(Key,"key-pressed",GDK_KEY_s,0,GdkModifierType(GDK_CONTROL_MASK|GDK_SHIFT_MASK),&Handled);
+    Require(!Handled,"shortcut consumed native event"); Host.Pump();
+    g_signal_emit_by_name(State,"key-pressed",GDK_KEY_s,0,GdkModifierType(GDK_CONTROL_MASK|GDK_SHIFT_MASK),&Handled);
+    g_signal_emit_by_name(Key,"key-pressed",GDK_KEY_s,0,GdkModifierType(GDK_CONTROL_MASK|GDK_SHIFT_MASK),&Handled);
+    Host.Pump(); Run(Host,"assert(Seen==2 and LastRepeat and Input.Text=='retained')","shortcut snapshots");
+    g_signal_emit_by_name(State,"key-released",GDK_KEY_s,0,GDK_CONTROL_MASK);
+    Run(Host,"W.Visible=false");
+    g_signal_emit_by_name(Key,"key-pressed",GDK_KEY_s,0,GdkModifierType(GDK_CONTROL_MASK|GDK_SHIFT_MASK),&Handled);
+    Host.Pump(); Run(Host,"assert(Seen==2)","hidden shortcut isolation");
+    Host.Stop(); Require(Qualification::Views(Host)==0,"shortcut shutdown retained views");
+}
+
+static void WindowLifecycle() {
+    Backend Host;
+    Run(Host,R"(
+        Main=Instance.new('Window',{Visible=true})
+        Floating=Instance.new('Window',{Visible=true})
+        Editor=Instance.new('TextBox',{Text='retained',Parent=Floating})
+        Attempts,Closed=0,0; Block=true
+        Floating.CloseRequested:Connect(function()
+            Attempts+=1
+            if Block then assert(Floating:PreventClose()) else Editor.Parent=Main end
+        end)
+        Floating.Closed:Connect(function() Closed+=1;assert(Floating.IsClosed) end)
+    )");
+    Settle(Host);
+    auto* Editor=Qualification::Native(Host,3);
+    gtk_window_close(GTK_WINDOW(Qualification::Native(Host,2)));
+    Settle(Host);
+    Run(Host,"assert(Attempts==1 and Closed==0 and not Floating.IsClosed and Editor.Text=='retained');Block=false");
+    gtk_window_close(GTK_WINDOW(Qualification::Native(Host,2)));
+    Settle(Host);
+    Run(Host,"assert(Attempts==2 and Closed==1 and Floating.IsClosed and Editor.Parent==Main and Editor.Text=='retained');Floating:Destroy()");
+    Require(Editor==Qualification::Native(Host,3),"closed float replaced retained native editor");
+    Run(Host,R"(
+        Later=Instance.new('Window',{Visible=true})
+        LateEditor=Instance.new('TextBox',{Parent=Later,Text='after close'})
+    )");
+    Settle(Host);
+    auto* LateEditor=Qualification::Native(Host,5);
+    Run(Host,"assert(Later:RequestClose())","post-close request accepted");
+    Settle(Host);
+    Run(Host,"assert(Later.IsClosed and LateEditor.Parent==Later and LateEditor.Text=='after close');LateEditor.Parent=Main;Later:Destroy()",
+        "post-close acknowledgement and redock");
+    Settle(Host);
+    Require(LateEditor==Qualification::Native(Host,5) && gtk_widget_get_root(LateEditor)==GTK_ROOT(Qualification::Native(Host,1)),
+        "post-close redocking lost retained native editor");
+    Host.Stop();Require(Qualification::Views(Host)==0,"window lifecycle retained views");
+}
+
+static void Group(const char* Name,void (*Execute)()) {
+    std::printf("[LUI:GtkTest] Begin %s\n",Name); std::fflush(stdout);
+    Execute();
+    std::printf("[LUI:GtkTest] Passed %s\n",Name); std::fflush(stdout);
+}
 int main() {
     try {
         Require(Backend::Initialize(),"display unavailable");
-        Controls(); Modular(); Clipboard(); Dialogs(); Viewports(); AdvancedText(); ImageOwnership(); Conversation();
+        Group("Controls",Controls); Group("WindowShortcuts",WindowShortcuts);
+        Group("WindowLifecycle",WindowLifecycle); Group("Modular",Modular);
+        Group("Clipboard",Clipboard); Group("Dialogs",Dialogs); Group("Viewports",Viewports);
+        Group("AdvancedText",AdvancedText); Group("CodeEditor",CodeEditor);
+        Group("CodeEditorEnvelope",CodeEditorEnvelope);
+        Group("ImageOwnership",ImageOwnership); Group("Conversation",Conversation);
         std::puts("[LUI:GtkTest] Native mappings, canonical geometry, edit/input, sticky privacy, modular screens and lifecycle passed"); return 0;
     } catch(const std::exception& Error) {std::fprintf(stderr,"[LUI:GtkTest] %s\n",Error.what()); return 1;}
 }

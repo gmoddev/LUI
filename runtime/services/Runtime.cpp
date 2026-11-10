@@ -1,4 +1,5 @@
 #include "Domain.h"
+#include "LuiOwnerWake.h"
 #include <array>
 #include "../internal/NativeServices.h"
 #include "../internal/Dispatch.h"
@@ -178,7 +179,7 @@ int PushNativeService(lua_State* State, LuiRuntime* Runtime, const std::string& 
     }
     return 0;
 }
-int DrainNativeServices(LuiRuntime* Runtime) {
+int DrainNativeServices(LuiRuntime* Runtime, size_t Maximum, std::chrono::steady_clock::time_point Deadline) {
     if (!Runtime->NativeDomain) return 0;
     Runtime->UiCompletionRunning = true;
     struct Reset { LuiRuntime* Runtime; ~Reset() { Runtime->UiCompletionRunning = false; } } Guard{Runtime};
@@ -187,7 +188,7 @@ int DrainNativeServices(LuiRuntime* Runtime) {
     if (Runtime->NativeServices.size() > Sessions.size()) return 0;
     for (size_t Index = 0; Index < Runtime->NativeServices.size(); ++Index) Sessions[Index] = Runtime->NativeServices[Index]->Host.Session;
     int Count = 0;
-    while (Count < 64) {
+    while (Count < 64 && static_cast<size_t>(Count) < Maximum && std::chrono::steady_clock::now() < Deadline) {
         LuiNativeDeliveryV2 Value{sizeof(Value), 2};
         uint32_t Index = 0;
         if (Lui::Native::Take(Runtime->NativeDomain,Sessions.data(),static_cast<uint32_t>(Runtime->NativeServices.size()),&Index,&Value)) break;
@@ -213,6 +214,7 @@ int DrainNativeServices(LuiRuntime* Runtime) {
         if (Value.Handle.Value) Selected->Host.ReleaseHandle(Selected->Host.Session, Value.Handle);
         ++Count;
     }
+    if(Count==64)Lui::Native::WakePending(Runtime->NativeDomain,Sessions.data(),static_cast<uint32_t>(Runtime->NativeServices.size()));
     return Count;
 }
 void CloseNativeServices(LuiRuntime* Runtime) {
@@ -225,6 +227,15 @@ void CloseNativeServices(LuiRuntime* Runtime) {
         Binding->Waiters.clear();
     }
     Runtime->PendingNativeRequests = 0;
+}
+extern "C" LUI_API LuiNativeDomainV2* LUI_CALL Lui_GetOwnerDomainV1(LuiRuntime* Runtime) {
+    if(!Runtime||Runtime->Owner!=std::this_thread::get_id()||Runtime->ShuttingDown)return nullptr;
+    try{return Lui::Native::WrapDomain(Runtime->NativeDomain);}catch(...){return nullptr;}
+}
+extern "C" LUI_API int LUI_CALL Lui_IsOwnerPumpReadyV1(LuiRuntime* Runtime) {
+    if(!Runtime||Runtime->Owner!=std::this_thread::get_id())return 0;
+    if(!Runtime->State||Runtime->ShuttingDown||Runtime->BackendFailed)return -1;
+    return !Runtime->VmDepth&&!Runtime->BackendDepth&&!Runtime->DrainingBackendEvents&&!Runtime->UiCompletionRunning;
 }
 std::string NativeServiceSchema(const LuiRuntime* Runtime, const std::string& Base) {
     auto Output = nlohmann::json::parse(Base);

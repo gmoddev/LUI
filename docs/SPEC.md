@@ -12,6 +12,25 @@ TextBox accepts strict UTF-8 without embedded NUL, up to 65,534 UTF-8 bytes. Max
 
 Declared PNG/JPEG images load asynchronously with cancellation and generation ownership. Inputs are bounded to 1 MiB encoded and 1,048,576 decoded pixels, with two decodes, 32 requests and a pinned-inclusive 16-entry/32 MiB decoded cache. No evaluation-time image download occurs.
 
+## Dynamic CPU frames
+
+FrameSurface is a GuiObject leaf with ScaleMode (Fit, Fill, Stretch), SubmitFrame,
+ClearFrame and readonly FrameState. SubmitFrame copies an exact Luau buffer using
+validated dimensions/stride. BGRA8Premultiplied is the only format; dimensions are
+at most 1920x1080 and stride*height at most 8 MiB. Padding is removed in the copy.
+Submission returns true/nil for admission or false with InvalidArgument,
+LimitExceeded, WouldBlock, Closed or Unsupported. Admission never promises scanout;
+rejection preserves the current frame and state.
+One pending frame replaces older pending content; one upload may run per surface.
+Ready means shared consumption, never visible scanout. Clear and destruction
+invalidate stale uploads; clones start empty. Four live/retained retired surfaces,
+three allocations per surface and 64 MiB including reserved native staging bound
+ownership across runtime replacement. Supports('FrameSurface') requires a native
+adapter; headless CPU tests do not qualify native presentation. A Windows native
+qualification helper exists, while the production fenced presenter gate remains
+incomplete; GTK frame presentation remains unimplemented. Browser/mobile, GPU
+and zero-copy remain unsupported.
+
 ## Modular projects
 
 Schema v2 declares exact-case application/dependency sources and pinned vendored content. Preparation captures immutable inputs. Source-bound `require` uses canonical identities, private globals and one non-nil export; false is cached. Initialization effects/yields and cycles are guarded. Reload destroys the previous generation before preparing its replacement.

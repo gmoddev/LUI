@@ -12,6 +12,24 @@ LUI is currently experimental at version `0.0.1`. The implemented API is listed 
 
 ## Versions
 
+The optional trusted host seam in `native/abi/LuiOwnerWake.h` has its own exact
+version-1 registration. Existing native service ABI v1/v2 tables, frame callbacks,
+public reflection and generated Luau definitions remain unchanged. Polling-only
+embedders continue to work. WinUI falls back to polling with older runtimes
+missing these exports. [The host header](../native/abi/LuiOwnerWake.h) defines callback/context
+ownership and the supported dispatch scope; this is not a new Luau capability.
+
+DSP-1 adds a reflected `FrameSurface` leaf and a separately versioned private frame
+bridge; existing backend/image/presentation tables and native ABI v1/v2 layouts
+are unchanged. The application contract defines CPU ownership and Ready
+state. Supports('FrameSurface') requires an actual
+adapter; headless ownership tests do not qualify native rendering. Legacy native
+hosts refuse this class before creating a widget. Browser presentation is absent.
+WinUI hosts register the separately packaged private version-1 presenter helper
+using the fenced native upload path. Missing/older/nonpresenting helpers
+retain unsupported-before-creation behavior. No public opt-in or API change is
+introduced; native ABI v1/v2 and the P1 frame callback layouts are unchanged.
+
 - The CMake project version tracks the experimental application framework. Until a stable release, incompatible changes are permitted but must be recorded in the roadmap or a decision document.
 - `schemaVersion` in `types/schema.json` versions the generated metadata format. It is separate from the LUI framework version and must change when metadata consumers need a new parser.
 - Schema version 2 replaces name-only method and signal lists with typed entries and adds parent and container metadata. Consumers of version 1 must update their parser before using version 2.

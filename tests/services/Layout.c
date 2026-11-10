@@ -16,4 +16,8 @@ _Static_assert(sizeof(LuiNativeDeliveryV2) == 72, "delivery layout");
 _Static_assert(offsetof(LuiNativeDeliveryV2, Request) == 24, "delivery offset");
 _Static_assert(sizeof(LuiNativeStatsV2) == 72, "stats layout");
 _Static_assert(sizeof(LuiDesktopServicesV1) == 48, "desktop bridge layout");
+_Static_assert(sizeof(LuiFrameViewV1) == 56, "private frame view layout");
+_Static_assert(sizeof(LuiFrameCallbacksV1) == 48, "private frame callback layout");
+_Static_assert(offsetof(LuiFrameCallbacksV1, Publish) == 24, "private owner publication offset");
+_Static_assert(sizeof(LuiFrameStatsV1) == 104, "private numeric frame stats layout");
 int LuiNativeLayoutProof(void) { return 1; }

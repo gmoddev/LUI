@@ -31,6 +31,9 @@ internal sealed partial class WinUIBackend : IDisposable
         public UIElement? Content;
         public Border? Decoration;
         public int ParentId;
+        public IntPtr CodeHost;
+        public int CodeWindowId;
+        public double CodeWidth, CodeHeight;
         public double BoundsX;
         public double BoundsY;
         public bool ApplyingProperty;
@@ -47,9 +50,18 @@ internal sealed partial class WinUIBackend : IDisposable
         public bool PendingResize;
         public double ViewportWidth, ViewportHeight;
         public bool NativeClosed;
+        public bool CloseApproved, CloseQueued;
+        public Action? RetireCloseHook;
+        public readonly Dictionary<uint, HashSet<int>> ActivePointerButtons = new();
+        public readonly Dictionary<uint, ulong> CaptureGenerations = new();
+        public ulong NextCaptureGeneration;
+        public ulong FrameEpoch = 1;
+        public FrameUpload? PreparedFrame, DisplayedFrame;
+        public SemaphoreSlim? FramePrepareGate;
     }
 
     private readonly Dictionary<int, View> Views = new();
+    internal bool PauseFrameQualificationPump;
     private readonly Dictionary<string, string> AssetPaths = new(StringComparer.Ordinal);
     private readonly Native.CreateCallback CreateCallback;
     private readonly Native.PropertyCallback PropertyCallback;
@@ -61,9 +73,12 @@ internal sealed partial class WinUIBackend : IDisposable
     private readonly Native.WriteClipboardCallback WriteClipboardCallback;
     private readonly Native.StartPlatformRequestCallback ReadClipboardCallback;
     private readonly Native.StartPlatformRequestCallback OpenFileCallback;
+    private readonly Native.RequestFocusCallback RequestFocusCallback;
+    private readonly CodeEditorHost.EditorEvent CodeEditorEventCallback;
     private readonly IntPtr Runtime;
     private string LastReportedError = string.Empty;
     private int FocusedViewId;
+    private ulong FocusGeneration;
     private bool IsDisposed;
     private bool IsDisposing;
     private readonly AccessibilitySettings Accessibility = new();
@@ -87,6 +102,8 @@ internal sealed partial class WinUIBackend : IDisposable
         WriteClipboardCallback = OnWriteClipboardText;
         ReadClipboardCallback = OnReadClipboardText;
         OpenFileCallback = OnOpenFile;
+        RequestFocusCallback = OnRequestFocus;
+        CodeEditorEventCallback = OnCodeEditorEvent;
         Runtime = Project?.CreateRuntime() ?? Native.Lui_Create();
         if (Runtime == IntPtr.Zero) throw new InvalidOperationException("Could not initialize Luau");
         Native.Lui_SetLogCallback(Runtime, IntPtr.Zero, LogCallback);
@@ -99,6 +116,14 @@ internal sealed partial class WinUIBackend : IDisposable
             Arrange = ArrangeCallback,
             Destroy = DestroyCallback,
         });
+        Native.FocusCallbacks Focus = new()
+        {
+            StructSize = (uint)Marshal.SizeOf<Native.FocusCallbacks>(), AbiVersion = 1,
+            RequestFocus = RequestFocusCallback,
+        };
+        if (Native.Lui_SetFocusCallbacks(Runtime, ref Focus) != 1)
+            throw new InvalidOperationException("Focus callbacks failed: " + LastError);
+        StartWindowLifecycle();
         Native.PlatformCallbacks Platform = new()
         {
             StructSize = (uint)Marshal.SizeOf<Native.PlatformCallbacks>(),
@@ -113,21 +138,29 @@ internal sealed partial class WinUIBackend : IDisposable
         if (Native.Lui_SetPresentationCallbacks(Runtime, ref Presentation) != 1)
             throw new InvalidOperationException("Presentation callbacks failed: " + LastError);
         StartImages();
+        StartFrames();
         CompositionTarget.Rendering += OnRendering;
         if (Native.Lui_SetPlatformCallbacks(Runtime, ref Platform) != 1)
             throw new InvalidOperationException("Platform callbacks failed: " + LastError);
         CheckTheme();
+        StartOwnerWake();
     }
 
     public void Dispose()
     {
         if (IsDisposed || IsDisposing) return;
         IsDisposing = true;
+        StopOwnerWake();
         CompositionTarget.Rendering -= OnRendering;
-        StopImages();
-        Native.Lui_Destroy(Runtime);
-        IsDisposed = true;
-        IsDisposing = false;
+        try { StopFrames(); }
+        finally {
+            try { StopImages(); }
+            finally {
+                Native.Lui_Destroy(Runtime);
+                IsDisposed = true;
+                IsDisposing = false;
+            }
+        }
     }
 
     public void ConfigureManifest(AppManifest Manifest)
@@ -303,6 +336,16 @@ internal sealed partial class WinUIBackend : IDisposable
 
     public void Pump()
     {
+        if(IsDisposed||IsDisposing||Pumping)return;
+        if(OwnerWake?.DeferIfBusy()==true)return;
+        if(OwnerWake?.Retry()==true)return;
+        if(OwnerWake is not null&&Native.Lui_IsOwnerPumpReadyV1(Runtime)!=1){
+            // A terminal VM cannot pump, but adapter cleanup still owns charged
+            // resources and must retry on ordinary owner turns until released.
+            Pumping=true;try{DrainFrameRetirements();}finally{Pumping=false;}return;
+        }
+        Pumping=true;
+        try{
         foreach (var Entry in Views.ToArray()) {
             var View = Entry.Value;
             if (View.IsAlive && View.Window is not null && View.PendingResize) {
@@ -311,7 +354,9 @@ internal sealed partial class WinUIBackend : IDisposable
             }
         }
         CheckTheme();
+        OwnerPumpObservation?.Invoke();
         int Completed = Native.Lui_Pump(Runtime);
+        DrainFrameRetirements();
         if (Completed > 0) LuiDiagnostics.Log("Scheduler", $"Completed {Completed} callback(s)");
         string Error = LastError;
         if (!string.IsNullOrEmpty(Error) && Error != LastReportedError)
@@ -319,6 +364,7 @@ internal sealed partial class WinUIBackend : IDisposable
             LastReportedError = Error;
             LuiDiagnostics.Error("Runtime", Error);
         }
+        }finally{Pumping=false;}
     }
 
     private void CheckTheme()
@@ -376,12 +422,14 @@ internal sealed partial class WinUIBackend : IDisposable
 
     private int OnOpenFile(IntPtr Context, ulong RequestId)
     {
-        Microsoft.UI.Xaml.Window? Window = Views.Values.FirstOrDefault(View =>
-            View.IsAlive && View.Window is not null)?.Window;
+        Microsoft.UI.Xaml.Window? Window = GetDialogWindow();
         if (Window is null) return 0;
         _ = OpenFileAsync(Window, RequestId);
         return 1;
     }
+
+    private Microsoft.UI.Xaml.Window? GetDialogWindow() => Views.Values.FirstOrDefault(View =>
+        View.IsAlive && !View.NativeClosed && View.Window is not null)?.Window;
 
     private async Task OpenFileAsync(Microsoft.UI.Xaml.Window Window, ulong RequestId)
     {
@@ -436,12 +484,29 @@ internal sealed partial class WinUIBackend : IDisposable
                     NewView.Window = new Microsoft.UI.Xaml.Window();
                     NewView.Container = new Canvas();
                     NewView.Window.Content = NewView.Container;
+                    ConfigureWindowLifecycle(Id, NewView);
+                    // Bubble only unhandled keys, after the focused native control's
+                    // editing/default behavior. No Handled flag or key state is changed.
+                    NewView.Container.KeyDown += (_, Args) => OnWindowShortcut(Id, NewView, Args);
+                    NewView.Window.AppWindow.Changed += (_, _) => {
+                        if(IsDisposed || IsDisposing || !NewView.IsAlive) return;
+                        if(!NewView.Window.DispatcherQueue.TryEnqueue(() => {
+                            if(IsDisposed || IsDisposing || !NewView.IsAlive) return;
+                            try {
+                                foreach(View Editor in Views.Values)
+                                    if(Editor.ClassName=="CodeEditor" && Editor.CodeWindowId==Id)
+                                        PositionCodeEditor(Editor,Editor.CodeWidth,Editor.CodeHeight);
+                            } catch(Exception Error) {LuiDiagnostics.Error("CodeEditor","Window move: "+Error.GetType().Name);}
+                        })) LuiDiagnostics.Error("CodeEditor","Window move dispatch unavailable");
+                    };
+                    NewView.Window.Activated += (_, Args) => {
+                        if (Args.WindowActivationState != WindowActivationState.Deactivated || IsDisposed || IsDisposing || !NewView.IsAlive) return;
+                        CancelWindowInput(Id);
+                    };
                     NewView.Window.Closed += (_, _) =>
                     {
-                        if (IsDisposing || !NewView.IsAlive) return;
-                        NewView.NativeClosed = true;
-                        if (Views.Values.Where(View => View.Window is not null).All(View => View.NativeClosed || !View.IsAlive))
-                            AllWindowsClosed?.Invoke();
+                        if (IsDisposed || IsDisposing || !NewView.IsAlive) return;
+                        OnNativeWindowClosed(Id, NewView);
                     };
                     break;
                 case "Frame":
@@ -458,6 +523,10 @@ internal sealed partial class WinUIBackend : IDisposable
                         LuiDiagnostics.Error("Asset", "ImagePresentationFailed");
                     NewView.Element = Picture;
                     break;
+                case "FrameSurface":
+                    NewView.Element = new Image { Stretch = Stretch.Uniform,
+                        HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+                    break;
                 case "TextButton":
                     Button Button = new();
                     Button.Click += (_, _) => {
@@ -470,6 +539,13 @@ internal sealed partial class WinUIBackend : IDisposable
                     TextBox Input = new();
                     NewView.Element = Input;
                     ConnectText(Id, NewView, Input);
+                    break;
+                case "CodeEditor":
+                    NewView.Multiline = true;
+                    NewView.MaxLength = 262144;
+                    NewView.CodeHost = CodeEditorHost.LuiWinUITextCreatePopupHostV1(IntPtr.Zero,
+                        CodeEditorEventCallback, new IntPtr(Id));
+                    if (NewView.CodeHost == IntPtr.Zero) throw new InvalidOperationException("[LUI:CodeEditor] Host creation failed");
                     break;
                 case "CheckBox":
                     CheckBox Check = new();
@@ -538,7 +614,7 @@ internal sealed partial class WinUIBackend : IDisposable
                     if (!NewView.IsAlive) return;
                     Diagnostic($"PointerExited {Id}");
                     Native.Lui_HoverChanged(Runtime, Id, 0);
-                    OnPointerInput(Id, NewView, 3, Args);
+                    if (!NewView.ActivePointerButtons.ContainsKey(Args.Pointer.PointerId)) OnPointerInput(Id, NewView, 3, Args);
                 };
                 NewView.Element.AddHandler(UIElement.PointerPressedEvent,
                     new PointerEventHandler((_, Args) => OnPointerInput(Id, NewView, 0, Args)), true);
@@ -572,6 +648,7 @@ internal sealed partial class WinUIBackend : IDisposable
         catch (Exception Error)
         {
             NewView.IsAlive = false;
+            if (NewView.CodeHost != IntPtr.Zero) CodeEditorHost.LuiWinUITextDestroyHostV1(NewView.CodeHost);
             try { NewView.Window?.Close(); }
             catch (Exception CleanupError) { LuiDiagnostics.Error("WinUI", "Create cleanup: " + CleanupError); }
             return ReportBackendFailure("Create", Error);
@@ -582,7 +659,8 @@ internal sealed partial class WinUIBackend : IDisposable
     {
         try
         {
-            if (!Target.IsAlive || Target.Element is null) return;
+            if (!Target.IsAlive || Target.Element is null || !Views.TryGetValue(Id, out View? Current) ||
+                !ReferenceEquals(Target, Current)) return;
             int Device = Args.Pointer.PointerDeviceType switch
             {
                 Microsoft.UI.Input.PointerDeviceType.Mouse => 0,
@@ -592,17 +670,83 @@ internal sealed partial class WinUIBackend : IDisposable
                 _ => -1,
             };
             if (Device < 0) return;
+            uint PointerId = Args.Pointer.PointerId;
             if (Phase == 3)
             {
-                Diagnostic($"PointerCanceled {Id} {Args.Pointer.PointerId}");
-                Native.Lui_PointerInput(Runtime, Id, Phase, Device, Args.Pointer.PointerId, 0, 0);
+                CancelCapturedPointer(Id, Target, PointerId, Device, Args);
                 return;
             }
             var Point = Args.GetCurrentPoint(Target.Element);
-            Diagnostic($"PointerInput {Id} {Phase} {Device} {Point.PointerId} {Point.Position.X} {Point.Position.Y}");
-            Native.Lui_PointerInput(Runtime, Id, Phase, Device, Point.PointerId, Point.Position.X, Point.Position.Y);
+            int Button = Device == 0 && (Phase == 0 || Phase == 2) ? Point.Properties.PointerUpdateKind switch
+            {
+                Microsoft.UI.Input.PointerUpdateKind.LeftButtonPressed or Microsoft.UI.Input.PointerUpdateKind.LeftButtonReleased => 1,
+                Microsoft.UI.Input.PointerUpdateKind.RightButtonPressed or Microsoft.UI.Input.PointerUpdateKind.RightButtonReleased => 2,
+                Microsoft.UI.Input.PointerUpdateKind.MiddleButtonPressed or Microsoft.UI.Input.PointerUpdateKind.MiddleButtonReleased => 3,
+                Microsoft.UI.Input.PointerUpdateKind.XButton1Pressed or Microsoft.UI.Input.PointerUpdateKind.XButton1Released => 4,
+                Microsoft.UI.Input.PointerUpdateKind.XButton2Pressed or Microsoft.UI.Input.PointerUpdateKind.XButton2Released => 5,
+                _ => 0,
+            } : 0;
+            if (Device == 0 && (Phase == 0 || Phase == 2) && Button == 0) return;
+            ulong FocusBefore = FocusGeneration;
+            long Started = Stopwatch.GetTimestamp();
+            int Accepted = Native.Lui_PointerInputV2(Runtime, Id, Phase, Device, Point.PointerId,
+                Point.Position.X, Point.Position.Y, Button);
+            Native.Lui_RecordPerformance(Runtime, 1, Stopwatch.GetElapsedTime(Started).TotalMilliseconds);
+            if (Phase == 2) RetireCapturedButton(Target, PointerId, Button, Args);
+            if (Accepted != 1) return;
+            if (!Target.IsAlive || !Views.TryGetValue(Id, out Current) || !ReferenceEquals(Target, Current) ||
+                !CanReceiveFocus(Id) || Target.Element is null ||
+                (Phase == 0 && FocusGeneration != FocusBefore && FocusedViewId != Id)) {
+                if (Phase == 0) Native.Lui_PointerInputV2(Runtime, Id, 3, Device, PointerId, 0, 0, 0);
+                return;
+            }
+            if (Phase == 0)
+            {
+                if (!Target.ActivePointerButtons.TryGetValue(PointerId, out HashSet<int>? Buttons))
+                {
+                    Buttons = new HashSet<int>(); Target.ActivePointerButtons.Add(PointerId, Buttons);
+                    Target.CaptureGenerations[PointerId] = ++Target.NextCaptureGeneration;
+                    if (!Target.Element.CapturePointer(Args.Pointer))
+                    {
+                        Target.ActivePointerButtons.Remove(PointerId);
+                        Target.CaptureGenerations.Remove(PointerId);
+                        Native.Lui_PointerInputV2(Runtime, Id, 3, Device, PointerId, 0, 0, 0);
+                        return;
+                    }
+                }
+                Buttons.Add(Button);
+            }
         }
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer: " + Error); }
+    }
+
+    private static void RetireCapturedButton(View Target, uint PointerId, int Button, PointerRoutedEventArgs Args)
+    {
+        if (!Target.ActivePointerButtons.TryGetValue(PointerId, out HashSet<int>? Buttons)) return;
+        Buttons.Remove(Button);
+        if (Buttons.Count != 0) return;
+        Target.ActivePointerButtons.Remove(PointerId);
+        Target.CaptureGenerations.Remove(PointerId);
+        Target.Element?.ReleasePointerCapture(Args.Pointer);
+    }
+
+    private void CancelCapturedPointer(int Id, View Target, uint PointerId, int Device,
+        PointerRoutedEventArgs? Args = null)
+    {
+        if (!Target.ActivePointerButtons.Remove(PointerId)) return;
+        Target.CaptureGenerations.Remove(PointerId);
+        Native.Lui_PointerInputV2(Runtime, Id, 3, Device, PointerId, 0, 0, 0);
+        if (Args is not null) Target.Element?.ReleasePointerCapture(Args.Pointer);
+    }
+
+    private void CancelCapturedPointers(View Target)
+    {
+        if (Target.ActivePointerButtons.Count == 0) return;
+        int Id = Views.FirstOrDefault(Entry => ReferenceEquals(Entry.Value, Target)).Key;
+        if (Id == 0) return;
+        foreach (uint PointerId in Target.ActivePointerButtons.Keys.ToArray())
+            CancelCapturedPointer(Id, Target, PointerId, 0);
+        Target.Element?.ReleasePointerCaptures();
     }
 
     private void OnPointerCaptureLost(int Id, View Target, PointerRoutedEventArgs Args)
@@ -620,13 +764,17 @@ internal sealed partial class WinUIBackend : IDisposable
                 _ => -1,
             };
             if (Device < 0) return;
+            if (!Target.CaptureGenerations.TryGetValue(PointerId, out ulong Generation)) return;
             Target.Element.DispatcherQueue.TryEnqueue(() =>
             {
                 try
                 {
                     if (!Target.IsAlive) return;
+                    if (!Views.TryGetValue(Id, out View? Current) || !ReferenceEquals(Target, Current)) return;
+                    if (!Target.CaptureGenerations.TryGetValue(PointerId, out ulong ActiveGeneration) ||
+                        ActiveGeneration != Generation) return;
                     Diagnostic($"PointerCaptureLost {Id} {PointerId}");
-                    Native.Lui_PointerInput(Runtime, Id, 3, Device, PointerId, 0, 0);
+                    CancelCapturedPointer(Id, Target, PointerId, Device);
                 }
                 catch (Exception Error) { LuiDiagnostics.Error("Input", "Pointer capture: " + Error); }
             });
@@ -645,7 +793,11 @@ internal sealed partial class WinUIBackend : IDisposable
             if (NewId == FocusedViewId) return;
             int PreviousId = FocusedViewId;
             FocusedViewId = NewId;
-            if (PreviousId != 0) Native.Lui_FocusChanged(Runtime, PreviousId, 0);
+            ++FocusGeneration;
+            if (PreviousId != 0) {
+                Native.Lui_FocusChanged(Runtime, PreviousId, 0);
+                if (Views.TryGetValue(PreviousId, out View? Previous)) CancelCapturedPointers(Previous);
+            }
             if (NewId != 0) Native.Lui_FocusChanged(Runtime, NewId, 1);
         }
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Focus: " + Error); }
@@ -672,9 +824,31 @@ internal sealed partial class WinUIBackend : IDisposable
             if (Key is null) return;
             int Phase = Released ? 2 : Args.KeyStatus.WasKeyDown ? 1 : 0;
             Diagnostic($"KeyInput {Id} {Phase} {Key}");
+            long Started = Stopwatch.GetTimestamp();
             Native.Lui_KeyInput(Runtime, Id, Phase, Key);
+            Native.Lui_RecordPerformance(Runtime, 1, Stopwatch.GetElapsedTime(Started).TotalMilliseconds);
         }
         catch (Exception Error) { LuiDiagnostics.Error("Input", "Keyboard: " + Error); }
+    }
+
+    private void OnWindowShortcut(int Id, View Target, KeyRoutedEventArgs Args)
+    {
+        try
+        {
+            if (IsDisposed || IsDisposing || Args.Handled || !Target.IsAlive || Target.NativeClosed ||
+                Target.Container?.XamlRoot is null || !Views.TryGetValue(Id, out View? Current) ||
+                !ReferenceEquals(Target, Current)) return;
+            string? Key = GetPortableKey(Args.Key);
+            if (Key is null || Key is "Control" or "Shift" or "Alt" or "CapsLock") return;
+            int OriginId = GetViewId(FocusManager.GetFocusedElement(Target.Container.XamlRoot) as DependencyObject);
+            if (OriginId == 0 || !IsInWindow(OriginId, Id) || !CanReceiveFocus(OriginId)) return;
+            static bool Down(Windows.System.VirtualKey Key) =>
+                (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Key) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            uint Modifiers = (Down(Windows.System.VirtualKey.Control) ? 1u : 0u) |
+                (Down(Windows.System.VirtualKey.Shift) ? 2u : 0u) | (Down(Windows.System.VirtualKey.Menu) ? 4u : 0u);
+            Native.Lui_WindowShortcut(Runtime, Id, OriginId, Key, Modifiers, Args.KeyStatus.WasKeyDown ? 1 : 0);
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Input", "Window shortcut: " + Error); }
     }
 
     private static string? GetPortableKey(Windows.System.VirtualKey Key)
@@ -721,12 +895,49 @@ internal sealed partial class WinUIBackend : IDisposable
         return true;
     }
 
+    private bool IsInWindow(int Id, int WindowId)
+    {
+        for (int Depth = 0; Depth <= Views.Count && Id != 0; ++Depth)
+        {
+            if (Id == WindowId) return true;
+            if (!Views.TryGetValue(Id, out View? Target)) return false;
+            Id = Target.ParentId;
+        }
+        return false;
+    }
+
+    private void CancelWindowInput(int WindowId)
+    {
+        if (FocusedViewId != 0 && IsInWindow(FocusedViewId, WindowId))
+        {
+            int PreviousId = FocusedViewId; FocusedViewId = 0; ++FocusGeneration;
+            Native.Lui_FocusChanged(Runtime, PreviousId, 0);
+        }
+        foreach (KeyValuePair<int, View> Entry in Views.ToArray())
+            if (IsInWindow(Entry.Key, WindowId)) CancelCapturedPointers(Entry.Value);
+    }
+
+    private int OnRequestFocus(IntPtr Context, int Id)
+    {
+        try
+        {
+            if (!CanReceiveFocus(Id) || !Views.TryGetValue(Id, out View? Target)) return 0;
+            if(Target.CodeHost!=IntPtr.Zero) return CodeEditorHost.LuiWinUITextFocusV1(Target.CodeHost);
+            if (
+                Target.Element is not Control Control) return 0;
+            return Control.Focus(FocusState.Programmatic) ? 1 : 0;
+        }
+        catch (Exception Error) { LuiDiagnostics.Error("Input", "Focus request: " + Error); return 0; }
+    }
+
     private void ClearInvalidFocus()
     {
         if (FocusedViewId == 0 || CanReceiveFocus(FocusedViewId)) return;
         int PreviousId = FocusedViewId;
         FocusedViewId = 0;
+        ++FocusGeneration;
         Native.Lui_FocusChanged(Runtime, PreviousId, 0);
+        if (Views.TryGetValue(PreviousId, out View? Previous)) CancelCapturedPointers(Previous);
     }
 
     private int OnProperty(IntPtr Context, int Id, string Name, string Value)
@@ -748,13 +959,27 @@ internal sealed partial class WinUIBackend : IDisposable
                 switch (Name)
                 {
                     case "__TextConfig":
-                        Target = ConfigureText(Id, Target, Value);
+                        if (Target.ClassName == "CodeEditor") ConfigureCodeEditor(Target, Value);
+                        else Target = ConfigureText(Id, Target, Value);
                         break;
                     case "__Selection":
                         string[] Selection = Value.Split(',');
                         Target.SelectionStart = int.Parse(Selection[0], CultureInfo.InvariantCulture);
                         Target.SelectionLength = int.Parse(Selection[1], CultureInfo.InvariantCulture);
-                        ApplySelection(Target);
+                        if (Target.ClassName == "CodeEditor") RequireCodeEditor(CodeEditorHost.SetSelection(Target.CodeHost, Target.SelectionStart, Target.SelectionLength), "Selection");
+                        else ApplySelection(Target);
+                        break;
+                    case "__CodeStyles" when Target.ClassName == "CodeEditor":
+                        ulong CurrentRevision=0;
+                        if(Value.Length!=0) {
+                            int HeaderEnd=Value.IndexOf(';');
+                            if(HeaderEnd<0) HeaderEnd=Value.Length;
+                            RequireCodeEditor(ulong.TryParse(Value.AsSpan(0,HeaderEnd),NumberStyles.None,
+                                CultureInfo.InvariantCulture,out ulong ExpectedRevision) &&
+                                Native.Lui_GetCodeEditorTextRevision(Runtime,Id,out CurrentRevision)==1,"Style revision");
+                            if(ExpectedRevision!=CurrentRevision) break;
+                        }
+                        RequireCodeEditor(CodeEditorHost.SetStyles(Target.CodeHost, Value), "Styles");
                         break;
                     case "__Style":
                         ApplyStyle(Target, Value);
@@ -768,6 +993,10 @@ internal sealed partial class WinUIBackend : IDisposable
                     case "Source" when (Target.Content ?? Target.Element) is Image Picture:
                         if (string.IsNullOrEmpty(Value)) ReleaseImage(Target);
                         break;
+                    case "ScaleMode" when Target.ClassName == "FrameSurface" && Target.Content is Image SurfaceImage:
+                        SurfaceImage.Stretch = Value switch {"Fill" => Stretch.UniformToFill, "Stretch" => Stretch.Fill, _ => Stretch.Uniform};
+                        MarkPresentation();
+                        break;
                     case "Text" when Target.Element is Button Button:
                         Button.Content = Value;
                         break;
@@ -775,6 +1004,9 @@ internal sealed partial class WinUIBackend : IDisposable
                         Target.Text = Value;
                         Input.Text = Value;
                         ApplySelection(Target);
+                        break;
+                    case "Text" when Target.ClassName == "CodeEditor":
+                        RequireCodeEditor(CodeEditorHost.LuiWinUITextSetTextV1(Target.CodeHost, Value)==1, "Text");
                         break;
                     case "Text" when Target.Element is PasswordBox Password:
                         Target.Text = Value;
@@ -796,6 +1028,10 @@ internal sealed partial class WinUIBackend : IDisposable
                         Target.Enabled = Value == "true";
                         Control.IsEnabled = Target.Enabled && Target.InputVisible;
                         break;
+                    case "Enabled" when Target.ClassName == "CodeEditor":
+                        Target.Enabled=Value=="true";
+                        RequireCodeEditor(CodeEditorHost.LuiWinUITextSetEnabledV1(Target.CodeHost, Target.Enabled && Target.InputVisible?1:0)==1,"Enabled");
+                        break;
                     case "Minimum" or "Maximum" or "Value" when Target.Element is Slider Slider:
                         SetRange(Slider, Name, Value);
                         break;
@@ -810,6 +1046,10 @@ internal sealed partial class WinUIBackend : IDisposable
                     case "Visible" when Target.Element is not null:
                         Target.Visible = Value == "true";
                         Target.Element.Visibility = Value == "true" ? Visibility.Visible : Visibility.Collapsed;
+                        break;
+                    case "Visible" when Target.ClassName == "CodeEditor":
+                        Target.Visible=Value=="true";
+                        RequireCodeEditor(CodeEditorHost.LuiWinUITextSetVisibleV1(Target.CodeHost,0)==1,"Hide until current Present");
                         break;
                 }
                 if (Name is "Enabled" or "Visible") ClearInvalidFocus();
@@ -951,6 +1191,7 @@ internal sealed partial class WinUIBackend : IDisposable
         if (Target.Secret != Secret || Target.Composing) {
             UIElement? Previous = Target.Element;
             int ParentId = Target.ParentId;
+            CancelCapturedPointers(Target);
             Target.IsAlive = false; Views.Remove(Id);
             if (ParentId != 0 && Views.TryGetValue(ParentId, out var Parent)) Parent.Container?.Children.Remove(Previous!);
             if (OnCreate(IntPtr.Zero, Id, "TextBox") != 1) throw new InvalidOperationException("Text replacement failed");
@@ -961,7 +1202,7 @@ internal sealed partial class WinUIBackend : IDisposable
                 Password.GotFocus += (_, _) => {if (Next.IsAlive) SyncFocus(Password);};
                 Password.LostFocus += (_, _) => {if (Next.IsAlive) SyncFocus(Password);};
                 Password.PointerEntered += (_, _) => {if (Next.IsAlive) Native.Lui_HoverChanged(Runtime, Id, 1);};
-                Password.PointerExited += (_, Args) => {if (Next.IsAlive) {Native.Lui_HoverChanged(Runtime, Id, 0); OnPointerInput(Id, Next, 3, Args);}};
+                Password.PointerExited += (_, Args) => {if (Next.IsAlive) {Native.Lui_HoverChanged(Runtime, Id, 0); if (!Next.ActivePointerButtons.ContainsKey(Args.Pointer.PointerId)) OnPointerInput(Id, Next, 3, Args);}};
                 Password.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, Args) => OnPointerInput(Id, Next, 0, Args)), true);
                 Password.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, Args) => OnPointerInput(Id, Next, 1, Args)), true);
                 Password.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, Args) => OnPointerInput(Id, Next, 2, Args)), true);
@@ -1005,7 +1246,12 @@ internal sealed partial class WinUIBackend : IDisposable
         try
         {
             View Child = Views[Id];
-            if (Child.Element is null) return 1;
+            if (Child.Element is null) {
+                Child.ParentId=ParentId;
+                AttachCodeEditors();
+                ClearInvalidFocus();
+                return 1;
+            }
             if (Child.ParentId != 0 && Views.TryGetValue(Child.ParentId, out View? OldParent))
                 OldParent.Container?.Children.Remove(Child.Element);
             Child.ParentId = ParentId;
@@ -1016,6 +1262,7 @@ internal sealed partial class WinUIBackend : IDisposable
                 MarkPresentation();
                 Container.Children.Add(Child.Element);
             }
+            AttachCodeEditors();
             ClearInvalidFocus();
             return 1;
         }
@@ -1031,6 +1278,7 @@ internal sealed partial class WinUIBackend : IDisposable
                 return ReportBackendFailure("Arrange", new InvalidOperationException($"Missing view {Id}"));
             Target.BoundsX = X;
             Target.BoundsY = Y;
+            if (Target.ClassName == "CodeEditor") PositionCodeEditor(Target, Width, Height);
             if (Target.Window is not null)
             {
                 if (ResizeWindow != 0)
@@ -1062,6 +1310,8 @@ internal sealed partial class WinUIBackend : IDisposable
         try {
             if (!Views.TryGetValue(Id, out View? Target)) return 0;
             Target.InputVisible = InputVisible != 0;
+            if(Target.ClassName=="CodeEditor") PresentCodeEditor(Id,Target,HasClip,X,Y,Width,Height);
+            if (!Target.InputVisible) {ClearInvalidFocus(); CancelCapturedPointers(Target);}
             UIElement? Element = Target.Element ?? Target.Container;
             if (Element is not null) {
                 var Clip = new Windows.Foundation.Rect(X, Y, Width, Height);
@@ -1077,6 +1327,7 @@ internal sealed partial class WinUIBackend : IDisposable
     private void MarkPresentation() {if (PresentationAt == 0) PresentationAt = Stopwatch.GetTimestamp();}
     private void OnRendering(object? Sender, object Args)
     {
+        RecordFrameRendering();
         if (!IsDisposed && !IsDisposing && PresentationAt != 0) {
             double Elapsed = Stopwatch.GetElapsedTime(PresentationAt).TotalMilliseconds;
             Native.Lui_RecordPerformance(Runtime, 2, Elapsed);
@@ -1094,19 +1345,35 @@ internal sealed partial class WinUIBackend : IDisposable
         Diagnostic($"Destroy {Id}");
         try
         {
+            if (Views.TryGetValue(Id, out View? Existing)) CancelCapturedPointers(Existing);
             if (!Views.Remove(Id, out View? Target)) return 1;
             Target.IsAlive = false;
+            if(Target.Window is not null) DetachCodeEditors(Id);
+            if(Target.CodeHost!=IntPtr.Zero) {
+                CodeEditorHost.LuiWinUITextDestroyHostV1(Target.CodeHost);
+                Target.CodeHost=IntPtr.Zero;
+            }
+            RetireWindowCloseHook(Target);
+            // Runtime parenting is batched, destruction is immediate. A live
+            // child may already belong to another runtime parent while its
+            // native parent change is still queued. Detach it before retiring
+            // this container so the later native Add has no previous parent.
+            foreach (var Child in Views.Values) if (Child.ParentId == Id && Child.Element is not null) {
+                Target.Container?.Children.Remove(Child.Element);
+                Child.ParentId = 0;
+            }
             ReleaseImage(Target);
-            if (FocusedViewId == Id) FocusedViewId = 0;
+            if (FocusedViewId == Id) {FocusedViewId = 0; ++FocusGeneration;}
             if (Target.ParentId != 0 && Target.Element is not null && Views.TryGetValue(Target.ParentId, out View? Parent))
                 Parent.Container?.Children.Remove(Target.Element);
             if (!Target.NativeClosed) Target.Window?.Close();
+            if (Target.Window is not null) QueueLastWindowExit(Target);
             return 1;
         }
         catch (Exception Error) { return ReportBackendFailure("Destroy", Error); }
     }
 
-    private static class Native
+    private static partial class Native
     {
         [StructLayout(LayoutKind.Sequential)]
         internal struct CapabilityDeclaration
@@ -1136,6 +1403,8 @@ internal sealed partial class WinUIBackend : IDisposable
         }
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int CreateCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string ClassName);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate int RequestFocusCallback(IntPtr Context, int Id);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int PropertyCallback(IntPtr Context, int Id, [MarshalAs(UnmanagedType.LPUTF8Str)] string Name, [MarshalAs(UnmanagedType.LPUTF8Str)] string Value);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -1181,6 +1450,16 @@ internal sealed partial class WinUIBackend : IDisposable
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        internal struct FocusCallbacks
+        {
+            internal uint StructSize;
+            internal uint AbiVersion;
+            internal IntPtr Context;
+            internal RequestFocusCallback RequestFocus;
+            internal ulong Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct PresentationCallbacks {
             internal uint StructSize, AbiVersion;
             internal IntPtr Context;
@@ -1213,6 +1492,8 @@ internal sealed partial class WinUIBackend : IDisposable
         internal static extern int Lui_LoadExtension(IntPtr Runtime, [MarshalAs(UnmanagedType.LPUTF8Str)] string Path);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Lui_SetBackend(IntPtr Runtime, BackendCallbacks Callbacks);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_SetFocusCallbacks(IntPtr Runtime, ref FocusCallbacks Callbacks);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_SetPresentationCallbacks(IntPtr Runtime, ref PresentationCallbacks Callbacks);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -1261,10 +1542,16 @@ internal sealed partial class WinUIBackend : IDisposable
         internal static extern int Lui_KeyInput(IntPtr Runtime, int Id, int Phase,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string Key);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_WindowShortcut(IntPtr Runtime, int WindowId, int OriginId,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string Key, uint Modifiers, int Repeat);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_HoverChanged(IntPtr Runtime, int Id, int Hovered);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_PointerInput(IntPtr Runtime, int Id, int Phase, int Device,
             uint PointerId, double X, double Y);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_PointerInputV2(IntPtr Runtime, int Id, int Phase, int Device,
+            uint PointerId, double X, double Y, int Button);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_Pump(IntPtr Runtime);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -1272,5 +1559,7 @@ internal sealed partial class WinUIBackend : IDisposable
             [MarshalAs(UnmanagedType.LPUTF8Str)] string Theme);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr Lui_GetLastError(IntPtr Runtime);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_GetCodeEditorTextRevision(IntPtr Runtime,int Id,out ulong Revision);
     }
 }

@@ -1,0 +1,41 @@
+{
+  "Version": 1,
+  "Profile": "MobileHostV1",
+  "Android": {
+    "MinSdk": 30,
+    "CompileSdk": 36,
+    "TargetSdk": 36,
+    "PlatformRevision": "2",
+    "BuildTools": "36.0.0",
+    "Ndk": "28.2.13676358",
+    "CMake": "3.31.6",
+    "Gradle": "8.11.1",
+    "GradleSha256": "f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6",
+    "AndroidGradlePlugin": "8.9.2",
+    "Kotlin": "2.1.20",
+    "JetBrainsAnnotations": "13.0",
+    "JavaMajor": 17,
+    "ObservedJava": "17.0.20.1+1-1-24.04-Ubuntu",
+    "CommandLineTools": "19.0 (13114758)",
+    "PlatformTools": "37.0.1",
+    "Emulator": "37.2.12",
+    "EmulatorImage": "system-images;android-36;google_apis_ps16k;x86_64",
+    "EmulatorImageRevision": "7",
+    "DeviceAbi": "arm64-v8a",
+    "EmulatorAbi": "x86_64",
+    "FloorEmulator": {
+      "Image": "system-images;android-30;google_apis;x86_64",
+      "ImageRevision": "16",
+      "Abi": "x86_64",
+      "PageSizeBytes": 4096,
+      "Cores": 2,
+      "MemoryMiB": 2560,
+      "Gpu": "swiftshader"
+    }
+  },
+  "iOS": {
+    "MinVersion": "17.0",
+    "Toolchain": null,
+    "Status": "AwaitingMacXcodeAndDevice"
+  }
+}

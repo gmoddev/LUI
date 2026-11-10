@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../tools/cli/SdkInstallation.cs" Link="SdkInstallation.cs" />
     <Compile Include="../../tools/cli/CliProgram.cs" Link="CliProgram.cs" />
     <Compile Include="../../tools/cli/NativeScriptChecker.cs" Link="NativeScriptChecker.cs" />
     <Compile Include="../../tools/cli/NativeTypeChecker.cs" Link="NativeTypeChecker.cs" />

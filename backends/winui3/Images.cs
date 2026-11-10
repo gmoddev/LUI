@@ -69,6 +69,7 @@ internal sealed partial class WinUIBackend
         return Width > 0 && Height > 0 && (long)Width*Height <= 1024*1024;
     }
     private void ReleaseImage(View Target) {
+        if (Target.ClassName == "FrameSurface") return; // Frame leases have their own retirement boundary.
         if (!string.IsNullOrEmpty(Target.ImageKey) && ImageCache.TryGetValue(Target.ImageKey, out var Entry)) Entry.Pins--;
         Target.ImageKey = string.Empty;
         if ((Target.Content ?? Target.Element) is Image Picture && Picture.Source is not null) {MarkPresentation(); Picture.Source = null;}

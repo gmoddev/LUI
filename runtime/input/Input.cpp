@@ -11,10 +11,10 @@
 #include <vector>
 
 bool CanReceiveInput(const LuiRuntime* Runtime, const Node* Value) {
-    if (Value->Destroyed || !Value->Visible || !Value->Enabled) return false;
+    if (Value->Destroyed || Value->WindowClosed || Value->NativeWindowClosedPending || !Value->Visible || !Value->Enabled) return false;
     for (const Node* Parent = Value; Parent->ParentId; ) {
         Parent = Runtime->Nodes.at(Parent->ParentId).get();
-        if (!Parent->Visible) return false;
+        if (!Parent->Visible || Parent->WindowClosed || Parent->NativeWindowClosedPending) return false;
     }
     return LuiLayout::HasViewportIntersection(Runtime, Value);
 }
@@ -77,8 +77,15 @@ extern "C" LUI_API int LUI_CALL Lui_GetTextInputRevision(LuiRuntime* Runtime, in
     if(Revision) *Revision=0;
     if(!CheckOwner(Runtime) || !Revision || Runtime->ShuttingDown || Runtime->BackendFailed) return 0;
     const auto Found=Runtime->Nodes.find(Id);
-    if(Found==Runtime->Nodes.end() || Found->second->Destroyed || Found->second->ClassName!="TextBox") return 0;
+    if(Found==Runtime->Nodes.end() || Found->second->Destroyed || !LuiSchema::IsA(Found->second->ClassName,"TextBox")) return 0;
     *Revision=Found->second->InputRevision; return 1;
+}
+extern "C" LUI_API int LUI_CALL Lui_GetCodeEditorTextRevision(LuiRuntime* Runtime, int Id, uint64_t* Revision) {
+    if(Revision) *Revision=0;
+    if(!CheckOwner(Runtime) || !Revision || Runtime->ShuttingDown || Runtime->BackendFailed) return 0;
+    const auto Found=Runtime->Nodes.find(Id);
+    if(Found==Runtime->Nodes.end() || Found->second->Destroyed || Found->second->ClassName!="CodeEditor") return 0;
+    *Revision=Found->second->TextRevision;return 1;
 }
 
 static void EndActiveKeys(LuiRuntime* Runtime, Node* Value) {
@@ -93,24 +100,36 @@ static void EndActiveKeys(LuiRuntime* Runtime, Node* Value) {
 
 extern "C" LUI_API int LUI_CALL Lui_TextInput(LuiRuntime* Runtime, int Id, const char* Text, int Start, int Length) {
     if (!CheckOwner(Runtime) || Runtime->BackendFailed || Start < 0 || Length < 0) return 0;
-    BackendEvent Event{BackendEvent::Kind::TextInput, Id};
-    if (!LuiText::Capture(Text, Event.Text)) return 0;
-    int Characters; LuiText::Count(Event.Text, Characters);
-    if (Start > Characters || Length > Characters - Start) return 0;
-    Event.Value = Start; Event.Phase = Length;
     const auto Target = Runtime->Nodes.find(Id);
     if (Target == Runtime->Nodes.end() || Target->second->Destroyed) return 0;
+    const bool CodeEditor=Target->second->ClassName=="CodeEditor";
+    BackendEvent Event{BackendEvent::Kind::TextInput, Id};
+    if (!(CodeEditor?LuiText::CaptureCodeEditor(Text, Event.Text):LuiText::Capture(Text, Event.Text))) return 0;
+    int Characters;
+    if (!(CodeEditor?LuiText::CountCodeEditor(Event.Text,Characters):LuiText::Count(Event.Text,Characters))) return 0;
+    if (Start > Characters || Length > Characters - Start) return 0;
+    Event.Value = Start; Event.Phase = Length;
     Event.InputRevision = Target->second->InputRevision;
     const int Deferred = QueueBackendEventIfBusy(Runtime, Event);
     if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->ClassName != "TextBox" ||
+    if (Found == Runtime->Nodes.end() || !LuiSchema::IsA(Found->second->ClassName,"TextBox") ||
         !CanReceiveInput(Runtime, Found->second.get()) || Characters > Found->second->MaxLength ||
-        (Found->second->Secret && (Start || Length))) return 0;
+        (Found->second->Secret && (Start || Length)) ||
+        (Found->second->ClassName=="CodeEditor" && Event.Text.find('\r')!=std::string::npos)) return 0;
     Node* Value = Found->second.get();
     const bool TextChanged = Value->Text != Event.Text;
     const bool SelectionChanged = Value->SelectionStart != Start || Value->SelectionLength != Length;
+    if (TextChanged && Value->ClassName=="CodeEditor") {
+        int OldCharacters=0;LuiText::CountCodeEditor(Value->Text,OldCharacters);
+        Value->CodeEditorUndoMaxLength=std::max(Value->CodeEditorUndoMaxLength,
+            std::max(OldCharacters,Characters));
+    }
     Value->Text = std::move(Event.Text); Value->SelectionStart = Start; Value->SelectionLength = Length;
+    if (TextChanged && Value->ClassName=="CodeEditor") {
+        ++Value->TextRevision;
+        QueueProperty(Runtime,Value,"__CodeStyles","");
+    }
     if (TextChanged || SelectionChanged) FireSignal(Runtime, Value, "Changed");
     if (TextChanged) FireSignal(Runtime, Value, "TextChanged");
     if (SelectionChanged) FireSignal(Runtime, Value, "SelectionChanged");
@@ -127,7 +146,7 @@ extern "C" LUI_API int LUI_CALL Lui_TextComposition(LuiRuntime* Runtime, int Id,
     const int Deferred = QueueBackendEventIfBusy(Runtime, Event);
     if (Deferred >= 0) return Deferred;
     auto Found = Runtime->Nodes.find(Id);
-    if (Found == Runtime->Nodes.end() || Found->second->ClassName != "TextBox" || Found->second->Secret || !CanReceiveInput(Runtime, Found->second.get())) return 0;
+    if (Found == Runtime->Nodes.end() || !LuiSchema::IsA(Found->second->ClassName,"TextBox") || Found->second->Secret || !CanReceiveInput(Runtime, Found->second.get())) return 0;
     Node* Value = Found->second.get();
     if (Phase == 0) {
         if (Value->IsComposing) return 0;
@@ -151,6 +170,16 @@ static void ClearFocus(LuiRuntime* Runtime, Node* Value) {
     }
     FireSignal(Runtime, Value, "FocusLost");
     EndActiveKeys(Runtime, Value);
+    std::vector<PointerInputValue> Canceled;
+    for (auto Iterator = Value->ActivePointers.begin(); Iterator != Value->ActivePointers.end();) {
+        if (Iterator->second.IsV2) {
+            PointerInputValue Input = Iterator->second;
+            Input.IsCanceled = true;
+            Canceled.push_back(std::move(Input));
+            Iterator = Value->ActivePointers.erase(Iterator);
+        } else ++Iterator;
+    }
+    for (const auto& Input : Canceled) FireSignal(Runtime, Value, "InputEnded", &Input);
 }
 
 void ClearInvalidInput(LuiRuntime* Runtime) {
@@ -177,13 +206,9 @@ void ClearInvalidInput(LuiRuntime* Runtime) {
         if (WasComposing) FireSignal(Runtime, Value, "CompositionEnded");
         if (WasFocused) FireSignal(Runtime, Value, "FocusLost");
         if (WasHovered) FireSignal(Runtime, Value, "MouseLeave");
-        std::vector<unsigned int> PointerIds;
-        for (const auto& Pair : ActivePointers) PointerIds.push_back(Pair.first);
-        std::sort(PointerIds.begin(), PointerIds.end());
-        for (unsigned int PointerId : PointerIds)
-        {
-            ActivePointers.at(PointerId).IsCanceled = true;
-            FireSignal(Runtime, Value, "InputEnded", &ActivePointers.at(PointerId));
+        for (auto& Pair : ActivePointers) {
+            Pair.second.IsCanceled = true;
+            FireSignal(Runtime, Value, "InputEnded", &Pair.second);
         }
         std::vector<std::string> Keys;
         for (const auto& Pair : ActiveKeys) Keys.push_back(Pair.first);
@@ -246,13 +271,17 @@ extern "C" LUI_API int LUI_CALL Lui_HoverChanged(LuiRuntime* Runtime, int Id, in
     return 1;
 }
 
-extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
-    unsigned int PointerId, double X, double Y) {
+static int ProcessPointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
+    unsigned int PointerId, double X, double Y, int Button, bool IsV2) {
     if (!CheckOwner(Runtime) || Runtime->BackendFailed || Phase < 0 || Phase > 3 || Device < 0 || Device > 3 ||
         (Phase != 3 && (!std::isfinite(X) || !std::isfinite(Y)))) return 0;
+    if (IsV2 && ((Device == 0 && ((Phase == 0 || Phase == 2) ? Button < 1 || Button > 5 : Button != 0)) ||
+        (Device != 0 && Button != 0))) return 0;
     BackendEvent Event{BackendEvent::Kind::PointerInput, Id};
     Event.Phase = Phase;
     Event.Device = Device;
+    Event.Button = Button;
+    Event.PointerV2 = IsV2;
     Event.PointerId = PointerId;
     Event.X = X;
     Event.Y = Y;
@@ -262,32 +291,60 @@ extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, in
     if (Found == Runtime->Nodes.end() || Found->second->Destroyed ||
         !LuiSchema::IsA(Found->second->ClassName, "GuiObject")) return 0;
     Node* Value = Found->second.get();
-    auto Active = Value->ActivePointers.find(PointerId);
+    const auto PointerKey = std::pair{PointerId, Button};
+    auto Active = Value->ActivePointers.find(PointerKey);
+    const bool AnyActive = std::any_of(Value->ActivePointers.begin(), Value->ActivePointers.end(),
+        [PointerId](const auto& Pair) { return Pair.first.first == PointerId; });
     static const char* Devices[] = {"Mouse", "Pen", "Touch", "Touchpad"};
-    if ((Phase == 0 || (Phase == 1 && Active == Value->ActivePointers.end())) &&
+    static const char* Buttons[] = {"", "Left", "Right", "Middle", "Auxiliary1", "Auxiliary2"};
+    if ((Phase == 0 || (Phase == 1 && !AnyActive)) &&
         !LuiLayout::ContainsViewportPoint(Runtime, Value, Value->Bounds.X + X, Value->Bounds.Y + Y)) return 0;
     if (Phase == 0) {
         if (!CanReceiveInput(Runtime, Value)) return 0;
         if (Active == Value->ActivePointers.end()) {
-            PointerInputValue Input{PointerId, Devices[Device], {X, Y}};
-            Value->ActivePointers.emplace(PointerId, Input);
+            if (IsV2 && Value->ActivePointers.size() >= 64) return 0;
+            PointerInputValue Input{PointerId, Devices[Device], {X, Y}, false,
+                IsV2 && Device == 0 ? Buttons[Button] : "", IsV2};
+            Value->ActivePointers.emplace(PointerKey, Input);
             FireSignal(Runtime, Value, "InputBegan", &Input);
         }
     } else if (Phase == 1) {
         if (!CanReceiveInput(Runtime, Value)) return 0;
         PointerInputValue Input{PointerId, Devices[Device], {X, Y}};
-        if (Active != Value->ActivePointers.end()) Active->second = Input;
+        for (auto& Pair : Value->ActivePointers)
+            if (Pair.first.first == PointerId) Pair.second.Position = {X, Y};
         FireSignal(Runtime, Value, "InputChanged", &Input);
-    } else {
+    } else if (Phase == 2) {
         if (Active == Value->ActivePointers.end()) return 0;
         PointerInputValue Input = Active->second;
-        if (Phase == 2) Input.Position = {X, Y};
-        else Input.IsCanceled = true;
+        Input.Position = {X, Y};
         Value->ActivePointers.erase(Active);
         FireSignal(Runtime, Value, "InputEnded", &Input);
+    } else {
+        std::vector<PointerInputValue> Canceled;
+        for (auto Iterator = Value->ActivePointers.begin(); Iterator != Value->ActivePointers.end();) {
+            if (Iterator->first.first == PointerId) {
+                PointerInputValue Input = Iterator->second;
+                Input.IsCanceled = true;
+                Canceled.push_back(std::move(Input));
+                Iterator = Value->ActivePointers.erase(Iterator);
+            } else ++Iterator;
+        }
+        if (Canceled.empty()) return 0;
+        for (const auto& Input : Canceled) FireSignal(Runtime, Value, "InputEnded", &Input);
     }
     FlushLayout(Runtime);
     return 1;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_PointerInput(LuiRuntime* Runtime, int Id, int Phase, int Device,
+    unsigned int PointerId, double X, double Y) {
+    return ProcessPointerInput(Runtime, Id, Phase, Device, PointerId, X, Y, 0, false);
+}
+
+extern "C" LUI_API int LUI_CALL Lui_PointerInputV2(LuiRuntime* Runtime, int Id, int Phase, int Device,
+    unsigned int PointerId, double X, double Y, int Button) {
+    return ProcessPointerInput(Runtime, Id, Phase, Device, PointerId, X, Y, Button, true);
 }
 
 static bool IsPortableKey(const std::string& Key) {
@@ -305,6 +362,29 @@ static bool IsPortableKey(const std::string& Key) {
     };
     for (const char* Name : NamedKeys) if (Key == Name) return true;
     return false;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_WindowShortcut(LuiRuntime* Runtime, int WindowId, int OriginId,
+    const char* Key, unsigned int Modifiers, int Repeat) {
+    if (!CheckOwner(Runtime) || Runtime->BackendFailed || !Key || Modifiers > 7 || (Repeat != 0 && Repeat != 1)) return 0;
+    const std::string Name = Key;
+    if (!IsPortableKey(Name) || Name == "Control" || Name == "Shift" || Name == "Alt" || Name == "CapsLock") return 0;
+    BackendEvent Event{BackendEvent::Kind::WindowShortcut, WindowId};
+    Event.Value = OriginId; Event.Text = Name; Event.Device = static_cast<int>(Modifiers); Event.Phase = Repeat;
+    const int Deferred = QueueBackendEventIfBusy(Runtime, std::move(Event));
+    if (Deferred >= 0) return Deferred;
+    const auto Window = Runtime->Nodes.find(WindowId), Origin = Runtime->Nodes.find(OriginId);
+    if (Window == Runtime->Nodes.end() || Origin == Runtime->Nodes.end() || Window->second->ClassName != "Window" ||
+        Window->second->Destroyed || !Window->second->Visible || !Origin->second->IsFocused ||
+        !CanReceiveInput(Runtime, Origin->second.get()) || Origin->second->IsComposing) return 0;
+    const Node* Ancestor = Origin->second.get();
+    while (Ancestor && Ancestor->ClassName != "Window")
+        Ancestor = Ancestor->ParentId ? Runtime->Nodes.at(Ancestor->ParentId).get() : nullptr;
+    if (Ancestor != Window->second.get()) return 0;
+    KeyboardInputValue Input{Name, Repeat != 0, true, Modifiers, LuiSchema::IsA(Origin->second->ClassName,"TextBox")};
+    FireSignal(Runtime, Window->second.get(), "Shortcut", nullptr, &Input);
+    FlushLayout(Runtime);
+    return 1;
 }
 
 extern "C" LUI_API int LUI_CALL Lui_KeyInput(LuiRuntime* Runtime, int Id, int Phase, const char* Key) {

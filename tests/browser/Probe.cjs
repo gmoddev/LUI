@@ -82,7 +82,7 @@ async function Main() {
         await Open(Extra); await WaitFor(Page, () => window.Probe.State === 'Failed');
         const Missing = { ...Files }; delete Missing['Src/Counter.luau'];
         await Open(Missing); await WaitFor(Page, () => window.Probe.State === 'Failed');
-        for (const Source of [Files['Src/Main.luau'] + '\nInstance.new("Window")']) {
+        for (const Source of ["assert(not app:GetService('PlatformService'):Supports('FrameSurface')); Instance.new('FrameSurface')", Files['Src/Main.luau'] + '\nInstance.new("Window")']) {
             await Open({ ...Files, 'Src/Main.luau': Source });
             await WaitFor(Page, () => window.Probe.State === 'Failed');
             Assert.equal(await Page.locator('.LuiNode').count(), 0);

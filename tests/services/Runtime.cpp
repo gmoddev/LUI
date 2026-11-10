@@ -130,7 +130,17 @@ void RustProof(const char* Path) {
     auto* Domain = Lui_CreateNativeDomainV2(); auto* Runtime = Create(Domain);
     Check(Lui_LoadNativeServiceV2(Runtime, Path) == 0, "independent Rust library loads through ABI v2");
     Run(Runtime,
-        "local S=app:GetService('RustProof'); RustDone=0; RustCanceled=0; RustProgress=0\n"
+        "local S=app:GetService('RustProof'); RustDone=0; RustCanceled=0; RustProgress=0; FrameDone=0; RetiredFrameDone=0\n"
+        "Surface=Instance.new('FrameSurface')\n"
+        "S:Frame(buffer.create(0),nil,function(Result,Handle,Error)\n"
+        " assert(not Error and not Handle and buffer.len(Result)==16 and buffer.readu8(Result,0)==11)\n"
+        " assert(Surface:SubmitFrame(Result,2,2,8,'BGRA8Premultiplied')); buffer.writeu8(Result,0,200); FrameDone+=1\n"
+        "end)\n"
+        "local Retired=Instance.new('FrameSurface')\n"
+        "S:Frame(buffer.create(0),nil,function(Result,Handle,Error)\n"
+        " assert(not Error and not Handle); local Ok,Code=Retired:SubmitFrame(Result,2,2,8,'BGRA8Premultiplied')\n"
+        " assert(not Ok and Code=='Closed'); RetiredFrameDone+=1\n"
+        "end); Retired:Destroy()\n"
         "local B=buffer.fromstring('rust\\000bytes')\n"
         "local R=S:Hold(B,nil,function(Result,Handle,Error) assert(Error=='Canceled'); RustCanceled+=1 end)\n"
         "assert(R:Cancel())\n"
@@ -154,7 +164,7 @@ void RustProof(const char* Path) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     Check(Done, "Rust bytes/handle/progress/cancel/failure interoperability");
-    Run(Runtime, "assert(RustDone==3 and RustCanceled==1 and RustProgress==1)");
+    Run(Runtime, "assert(RustDone==3 and RustCanceled==1 and RustProgress==1 and FrameDone==1 and RetiredFrameDone==1 and Surface.FrameState=='Ready'); Surface:Destroy()");
     Run(Runtime, "app:GetService('RustProof'):Hold(buffer.create(0),nil,function() error('late callback') end)");
     Lui_Destroy(Runtime);
     LuiNativeStatsV2 Stats{sizeof(Stats), 2};

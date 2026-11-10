@@ -5,11 +5,14 @@
 #include "Luau/TypeInfer.h"
 
 #include <cstdio>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 struct ScriptResolver : Luau::FileResolver {
     std::unordered_map<std::string, std::string> Scripts;
@@ -26,20 +29,69 @@ static int Check(bool Condition, const char* Message) {
     return Condition ? 0 : 1;
 }
 
-int main() {
-    std::ifstream File(LUI_TYPES_PATH);
+int main(int Count, char** Arguments) {
+    if (Count > 2) return Check(false, "expected at most one generated definition path");
+    std::ifstream File(Count == 2 ? Arguments[1] : LUI_TYPES_PATH);
     if (!File) return Check(false, "generated definition file is missing");
     const std::string Definitions{std::istreambuf_iterator<char>{File}, std::istreambuf_iterator<char>{}};
 
+    // Init aliases are emitted only for creatable classes. Exercise all of them
+    // so inserting a new class cannot silently degrade a later constructor.
+    std::vector<std::string> ConstructorNames;
+    std::istringstream DefinitionLines(Definitions);
+    for (std::string Line; std::getline(DefinitionLines, Line);) {
+        constexpr const char* Prefix = "export type ";
+        const size_t End = Line.find("Init = {");
+        if (Line.rfind(Prefix, 0) == 0 && End != std::string::npos)
+            ConstructorNames.push_back(Line.substr(std::char_traits<char>::length(Prefix), End - std::char_traits<char>::length(Prefix)));
+    }
+    std::string AllConstructors = "--!strict\n", UnknownMembers = "--!strict\n";
+    for (size_t Index = 0; Index < ConstructorNames.size(); ++Index) {
+        const std::string& Name = ConstructorNames[Index];
+        AllConstructors += "local Exact" + Name + ": " + Name + " = Instance.new(\"" + Name + "\", {})\n";
+        UnknownMembers += "local Constructed" + std::to_string(Index) + " = Instance.new(\"" + Name + "\", {})\n";
+        UnknownMembers += "Constructed" + std::to_string(Index) + ".LUIUnknownMember = 1\n";
+    }
+
     ScriptResolver Resolver;
+    Resolver.Scripts.emplace("allConstructors", AllConstructors);
+    Resolver.Scripts.emplace("constructorUnknownMembers", UnknownMembers);
+    Resolver.Scripts.emplace("constructorUnion", R"(
+        --!strict
+        local Name: "ProgressBar" | "ImageLabel" = if app:GetService("PlatformService").BackendName == "" then "ProgressBar" else "ImageLabel"
+        local Created: Instance = Instance.new(Name, {})
+        local Exact: ProgressBar | ImageLabel = Instance.new(Name, {})
+    )");
+    Resolver.Scripts.emplace("constructorUnknownDynamic", R"(
+        --!strict
+        local Name: string = app:GetService("PlatformService").BackendName
+        Instance.new(Name, {})
+    )");
     Resolver.Scripts.emplace("valid", R"(
         --!strict
         local Window = Instance.new("Window", {Title = "Typed", Size = UDim2.fromOffset(480, 320)})
+        Window.CloseRequested:Connect(function()
+            local Prevented: boolean = Window:PreventClose()
+        end)
+        Window.Closed:Connect(function()
+            local Closed: boolean = Window.IsClosed
+        end)
+        local AcceptedClose: boolean, CloseReason: string? = Window:RequestClose()
+        Window.Shortcut:Connect(function(Input: KeyboardShortcut)
+            local Key: string = Input.Key
+            local Modifiers: boolean = Input.Control or Input.Shift or Input.Alt
+            local Editable: boolean = Input.TextEditing
+        end)
         local Root = Instance.new("Frame", {Parent = Window, Size = UDim2.fromScale(1, 1)})
         local EmptyFrame = Instance.new("Frame")
+        local SurfaceProps: FrameSurfaceInit = {Parent = Root, ScaleMode = "Fit"}
+        local Surface = Instance.new("FrameSurface", SurfaceProps)
+        local Accepted: boolean, Failure: string? = Surface:SubmitFrame(buffer.create(4), 1, 1, 4, "BGRA8Premultiplied")
+        local FrameState: string = Surface.FrameState
+        Surface:ClearFrame()
         local ScrollProps: ScrollingFrameInit = {Parent = Root, CanvasSize = UDim2.fromOffset(500, 800),
             CanvasPosition = Vector2.new(0, 120), ClipsDescendants = true, ZIndex = 2}
-        local Scroll = Instance.new("ScrollingFrame", ScrollProps) :: ScrollingFrame
+        local Scroll = Instance.new("ScrollingFrame", ScrollProps)
         local Canvas: Vector2 = Scroll.AbsoluteCanvasSize
         local Offset: Vector2 = Scroll.AbsoluteCanvasPosition
         assert(Canvas.Y >= Offset.Y)
@@ -162,6 +214,10 @@ int main() {
         --!strict
         Instance.new("NotAClass", {})
     )");
+    Resolver.Scripts.emplace("abstractClass", R"(
+        --!strict
+        Instance.new("GuiObject", {})
+    )");
     Resolver.Scripts.emplace("init", R"(
         --!strict
         local Props: WindowInit = {Title = "Typed", Size = UDim2.fromOffset(480, 320)}
@@ -209,6 +265,33 @@ int main() {
     int Failures = Check(Loaded.success, "generated definitions failed Luau validation");
     if (Failures) return 1;
 
+    const auto ConstructorStarted = std::chrono::steady_clock::now();
+    Luau::FrontendOptions ConstructorOptions;
+    ConstructorOptions.moduleTimeLimitSec = 10.0;
+    const auto Constructors = Frontend.check("allConstructors", ConstructorOptions);
+    for (const Luau::TypeError& Error : Constructors.errors)
+        std::fprintf(stderr, "[LUI:Types] constructor: %s\n", Luau::toString(Error).c_str());
+    Failures += Check(!ConstructorNames.empty() && Constructors.errors.empty() && Constructors.timeoutHits.empty(),
+        "a literal constructor did not return its exact generated class");
+    const auto Members = Frontend.check("constructorUnknownMembers", ConstructorOptions);
+    for (size_t Index = 0; Index < ConstructorNames.size(); ++Index) {
+        bool Rejected = false;
+        for (const auto& Error : Members.errors) Rejected |= Error.location.begin.line == 2 + 2 * Index;
+        if (!Rejected) std::fprintf(stderr, "[LUI:Types] constructor accepted unknown member for %s\n", ConstructorNames[Index].c_str());
+        Failures += Check(Rejected, "constructor result lost static member validation");
+    }
+    Failures += Check(Members.timeoutHits.empty(), "constructor member analysis exceeded its time limit");
+    const auto ConstructorUnion = Frontend.check("constructorUnion", ConstructorOptions);
+    for (const auto& Error : ConstructorUnion.errors)
+        std::fprintf(stderr, "[LUI:Types] constructor union: %s\n", Luau::toString(Error).c_str());
+    Failures += Check(ConstructorUnion.errors.empty() && ConstructorUnion.timeoutHits.empty(),
+        "supported finite class-name union lost its precise constructor result");
+    Failures += Check(!Frontend.check("constructorUnknownDynamic", ConstructorOptions).errors.empty(),
+        "unconstrained dynamic class name typechecked");
+    const double ConstructorMilliseconds = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - ConstructorStarted).count();
+    std::printf("[LUI:Types] constructors=%zu checked_ms=%.3f (analysis only)\n", ConstructorNames.size(), ConstructorMilliseconds);
+
     Luau::CheckResult Init = Frontend.check("init");
     for (const Luau::TypeError& Error : Init.errors)
         std::fprintf(stderr, "[LUI:Types] init: %s\n", Luau::toString(Error).c_str());
@@ -228,6 +311,7 @@ int main() {
     Failures += Check(!Frontend.check("keyboardReadOnly").errors.empty(), "read-only keyboard payload assignment typechecked");
     Luau::CheckResult UnknownClass = Frontend.check("unknownClass");
     Failures += Check(!UnknownClass.errors.empty(), "unknown class typechecked");
+    Failures += Check(!Frontend.check("abstractClass").errors.empty(), "abstract class constructor typechecked");
     Failures += Check(!Frontend.check("invalidInit").errors.empty(), "invalid typed constructor properties typechecked");
     Failures += Check(!Frontend.check("invalidSizeInit").errors.empty(), "invalid size constraint properties typechecked");
     Failures += Check(!Frontend.check("invalidGridInit").errors.empty(), "invalid grid layout properties typechecked");

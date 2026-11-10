@@ -1,8 +1,8 @@
 {
   "name": "lui-vscode",
-  "displayName": "LUI Preview",
+  "displayName": "LUI",
   "description": "Instance Explorer and layout inspector for LUI applications",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "publisher": "gmoddev",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
@@ -10,8 +10,16 @@
   "engines": { "vscode": "^1.90.0" },
   "main": "./Extension.js",
   "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview", "onCommand:lui.openNativePreview", "onLanguage:luau", "workspaceContains:lui.json"],
-  "scripts": { "test": "node --test ../tests/editor/EditorTests.js ../tests/editor/TypeTests.js ../tests/editor/ProjectTests.js" },
+  "scripts": { "test": "node --test ../tests/editor/EditorTests.js ../tests/editor/TypeTests.js ../tests/editor/ProjectTests.js ../tests/editor/SdkTests.js" },
   "contributes": {
+    "walkthroughs": [{
+      "id": "lui.start", "title": "Build your first LUI app", "description": "Choose an SDK, create a project and open a native window.",
+      "steps": [
+        { "id": "sdk", "title": "Choose your extracted SDK", "description": "[Choose SDK](command:lui.chooseSdk)", "media": { "markdown": "walkthrough/SDK.md" }, "completionEvents": ["onContext:lui.sdkReady"] },
+        { "id": "project", "title": "Create a modular project", "description": "[Create project](command:lui.createProject)", "media": { "markdown": "walkthrough/PROJECT.md" }, "completionEvents": ["onContext:lui.projectCreated"] },
+        { "id": "run", "title": "Check and run", "description": "[Check](command:lui.checkTypes) then [Run app](command:lui.openNativePreview)", "media": { "markdown": "walkthrough/RUN.md" }, "completionEvents": ["onContext:lui.appLaunched"] }
+      ]
+    }],
     "viewsContainers": {
       "activitybar": [{ "id": "lui", "title": "LUI", "icon": "media/icon.svg" }]
     },
@@ -22,16 +30,19 @@
       ]
     },
     "commands": [
-      { "command": "lui.startPreview", "title": "LUI: Start Preview", "icon": "$(play)" },
+      { "command": "lui.chooseSdk", "title": "LUI: Choose SDK" },
+      { "command": "lui.createProject", "title": "LUI: Create Project" },
+      { "command": "lui.startPreview", "title": "LUI: Inspect Layout", "icon": "$(list-tree)" },
       { "command": "lui.reloadPreview", "title": "LUI: Reload Preview", "icon": "$(refresh)" },
       { "command": "lui.stopPreview", "title": "LUI: Stop Preview", "icon": "$(debug-stop)" },
-      { "command": "lui.openNativePreview", "title": "LUI: Open Native Preview", "icon": "$(window)" },
-      { "command": "lui.stopNativePreview", "title": "LUI: Stop Native Preview", "icon": "$(close)" },
+      { "command": "lui.openNativePreview", "title": "LUI: Run App", "icon": "$(play)" },
+      { "command": "lui.stopNativePreview", "title": "LUI: Stop App", "icon": "$(debug-stop)" },
       { "command": "lui.checkTypes", "title": "LUI: Check Types", "icon": "$(check)" },
       { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" },
       { "command": "lui.openSource", "title": "LUI: Open Instance Source", "icon": "$(go-to-file)" }
     ],
     "menus": {
+      "editor/title": [{ "command": "lui.openNativePreview", "when": "resourceExtname == .luau", "group": "navigation@1" }],
       "view/title": [
         { "command": "lui.startPreview", "when": "view == lui.explorer", "group": "navigation@1" },
         { "command": "lui.reloadPreview", "when": "view == lui.explorer", "group": "navigation@2" },
@@ -46,6 +57,10 @@
     "configuration": {
       "title": "LUI Preview",
       "properties": {
+        "lui.sdkPath": {
+          "type": "string", "default": "", "scope": "machine",
+          "description": "Extracted LUI SDK root. Uses the CLI's validated matched tools and the project's exact SDK pin. LUI_SDK is the environment fallback."
+        },
         "lui.cliPath": {
           "type": "string", "default": "",
           "description": "Built lui.dll or CLI executable for type checking. If empty, discover a repository build."

@@ -34,7 +34,7 @@ void Cases(const Fs::path& Root, const char* Rust) {
     const auto Bytes = Rust ? Read(Fs::u8path(Rust)) : "SYNTHETIC_NONEXECUTABLE_BINARY";
     Write(Root/Binary, Bytes);
     auto Methods = Json::array({Method("Echo",8*1024*1024,8*1024*1024),Method("Counter",0,8,0,1),Method("Increment",0,8,1,0),
-        Method("Hold",65536,65536),Method("Wake",0,0),Method("Fail",0,0),Method("Progress",65536,65536),Method("StallShutdown",0,0)});
+        Method("Hold",65536,65536),Method("Wake",0,0),Method("Fail",0,0),Method("Progress",65536,65536),Method("StallShutdown",0,0),Method("Frame",0,16)});
     Json Sidecar{{"SchemaVersion",3},{"AbiVersion",2},{"Provider","Native"},
         {"Extension",{{"Name","RustProof"},{"Version",1},{"RequiredCapabilities",{"NativeExtensions","HostServices"}},
             {"Provenance",{{"Kind","LocalVendor"},{"Id","Synthetic-Rust-fixture"}}},

@@ -41,9 +41,21 @@ Base: `Instance`. Creatable: `true`.
 | --- | --- | --- | --- |
 | `Title` | `string` |  | No |
 | `Visible` | `boolean` | false | No |
+| `IsClosed` | `boolean` | false; terminal native lifetime | Yes |
 | `Size` | `UDim2` | 800x600 | No |
 | `AbsolutePosition` | `Vector2` | derived | Yes |
 | `AbsoluteSize` | `Vector2` | derived | Yes |
+
+| Method | Type |
+| --- | --- |
+| `RequestClose` | `(Self: Window) -> (boolean, string?)` |
+| `PreventClose` | `(Self: Window) -> boolean` |
+
+| Signal | Type |
+| --- | --- |
+| `Shortcut` | `ShortcutSignal` |
+| `CloseRequested` | `Signal` |
+| `Closed` | `Signal` |
 
 ## GuiObject
 
@@ -76,6 +88,10 @@ Base: `Instance`. Creatable: `false`.
 | `IsFocused` | `boolean` | false | Yes |
 | `AbsolutePosition` | `Vector2` | derived | Yes |
 | `AbsoluteSize` | `Vector2` | derived | Yes |
+
+| Method | Type |
+| --- | --- |
+| `Focus` | `(Self: GuiObject) -> boolean` |
 
 | Signal | Type |
 | --- | --- |
@@ -147,6 +163,21 @@ Base: `GuiObject`. Creatable: `true`.
 | `CompositionChanged` | `Signal` |
 | `CompositionEnded` | `Signal` |
 
+## CodeEditor
+
+Base: `TextBox`. Creatable: `true`.
+
+| Property | Type | Default | Read only |
+| --- | --- | --- | --- |
+| `Multiline` | `boolean` | true; immutable | Yes |
+| `Secret` | `boolean` | false; immutable | Yes |
+| `MaxLength` | `number` | 262144 Unicode scalars; UTF-8 byte ceiling also 262144 | No |
+| `TextRevision` | `number` | 1; advances when committed text changes | Yes |
+
+| Method | Type |
+| --- | --- |
+| `SetStyles` | `(Self: CodeEditor, ExpectedRevision: number, Ranges: {{Start: number, End: number, Color: number}}) -> boolean` |
+
 ## CheckBox
 
 Base: `GuiObject`. Creatable: `true`.
@@ -199,6 +230,20 @@ Base: `GuiObject`. Creatable: `true`.
 | Signal | Type |
 | --- | --- |
 | `LoadChanged` | `Signal` |
+
+## FrameSurface
+
+Base: `GuiObject`. Creatable: `true`.
+
+| Property | Type | Default | Read only |
+| --- | --- | --- | --- |
+| `ScaleMode` | `string` | Fit; Fill or Stretch | No |
+| `FrameState` | `string` | Empty; Pending, Ready or Failed (Ready never implies visible presentation) | Yes |
+
+| Method | Type |
+| --- | --- |
+| `SubmitFrame` | `(Self: FrameSurface, Pixels: buffer, Width: number, Height: number, RowStride: number, Format: string) -> (boolean, string?)` |
+| `ClearFrame` | `(Self: FrameSurface) -> ()` |
 
 ## UIComponent
 

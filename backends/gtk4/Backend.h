@@ -38,6 +38,7 @@ private:
         uint64_t ImageToken=0;
         std::string ImageKey;
         std::vector<GObject*> TextSources;
+        std::vector<GtkTextTag*> CodeTags;
         uint64_t Epoch=0;
         std::string ClassName;
         std::string AccessibilityLabel;
@@ -51,12 +52,14 @@ private:
         bool Alive=true,Applying=false,Visible=true,Enabled=true,Closed=false;
         double X=0,Y=0,Width=0,Height=0,Minimum=0,Maximum=100,Value=0;
         std::set<std::string> Keys;
+        bool ShortcutRepeat=false;
+        std::set<int> ActiveButtons;
         std::vector<GObject*> Controllers;
     };
-    enum class Kind {Activate,Text,Checked,Value,Focus,Hover,Pointer,Key,Resize,Close,Scroll,TextInput,Composition};
+    enum class Kind {Activate,Text,Checked,Value,Focus,Hover,Pointer,Key,Shortcut,Resize,Close,Scroll,TextInput,Composition};
     struct Event {
         Kind Type; int Id; uint64_t Epoch;
-        int Phase=0,Device=0; double X=0,Y=0,Value=0;
+        int Phase=0,Device=0,Button=0; double X=0,Y=0,Value=0;
         std::string Text;
         std::chrono::steady_clock::time_point QueuedAt;
         uint64_t TextRevision=0;
@@ -95,15 +98,20 @@ private:
     void Connect(View& Target);
     void ConnectText(View& Target);
     void TextEvent(View& Target);
+    void ClearCodeStyles(View& Target);
+    bool ApplyCodeStyles(View& Target,const std::string& Encoded);
     void ApplySelection(View& Target);
     void ReplaceText(View& Target,bool Multiline,bool Secret,bool Force=false);
     bool Usable(const View& Target) const;
+    bool InWindow(int Id,int WindowId) const;
     static int Create(void*,int,const char*);
     static int Property(void*,int,const char*,const char*);
     static int Parent(void*,int,int);
     static int Arrange(void*,int,double,double,double,double,int);
     static int Present(void*,int,int,double,double,double,double,int,int);
     static int Destroy(void*,int);
+    static int RequestFocus(void*,int);
+    static int CloseWindow(void*,int);
     int Fail();
 };
 std::string GetKey(guint Value);

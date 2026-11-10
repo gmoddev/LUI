@@ -1,6 +1,7 @@
 # Experimental browser feasibility target. Desktop providers are deliberately absent.
 add_library(LuiBrowserCore STATIC ${LuiRuntimeSources} ${LuiProjectSources}
     runtime/project/HashPortable.cpp runtime/reflection/Schema.cpp backends/browser/Unavailable.cpp)
+target_sources(LuiBrowserCore PRIVATE runtime/presentation/Frames.cpp)
 target_include_directories(LuiBrowserCore PUBLIC native/abi)
 target_link_libraries(LuiBrowserCore PRIVATE Luau.Compiler Luau.VM nlohmann_json::nlohmann_json)
 target_compile_definitions(LuiBrowserCore PRIVATE LUI_BUILD LUI_CAPTURED_ONLY

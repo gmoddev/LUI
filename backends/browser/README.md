@@ -104,7 +104,7 @@ Use an available display with `LUI_BROWSER_HEADED=1` for foreground keyboard and
 pointer tests. The selected Linux software profile also sets
 `LUI_BROWSER_SOFTWARE=1`, `GDK_BACKEND=x11`, `LIBGL_ALWAYS_SOFTWARE=1`,
 `MOZ_ENABLE_WAYLAND=0` and `WEBKIT_DISABLE_COMPOSITING_MODE=1`, unsets
-`WAYLAND_DISPLAY`, and runs inside task-owned Xvfb (1280x1024x24, `-noreset`),
+`WAYLAND_DISPLAY`, and runs inside isolated Xvfb (1280x1024x24, `-noreset`),
 D-Bus and `xfwm4 --compositor=off` sessions. Run one qualification workload at a
 time. Preserve caches; compilation uses two jobs. Debug timings do not qualify
 the Release workload budget.
@@ -128,7 +128,7 @@ all browser engines. Each case runs in two fresh generations; native checks also
 verify that queued tasks wait for pumping and nested tasks wait for another turn.
 
 For the separate selected real-input/AT sessions, set
-`LUI_BROWSER_NATIVE_INPUT=1` in an exclusively task-owned display/D-Bus environment.
+`LUI_BROWSER_NATIVE_INPUT=1` in an exclusively isolated display/D-Bus environment.
 At the end of the suite `tests/browser/NativeInput.sh` replaces the task window manager and owns its window manager,
 IBus/libpinyin, Orca and speech dispatcher children. It needs `xfwm4`, `xdotool`,
 IBus with its GTK modules/libpinyin, Orca 46.1, Python GI/pyatspi and Speech

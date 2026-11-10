@@ -25,6 +25,7 @@ static (int Status, string Output, string Error) Syntax(string Manifest, string 
 
 try
 {
+    SdkTests.Run(TempRoot, Checker, Runtime);
     string Project = Path.Combine(TempRoot, "My_LUI_Project");
     var Created = Invoke("new", Project);
     Require(Created.Status == 0, "project scaffold failed: " + Created.Error);

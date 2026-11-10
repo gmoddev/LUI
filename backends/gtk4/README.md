@@ -12,6 +12,28 @@ dotnet tools/cli/bin/Release/net10.0/lui.dll run examples/modular/lui.json --mod
 
 Tests require xvfb-run, xauth and dbus-run-session. Normal launching requires a Linux graphical session. `--script examples/hello.luau` runs a single script under Development diagnostic policy. Native projects additionally require explicit `--allow-native`; preparation/checking never load their libraries.
 
+## Native temporary text tag probe (2026-11-03)
+
+`LuiGtkTemporaryTextTests` applies a color tag to one `GtkTextBuffer`, the
+buffer type used by `GtkTextView`. The GTK 4 API [states that Undo tracks text
+content, not tags or marks](https://docs.gtk.org/gtk4/method.TextBuffer.set_enable_undo.html).
+The fixture confirms LF/Unicode text, selection, modified flag, applied tag,
+one native Undo, a tag update while Redo remains available, and one native Redo.
+It uses `begin_irreversible_action` only to clear synthetic setup history,
+never during styling. `ctest -R LuiGtkTemporaryTextTests` uses Xvfb.
+
+Selected Linux worker profile: LuiF4, GTK 4.14.5, GCC C++17 `-O2 -Wall -Wextra
+-Werror`, Xvfb/DBus, fatal GTK critical diagnostics. Source SHA-256
+`C11AF6006BF97B3606FDAE8C027C1FCAFA69EC606B65DE098B3E0F5C65047242`,
+binary SHA-256
+`4E471A9EBDD7AC27787784FD5FDC3CD007AD9DFD9E065EB0B11AD102759D34B3`;
+both matched before and after the run. The text/selection/Undo/Redo probe
+passed. A 128-range restyle over about 32,000 UTF-8 bytes measured p50/p95/p99
+313.422/377.553/9594.959 microseconds over 128 warmed samples. Another
+two-job build ran concurrently, so these are workload-scoped CPU observations,
+not an isolated performance budget or display latency. GTK tag integration into
+a public styled editor, IME and assistive-technology usability remain unqualified.
+
 Nine native classes use canonical logical geometry, queued owner-thread signals, generation-safe teardown, themes, declared images and live AT-SPI metadata. GTK logs/startup failures are nonmodal and contain generic messages. ClipboardService uses its capability grant, bounded UTF-8 writes and asynchronous reads (1 MiB, ten seconds, 32 outstanding platform requests), canceled at runtime retirement. DialogService uses GtkFileDialog with its existing grant, one nonmodal chooser per generation, a visible native parent and retirement cancellation. Selection returns a local UTF-8 path; dismissal returns nil/nil. Images must be trusted declared assets.
 
 VS Code **LUI: Open Native Preview** supports Linux schema v2 projects. Set `lui.nativeHostPath` to the GTK executable/build directory or installed prefix, or use discovery at `build/gtk4/backends/gtk4/lui-gtk`. The local workspace must be trusted; no manifest grants native-code trust. Native providers require manual owner launch with `--allow-native` (CLI option: `--allow-native true`). Linux schema v1 native launch is explicitly refused.

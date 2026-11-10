@@ -68,7 +68,7 @@ const fn Descriptor(Name: &'static [u8], Input: u32, Output: u32, InputKind: u32
         MaxInputBytes: Input, MaxResultBytes: Output, InputKind, ResultKind,
         DeadlineMilliseconds: 30000, Reserved: 0 }
 }
-static METHODS: [Method; 8] = [
+static METHODS: [Method; 9] = [
     Descriptor(b"Echo\0", 8*1024*1024, 8*1024*1024, 0, 0),
     Descriptor(b"Counter\0", 0, 8, 0, 1),
     Descriptor(b"Increment\0", 0, 8, 1, 0),
@@ -77,6 +77,7 @@ static METHODS: [Method; 8] = [
     Descriptor(b"Fail\0", 0, 0, 0, 0),
     Descriptor(b"Progress\0", 65536, 65536, 0, 0),
     Descriptor(b"StallShutdown\0", 0, 0, 0, 0),
+    Descriptor(b"Frame\0", 0, 16, 0, 0),
 ];
 
 struct State {
@@ -166,6 +167,9 @@ extern "C" fn Start(Pointer: *mut c_void, Request: Id, Method: u32, Input: Id, H
                     };
                     if let Some(Number) = Number { Result(Context, Request, &Number.to_le_bytes(), NONE); }
                     else { (Host.Complete)(Host.Session, Request, 8, NONE, NONE); }
+                } else if Method == 8 {
+                    // 2x2 premultiplied BGRA, synthetic terminal owned bytes.
+                    Result(Context, Request, &[11,22,33,255, 44,55,66,255, 77,88,99,255, 111,122,133,255], NONE);
                 } else {
                     let mut Data = std::ptr::null(); let mut Length = 0;
                     if (Host.ViewBytes)(Host.Session, Input, &mut Data, &mut Length) == 0 {
