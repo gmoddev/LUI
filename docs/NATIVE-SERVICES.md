@@ -1,5 +1,13 @@
 # Owned native services
 
+**Audience: advanced app authors and people embedding or extending LUI.** The
+provider ownership, ABI and shutdown sections describe framework integration;
+ordinary SDK apps do not implement these pieces. For app-private settings, start
+with the [Preferences guide](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.2/libraries/luiworkbench/preferences/).
+For service calls, the [API reference](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.2/api/)
+provides setup and examples. Public handles are opaque resources, not exposed
+backend/toolkit objects.
+
 The experimental x64 v2 interface is [LuiNativeServices.h](../native/abi/LuiNativeServices.h).
 It coexists with the supported primitive [ABI v1](../native/abi/LuiExtension.h).
 V2 adds copied immutable bytes, provider-scoped typed handles, cancellable
@@ -126,7 +134,7 @@ the domain's four live plus retiring provider slots.
 
 A trusted embedder calls `Lui_InstallStorageV1(Runtime, Root)` with an existing,
 absolute, dedicated application directory and the Storage grant. Scripts never
-choose a native path. For next SDK `0.1.0-preview.2`, supplied desktop project
+choose a native path. In SDK `0.1.0-preview.2`, supplied desktop project
 hosts also accept this explicit schema-2 manifest field alongside the Storage
 capability:
 

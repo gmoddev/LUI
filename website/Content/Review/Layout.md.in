@@ -1,0 +1,88 @@
+---
+title: Layout, input and lifetime
+description: Size and arrange controls, handle input, and clean up a screen.
+sidebar:
+  order: 5
+---
+
+## Size and position
+
+LUI uses **logical units**: the host scales them for the display. For a dimension,
+the resolved value is `parent size × Scale + Offset`. UDim2 holds one such pair
+for width/X and another for height/Y.
+
+```luau
+Button.Size = UDim2.fromOffset(180, 44) -- A fixed logical size.
+Panel.Size = UDim2.new(1, -32, 1, -32) -- Parent size minus 32 on each axis.
+Panel.Position = UDim2.fromOffset(16, 16) -- A 16-unit top/left margin.
+```
+
+This fragment assumes Button and Panel already exist. For the panel above,
+the remaining 16 units on the right/bottom complete the margin. Use
+[UDim2](../../api/globals/udim2/) for a complete example.
+
+`Position` identifies the point selected by AnchorPoint. With AnchorPoint (0,0),
+that is the top-left corner. With (0.5,0.5), it is the center. AbsoluteSize and
+AbsolutePosition are the resolved measurements; read them rather than assigning
+them.
+
+## Arrange a list
+
+Replace Src/Main.luau in a basic starter with this complete example:
+
+{{Example:UIListLayout}}
+
+**Expected result:** three vertically stacked buttons with eight-unit gaps.
+UIListLayout arranges their positions; LayoutOrder chooses their order. Use
+UIPadding for space around the container and UIGridLayout for a grid.
+
+## Scroll longer content
+
+{{Example:ScrollingFrame}}
+
+**Expected result:** a short viewport shows part of a taller list. CanvasSize
+declares the scrollable extent; CanvasPosition requests an offset. The final
+clamped value is AbsoluteCanvasPosition. ScrollingFrame clips its children.
+
+## Handle actions before raw input
+
+Use `Button.Activated` for an ordinary action. It represents supported button
+activation rather than only a mouse press. For a custom right-click menu or
+drag gesture, use InputBegan/InputChanged/InputEnded and check Device before
+reading pointer-only fields. IsCanceled distinguishes a canceled pointer gesture
+from a completed release. The [input example](../../api/types/inputevent/) and
+[complete right-click recipe](../recipes/#right-click-input-and-a-custom-menu)
+show the difference.
+
+## Clean up a screen
+
+```luau
+local Screen = Instance.new("Frame", {Parent = Window})
+local Button = Instance.new("TextButton", {Parent = Screen, Text = "Continue"})
+Button.Activated:Connect(function() Button.Text = "Ready" end)
+
+-- When leaving this screen:
+Screen:Destroy()
+```
+
+This fragment assumes Window exists. Destroying Screen also destroys the button
+and disconnects its signals. Calling Destroy again is safe. Setting Parent to
+nil only detaches an object; it does not destroy it.
+
+Keep shared application data outside the screen if it must survive navigation.
+Service subscriptions and work started independently by the application need
+their own cleanup. The [modular tutorial](../../learn/advanced-project/) shows a
+screen switch that destroys the old screen before creating the next.
+
+## Text input and deeper details
+
+Use TextChanged to read committed Text. An input method can temporarily compose
+text before committing it; that preview is separate. Custom selection uses
+zero-based Unicode scalar offsets (code points), not UTF-8 byte offsets or
+necessarily visible-character counts. Ordinary fields do not need custom
+selection handling. Read [TextBox](../../api/classes/textbox/) when implementing
+an editor or secret-entry flow.
+
+Inspect Layout starts a separate copy of the app’s Luau state. It helps inspect
+the shared tree and geometry, but it does not attach to your existing native
+window or qualify host-specific input behavior.

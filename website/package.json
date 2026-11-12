@@ -5,11 +5,11 @@
   "type": "module",
   "engines": { "node": ">=24.22.1 <25" },
   "scripts": {
-    "generate": "node scripts/Generate.mjs",
+    "generate": "node scripts/Build.mjs",
     "dev": "npm run generate && astro dev --host 127.0.0.1",
     "build": "npm run generate && astro build && node scripts/CheckSite.mjs",
     "preview": "astro preview --host 127.0.0.1",
-    "test": "node --test tests/Reference.test.mjs"
+    "test": "node --test tests/Reference.test.mjs tests/Documentation.test.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.10",

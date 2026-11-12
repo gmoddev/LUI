@@ -1,5 +1,10 @@
 # Architecture
 
+**Audience: people extending, embedding or studying LUI.** This explains how the
+framework is built. For application code and examples, start with the
+[SDK documentation](https://gmoddev.github.io/LUI/); these internals are not extra
+steps required to create a window or use a supplied service.
+
 Application Luau runs in the shared C++/Luau runtime. LUI owns Instances, reflection, signals, scheduling, module resolution, layout, input, styles and service semantics. Backends render canonical state and return validated input; they do not implement a second application model.
 
 ```text

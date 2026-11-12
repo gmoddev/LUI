@@ -1,5 +1,10 @@
 # Application contract
 
+**Deeper reference for app/framework contracts.** For a task-oriented explanation
+and complete examples, use the [versioned API website](https://gmoddev.github.io/LUI/).
+This document is useful for precise limits and implementation work, rather than
+as a first-app tutorial.
+
 This guide summarizes the current experimental profile. [API.md](API.md) and runtime reflection define implemented names and defaults. [Invariants](INVARIANTS.md) define architectural requirements; the [roadmap](../ROADMAP.md) distinguishes future work from supported behavior.
 
 ## UI and lifetime

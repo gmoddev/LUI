@@ -38,8 +38,19 @@
         "website/scripts/Generate.mjs": "47c39af54a6367ac002497140a1243b86dbfe2a5c1b3d1ec593d5bb2a503831b",
         "website/scripts/Recipes.mjs": "bd6442764d855e433386e65c1012f048eb0ca2a8427cec8e825f554fca8b764f",
         "website/scripts/Reference.mjs": "16972825e1438833ea3673fdf7e46fa46ef47341c4c78cc09fbc8505ad2be243",
-        "website/scripts/Tutorials.mjs": "8d321f8b6e45417e0477a8a7703b871ca27760016e1bc02f94c01b0e0cf91532"
-      }
+        "website/scripts/Tutorials.mjs": "8d321f8b6e45417e0477a8a7703b871ca27760016e1bc02f94c01b0e0cf91532",
+        "website/scripts/Documentation.mjs": "f50c35c037affb847251e32314dacc5c2692945ceb34905e3645b4cb59bd3369",
+        "website/scripts/DocumentationContent.mjs": "269dd922a8dc9bd06dd3c500ea7c1bd206fee3855e51cbc3056c66c17aa8ac4a",
+        "website/scripts/DocumentationExamples.mjs": "d9313c71aa03e8e0f7efee186ff29a99ace0a0a89672aad9d306c0a3ee7cc2bd",
+        "website/scripts/DocumentationLibraries.mjs": "49e4ea623a5ed4901efa3b85ea24acb4c02432e3f153db3d2da1d928fdc20fae",
+        "website/scripts/Build.mjs": "9e9dac86b2eded64e46ceb4866ccc8529367d2aa80209e7558acbc0ddd711bfd",
+        "website/Content/Review/Capabilities.md.in": "68aa73620da1814a3d602957cea04b2d61363828042d4d19730cffad5e369258",
+        "website/Content/Review/Layout.md.in": "663396a7a619c243dd41949a850d185584cd87d1c94cfa380ef6683d1ba323a3",
+        "website/Content/Review/Libraries.md.in": "b055b92d141c5039ec52ecdc1dbabaf5a54e9dfa0ce33dae8a5458e8e17a4913",
+        "website/Content/Review/Modules.md.in": "115df97212c26ab5f7da88c0ec9dd5ba209f27fd75c83f4c6c137e5c77745eed",
+        "website/Content/Review/ReadingApi.md.in": "20f1a4c281906f4d0d322a232c5a269a428b66d8eb39298b1d8b168073366578"
+      },
+      "DocumentationRevision": "2026-11-12"
     },
     {
       "Metadata": "website/Release-preview.2.json",
@@ -95,8 +106,19 @@
         "website/scripts/LibraryReference.mjs": "2dae1954c5c642fe6aed7198217a629ffeda2e749b1927edd6d4f0ce49512df7",
         "website/scripts/Recipes.mjs": "bd6442764d855e433386e65c1012f048eb0ca2a8427cec8e825f554fca8b764f",
         "website/scripts/Reference.mjs": "16972825e1438833ea3673fdf7e46fa46ef47341c4c78cc09fbc8505ad2be243",
-        "website/scripts/Tutorials.mjs": "8d321f8b6e45417e0477a8a7703b871ca27760016e1bc02f94c01b0e0cf91532"
-      }
+        "website/scripts/Tutorials.mjs": "8d321f8b6e45417e0477a8a7703b871ca27760016e1bc02f94c01b0e0cf91532",
+        "website/scripts/Documentation.mjs": "f50c35c037affb847251e32314dacc5c2692945ceb34905e3645b4cb59bd3369",
+        "website/scripts/DocumentationContent.mjs": "269dd922a8dc9bd06dd3c500ea7c1bd206fee3855e51cbc3056c66c17aa8ac4a",
+        "website/scripts/DocumentationExamples.mjs": "d9313c71aa03e8e0f7efee186ff29a99ace0a0a89672aad9d306c0a3ee7cc2bd",
+        "website/scripts/DocumentationLibraries.mjs": "49e4ea623a5ed4901efa3b85ea24acb4c02432e3f153db3d2da1d928fdc20fae",
+        "website/scripts/Build.mjs": "9e9dac86b2eded64e46ceb4866ccc8529367d2aa80209e7558acbc0ddd711bfd",
+        "website/Content/Review/Capabilities.md.in": "68aa73620da1814a3d602957cea04b2d61363828042d4d19730cffad5e369258",
+        "website/Content/Review/Layout.md.in": "663396a7a619c243dd41949a850d185584cd87d1c94cfa380ef6683d1ba323a3",
+        "website/Content/Review/Libraries.md.in": "b055b92d141c5039ec52ecdc1dbabaf5a54e9dfa0ce33dae8a5458e8e17a4913",
+        "website/Content/Review/Modules.md.in": "115df97212c26ab5f7da88c0ec9dd5ba209f27fd75c83f4c6c137e5c77745eed",
+        "website/Content/Review/ReadingApi.md.in": "20f1a4c281906f4d0d322a232c5a269a428b66d8eb39298b1d8b168073366578"
+      },
+      "DocumentationRevision": "2026-11-12"
     }
   ]
 }

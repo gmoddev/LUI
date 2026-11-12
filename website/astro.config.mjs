@@ -14,18 +14,19 @@ export default defineConfig({
     editLink: undefined,
     lastUpdated: false,
     customCss: ['./src/styles/Docs.css'],
-    components: { Header: './src/components/Header.astro', Footer: './src/components/Footer.astro' },
+    components: { Header: './src/components/Header.astro', Footer: './src/components/Footer.astro', Search: './src/components/Search.astro' },
     sidebar: [
-      { label: 'Start building', items: [
+      { label: 'Start building · Preview.2', items: [
         { label: 'Your first project', link: `${Version}/learn/first-project/` },
-        { label: 'Your first advanced project', link: `${Version}/learn/advanced-project/` },
+        { label: 'Build a modular app', link: `${Version}/learn/advanced-project/` },
       ] },
-      { label: 'Guides', items: [{ autogenerate: { directory: `${Version}/guides` } }] },
-      { label: 'API reference', items: [
+      { label: 'Guides · Preview.2', items: [{ autogenerate: { directory: `${Version}/guides` } }] },
+      { label: 'API reference · Preview.2', items: [
         { label: 'Overview', link: `${Version}/api/` },
+        { label: 'How to read the API', link: `${Version}/guides/reading-the-api/` },
         { label: 'Classes', items: [{ autogenerate: { directory: `${Version}/api/classes` } }], collapsed: true },
         { label: 'Services', items: [{ autogenerate: { directory: `${Version}/api/services` } }], collapsed: true },
-        { label: 'Value and resource types', items: [{ autogenerate: { directory: `${Version}/api/types` } }], collapsed: true },
+        { label: 'Types and callback records', items: [{ autogenerate: { directory: `${Version}/api/types` } }], collapsed: true },
         { label: 'Globals and constructors', items: [{ autogenerate: { directory: `${Version}/api/globals` } }], collapsed: true },
       ] },
       { label: 'Optional libraries · Preview.2', items: [

@@ -3,6 +3,7 @@ import DefaultHeader from '@astrojs/starlight/components/Header.astro';
 import Catalog from '../../Releases.json';
 const Active = Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
 const Base = '/LUI/docs/sdk-' + Active;
+const Relative = Astro.url.pathname.match(/\/docs\/sdk-[^/]+\/(.*)/)?.[1] || 'learn/first-project/';
 ---
 <div class="LuiHeader">
   <DefaultHeader {...Astro.props} />
@@ -10,7 +11,24 @@ const Base = '/LUI/docs/sdk-' + Active;
     <a href={`${Base}/learn/first-project/`}>Learn</a>
     <a href={`${Base}/api/`}>API reference</a>
     <a href={`${Base}/guides/workflow/`}>Guides</a>
-    <a href="/LUI/docs/sdk-0.1.0-preview.2/learn/first-project/" aria-current={Active === '0.1.0-preview.2' ? 'page' : undefined}>Preview.2</a>
-    <a href="/LUI/docs/sdk-0.1.0-preview.1/learn/first-project/" aria-current={Active === '0.1.0-preview.1' ? 'page' : undefined}>Preview.1</a>
+    <label class="LuiVersion">SDK
+      <select aria-label="Documentation SDK version" data-doc-version data-relative={Relative}>
+        <option value="0.1.0-preview.2" selected={Active==='0.1.0-preview.2'}>Preview.2</option>
+        <option value="0.1.0-preview.1" selected={Active==='0.1.0-preview.1'}>Preview.1 archive</option>
+      </select>
+    </label>
   </nav>
 </div>
+<script>
+  const Header=document.querySelector<HTMLElement>('header.header');
+  if(Header){
+    const Measure=()=>document.documentElement.style.setProperty('--sl-nav-height',Math.ceil(Header.getBoundingClientRect().height)+'px');
+    Measure();new ResizeObserver(Measure).observe(Header);
+  }
+  const Select=document.querySelector<HTMLSelectElement>('[data-doc-version]');
+  Select?.addEventListener('change',()=>{
+    let Relative=Select.dataset.relative||'learn/first-project/';
+    if(Select.value==='0.1.0-preview.1'&&(Relative.startsWith('libraries/')||Relative==='guides/libraries/'))Relative='api/';
+    location.href='/LUI/docs/sdk-'+Select.value+'/'+Relative;
+  });
+</script>

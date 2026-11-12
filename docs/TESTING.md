@@ -1,5 +1,10 @@
 # Testing
 
+**Audience: framework contributors and integration authors.** These checks test
+LUI itself. Ordinary app authors can start with Check Types, Run App and the
+[SDK development loop](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.2/guides/workflow/).
+This preview does not provide an application-authored `lui test` command.
+
 The public source includes the same runtime, backend and tool tests used for the experimental profile. Follow [BUILD.md](BUILD.md) to install prerequisites.
 
 ## Automated coverage

@@ -1,8 +1,9 @@
 # Build and run
 
 This guide is for framework contributors building from source. Application
-authors can review the [preview SDK workflow](SDK.md); its public download and
-clean-machine release gates remain open.
+authors can use the [published preview SDK workflow](SDK.md) without these build
+tools. The download is unsigned and experimental; general clean-machine support,
+ordinary downloaded-file trust and signing remain open.
 
 Clone the public source from `https://github.com/gmoddev/LUI.git`. Run commands from its root. Dependency fetching happens during build preparation; application evaluation never fetches undeclared modules or assets.
 

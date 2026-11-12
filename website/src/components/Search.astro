@@ -1,0 +1,95 @@
+---
+import Catalog from '../../Releases.json';
+const Version=Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
+---
+<lui-doc-search data-version={Version}>
+  <button type="button" data-open aria-label="Search documentation" aria-keyshortcuts="Control+K Meta+K">Search <kbd>Ctrl / ⌘ K</kbd></button>
+  <dialog aria-labelledby="LuiSearchTitle">
+    <div class="LuiSearchHeading"><h2 id="LuiSearchTitle">Search documentation</h2><button type="button" data-close>Close</button></div>
+    <label for="LuiSearchQuery">Find a control, member or task</label>
+    <input id="LuiSearchQuery" type="search" placeholder="e.g. save preferences, TextBox, right-click" autocomplete="off" />
+    <label for="LuiSearchVersion">SDK version</label>
+    <select id="LuiSearchVersion">
+      <option value="0.1.0-preview.2" selected={Version==='0.1.0-preview.2'}>Preview.2</option>
+      <option value="0.1.0-preview.1" selected={Version==='0.1.0-preview.1'}>Preview.1 (archive)</option>
+      <option value="all">All SDK versions</option>
+    </select>
+    <p role="status" aria-live="polite" data-status>Enter at least two characters.</p>
+    <ol data-results aria-label="Search results"></ol>
+  </dialog>
+</lui-doc-search>
+<script>
+  class LuiDocSearch extends HTMLElement {
+    connectedCallback() {
+      const Dialog=this.querySelector('dialog')!;
+      const Open=this.querySelector<HTMLButtonElement>('[data-open]')!;
+      const Close=this.querySelector<HTMLButtonElement>('[data-close]')!;
+      const Query=this.querySelector<HTMLInputElement>('input')!;
+      const Version=this.querySelector<HTMLSelectElement>('select')!;
+      const Status=this.querySelector<HTMLElement>('[data-status]')!;
+      const Results=this.querySelector<HTMLOListElement>('[data-results]')!;
+      let Engine:Promise<any>|undefined;
+      let Revision=0;let Timer:ReturnType<typeof setTimeout>|undefined;
+      const GetEngine=()=>Engine??=import(/* @vite-ignore */ import.meta.env.BASE_URL.replace(/\/?$/,'/')+'pagefind/pagefind.js').catch(Failure=>{Engine=undefined;throw Failure;});
+      const Show=()=>{Dialog.showModal();Query.focus();GetEngine().catch(()=>{});Search();};
+      Open.addEventListener('click',Show);Close.addEventListener('click',()=>Dialog.close());
+      Dialog.addEventListener('click',Event=>{
+        const Box=Dialog.getBoundingClientRect();
+        if(Event.target===Dialog&&(Event.clientX<Box.left||Event.clientX>Box.right||Event.clientY<Box.top||Event.clientY>Box.bottom))Dialog.close();
+      });
+      Results.addEventListener('click',Event=>{if(Event.target instanceof Element&&Event.target.closest('a'))Dialog.close();});
+      Dialog.addEventListener('close',()=>{Revision++;clearTimeout(Timer);Open.focus();});
+      window.addEventListener('keydown',Event=>{
+        if((Event.ctrlKey||Event.metaKey)&&Event.key.toLowerCase()==='k'){Event.preventDefault();if(Dialog.open)Dialog.close();else Show();}
+      });
+      const Search=async()=>{
+        const Current=++Revision;const Term=Query.value.trim();const Selected=Version.value;
+        if(Term.length<2){Results.replaceChildren();Status.textContent='Enter at least two characters.';return;}
+        Status.textContent='Searching…';
+        try {
+          const Pagefind=await GetEngine();
+          const Found=await Pagefind.search(Term,Selected==='all'?{}:{filters:{SDK:Selected}});
+          const Candidates=await Promise.all(Found.results.slice(0,36).map((Result:any)=>Result.data()));
+          const Exact=(Row:any)=>Row.meta.title===Term?2:String(Row.meta.title||'').toLowerCase()===Term.toLowerCase()?1:0;
+          Candidates.sort((Left:any,Right:any)=>Exact(Right)-Exact(Left));
+          const Rows=Candidates.slice(0,12);
+          if(Current!==Revision||!Dialog.open)return;
+          const Fragment=document.createDocumentFragment();
+          for(const Row of Rows){
+            const Url=new URL(Row.url,location.origin);if(Url.origin!==location.origin||!Url.pathname.startsWith('/LUI/'))continue;
+            const Item=document.createElement('li');const Link=document.createElement('a');Link.href=Url.href;
+            const Sdk=Url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1]||this.dataset.version;
+            Link.textContent=(Row.meta.title||'Documentation')+' · '+Sdk;
+            const Excerpt=document.createElement('p');Excerpt.textContent=new DOMParser().parseFromString(Row.excerpt||'','text/html').body.textContent;
+            Item.append(Link,Excerpt);Fragment.append(Item);
+          }
+          Results.replaceChildren(Fragment);
+          Status.textContent=Found.results.length?Found.results.length+' matching page(s)'+(Found.results.length>12?'; showing the first 12.':'.'):'No results in this SDK. Try another term or choose All SDK versions.';
+        }catch{if(Current===Revision&&Dialog.open)Status.textContent='Search could not load. Try again, or use the API overview and guides.';}
+      };
+      Query.addEventListener('input',()=>{Revision++;clearTimeout(Timer);Timer=setTimeout(Search,160);});
+      Version.addEventListener('change',()=>{clearTimeout(Timer);Search();});
+    }
+  }
+  customElements.define('lui-doc-search',LuiDocSearch);
+</script>
+<style>
+  lui-doc-search { display: block; width: 100%; }
+  button, input, select { font: inherit; }
+  button { cursor: pointer; border: 1px solid var(--sl-color-gray-4); border-radius: .4rem; padding: .5rem .7rem; background: var(--sl-color-black); color: var(--sl-color-text); }
+  button[data-open] { display: flex; justify-content: space-between; align-items: center; gap: .7rem; width: 100%; max-width: 22rem; text-align: left; }
+  kbd { font: inherit; color: var(--sl-color-gray-2); font-size: .75rem; }
+  dialog { background: var(--sl-color-black); color: var(--sl-color-text); border: 1px solid var(--sl-color-gray-4); border-radius: .6rem; width: min(46rem,calc(100vw - 2rem)); max-height: calc(100dvh - 4rem); margin: 2rem auto; padding: 1.2rem; overflow-y: auto; }
+  dialog::backdrop { background: rgb(0 0 0 / .6); }
+  .LuiSearchHeading { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+  h2 { font-size: 1.2rem; margin: 0; }
+  label { display: block; margin-block: .6rem .3rem; }
+  input, select { width: 100%; color: var(--sl-color-text); background: var(--sl-color-gray-6); border: 1px solid var(--sl-color-gray-3); padding: .65rem; border-radius: .3rem; }
+  [data-status] { color: var(--sl-color-gray-2); font-size: .9rem; }
+  ol { padding-inline-start: 1.3rem; }
+  li { padding-block: .7rem; }
+  li a { color: var(--sl-color-text-accent); font-weight: 600; }
+  li p { font-size: .9rem; margin-block: .4rem 0; overflow-wrap: anywhere; }
+  :is(button,input,select,a):focus-visible { outline: 2px solid var(--sl-color-text-accent); outline-offset: 3px; }
+  @media(max-width:30rem){kbd{display:none;}dialog{padding:.8rem;width:calc(100vw - 1rem);margin:.5rem auto;max-height:calc(100dvh - 1rem);}}
+</style>

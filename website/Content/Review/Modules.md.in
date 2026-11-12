@@ -1,0 +1,77 @@
+---
+title: Modules and project structure
+description: Add a second source file, import it, and understand the two project manifests.
+sidebar:
+  order: 4
+---
+
+`lui.json` describes your app. `LuiToolchain.json` selects the exact SDK used to
+check and run it. Keep both files; editing an SDK pin is not a fix for an
+undeclared source file.
+
+## Add one module
+
+In a basic project, create `Src/Greeting.luau`:
+
+```luau
+return {Text = "Hello from a module"}
+```
+
+Replace `Src/Main.luau`:
+
+{{GlobalExample:require}}
+
+Use this complete `lui.json` for those two files. Keep the SDK-created
+LuiToolchain.json unchanged.
+
+```json
+{
+  "SchemaVersion": 2,
+  "Script": "Src/Main.luau",
+  "Capabilities": [],
+  "Extensions": [],
+  "Assets": [],
+  "ExtensionDeclarations": [],
+  "Diagnostics": {"Mode": "Development"},
+  "Modules": {
+    "Root": "Src",
+    "Files": ["Greeting.luau", "Main.luau"],
+    "Requires": [],
+    "Dependencies": []
+  }
+}
+```
+
+**Expected result:** checking succeeds and the app opens a window titled Hello
+from a module. Main.luau loads the table returned by Greeting.luau.
+
+## Names and paths
+
+`Script` is relative to the project folder. `Modules.Files` is relative to
+Modules.Root, so write `Greeting.luau`, not `Src/Greeting.luau`, in that list.
+Spelling and letter case must match. `require("./Greeting")` is relative to the
+source file making the call; it does not search your computer or download code.
+
+For another new `.luau` file, save it under Modules.Root and use **LUI: Add File
+to Project**. Review and save the proposed Modules.Files change, then check
+types. Merely creating a file does not enroll it in checking or execution.
+
+## Shared state and initialization
+
+Within one app run, a module is loaded once and its non-nil result is reused.
+Two screens importing the same state module therefore see the same table.
+Restart starts fresh Luau state; this is not persistence to disk.
+
+Return exports from a module, then start effects from app code after loading.
+Do not make module imports wait on I/O or initialize circular imports. For
+example, if A requires B and B requires A, change the design so they depend on a
+third shared module instead.
+
+## Optional library dependencies
+
+An `@Library/Module` import uses a declared dependency alias, not a package
+registry. Start with [the bundled library projects](../libraries/) so their
+source files and content locks are already present. The
+[advanced tutorial](../../learn/advanced-project/) builds up a modular app step
+by step. The [project-host contract](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.2/docs/PROJECT-HOST.md)
+is deeper host-integration documentation, not a prerequisite for adding a module.

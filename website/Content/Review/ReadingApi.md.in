@@ -1,0 +1,127 @@
+---
+title: How to read the API
+description: Find an app API, understand its signature, and recognize deeper framework material.
+sidebar:
+  order: 3
+---
+
+Use the reference while building something: choose the control or service you
+need, try its example, then look up the relevant member. You do not need to learn
+every base class, resource type or native interface first.
+
+## Choose the level you need
+
+| Your goal | Read |
+| --- | --- |
+| Build an ordinary app | Tutorials, layout/modules guides, concrete controls such as TextButton, and services your app uses. |
+| Add reusable app behavior | Optional source libraries for commands, documents, preferences, JSON and numeric input. |
+| Work directly with sockets, native requests or pixel buffers | Pages marked **Advanced app/host integration API**. These are public, but require more setup and careful cleanup. |
+| Embed LUI or implement a backend/provider | The engineering documents and C/C++ ABI headers linked under deeper reading. They are not extra setup steps for SDK app authors. |
+
+**Public** does not mean **available on every host**. A reflected signature can
+exist while an optional implementation is unavailable. For example,
+CodeEditor supports plain editing, but public SetStyles is refused in this SDK.
+Each affected page states that limitation.
+
+## Properties, methods and signals
+
+```luau
+Button.Text = "Save" -- Assign a property.
+local Children = Window:GetChildren() -- Call a method on an object.
+Button.Activated:Connect(function() -- Subscribe to a signal.
+    Button.Text = "Saved"
+end)
+```
+
+This fragment assumes an existing Window and TextButton. The
+[TextButton reference](../../api/classes/textbutton/) supplies the complete app.
+
+A **property** holds a value. A **method** performs an operation. A **signal**
+notifies your code that something happened. The callback arguments differ by
+signal: Activated has no arguments, while InputBegan passes an InputEvent.
+
+`Button:Destroy()` destroys the button and its children and disconnects its
+signals. A connection to a separate service, such as ThemeService, should be
+disconnected when the UI using it is destroyed. An async operation created by
+your app also needs its own cancellation/cleanup.
+
+## Understand a signature
+
+The generated type may show:
+
+```luau
+FindFirstChild: (Self: Instance, Name: string) -> Instance?
+```
+
+Call it as `Window:FindFirstChild("SaveButton")`. The colon supplies **Self**;
+you do not pass Window twice. The result is an Instance or nil, so check it
+before using it.
+
+| Notation | Meaning |
+| --- | --- |
+| `string`, `number`, `boolean` | Ordinary Luau value types. |
+| `T?` | A T value or nil. Check for nil when the value can be absent. |
+| `{T}` | An array of T values. |
+| `A \| B` | One of two possible types. Check a distinguishing field before reading type-specific fields. |
+| `(boolean, string?)` | Two return values: a boolean and an optional string. Check the method’s explanation for what they mean. |
+| `read Field: T` | A read-only field. You can read it but cannot assign it. |
+| `Self` | The receiver supplied by a colon call. It is not an extra user argument. |
+| `WindowInit` or another `Init` type | The table of starting properties passed to Instance.new. It is not a class to construct. |
+
+For example, create `Instance.new("TextButton", {Text = "Save"})`, not
+`Instance.new("TextButtonInit")`. The properties table does not replace the
+button; it supplies its initial values.
+
+## Inherited members
+
+TextButton inherits from GuiButton, GuiObject and Instance. You can therefore
+assign `Button.Size`, call `Button:Destroy()` and connect `Button.InputBegan`
+even though those members are explained on base-class pages. Inherited-member
+links take you to their descriptions. A non-creatable base such as GuiObject
+exists to describe shared behavior; create a concrete control instead.
+
+## Tasks and asynchronous calls
+
+Methods such as HttpService:GetAsync wait for I/O and must run in a task:
+
+```luau
+Button.Activated:Connect(function()
+    task.spawn(function()
+        local Ok, Response = pcall(function()
+            return app:GetService("HttpService"):GetAsync("http://127.0.0.1:8080/status")
+        end)
+        if Ok then
+            Status.Text = "HTTP " .. Response.StatusCode
+        else
+            Status.Text = "Request failed"
+        end
+    end)
+end)
+```
+
+This fragment assumes Button, Status, `network.client` and a running local
+endpoint. The [HTTP reference](../../api/services/httpservice/) has a complete
+entry file, setup and expected result. A completed HTTP 404 and a transport
+failure are different outcomes. `pcall` handles a raised failure; check
+`Response.Success` or StatusCode for the completed response.
+
+Other services use callbacks instead of yielding: ClipboardService:ReadText,
+for example, calls your function later. Follow the method’s own contract rather
+than adding Async to a name or assuming every operation returns its result
+immediately.
+
+## Terms used in deeper pages
+
+| Term | In ordinary app work |
+| --- | --- |
+| Host | The program running your Luau code, normally the SDK’s native runner. |
+| Provider or adapter | The host component implementing an optional service. The SDK supplies supported adapters; you write one only for custom integration. |
+| Generation | One run of your app’s Luau state. Restart creates a new one, so unsaved in-memory state is lost. |
+| Retire | Stop using an old object/run and prevent its callbacks from affecting the replacement. |
+| Receipt | A ticket tying an asynchronous document load/save to the exact document/revision it began with. A later edit can make it stale. |
+| Admission | The runtime accepted an operation. It does not necessarily mean that I/O finished or pixels appeared on screen. |
+| Storage scope | The app-private area associated with a project identity. It is not unrestricted access to the computer’s files. |
+| Reflection | Metadata used to derive/check API names, types and reference pages. App code does not need to implement it. |
+
+Full declarations and source links remain available for precision. They are
+expandable deeper references, rather than a prerequisite for following examples.

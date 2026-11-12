@@ -1,0 +1,100 @@
+---
+title: Capabilities and execution modes
+description: Request only the app services you use and understand which runner can execute them.
+sidebar:
+  order: 8
+---
+
+A **capability** is a permission your app requests in lui.json. A **service** is
+the API you call. Their names differ: HttpService needs `network.client`, not a
+token named HttpService.
+
+The **host** runs your code. For ordinary SDK work, that is the supplied native
+runner; you do not need to implement a native provider to use a service the SDK
+already supplies. Custom embedders install providers when building their own
+host. A manifest cannot add a provider that the selected platform does not have.
+
+## Add a capability
+
+For clipboard use, replace your existing Capabilities array with:
+
+```json
+"Capabilities": ["Clipboard"]
+```
+
+This is one **field fragment** inside lui.json, not a complete manifest. Preserve
+the other fields and any other capabilities your app still needs. Then use
+Run App; Inspect Layout deliberately refuses privileged apps.
+
+| I need | Capability and setup |
+| --- | --- |
+| Make an HTTP/HTTPS request | `network.client`; use HttpService or JsonClient. |
+| Host an HTTP endpoint | `network.server`; use HttpServerService. |
+| Raw TCP or UDP | `network.raw` plus the applicable client/server direction grant. |
+| Plain-text clipboard | `Clipboard` and the supported desktop adapter. |
+| Choose a file path | `Dialogs` and a supported picker. The returned path is not unrestricted file-reading permission. |
+| App-private preferences/storage | `Storage` plus `Storage.ApplicationId` in preview.2. See [Preferences](../../libraries/luiworkbench/preferences/). |
+| Desktop notifications or tray icons | `Notifications` or `Tray`, respectively; the selected Windows shell supports them, GTK reports unsupported. |
+
+Tokens are case-sensitive. HTTP does not need network.raw. PlatformService,
+ThemeService, PerformanceService, WindowService and declared-asset lookup do not
+need an additional capability token.
+
+## Keep a local example on this machine
+
+For an app that should contact/listen only on this computer, add this top-level
+field to lui.json. It narrows existing network grants; it does not grant them.
+Supply all six fields with the current SDK project runner. Zero port limits
+allow any port, including a free port requested with `Port = 0`.
+
+```json
+"NetworkPolicy": {
+  "ClientLoopbackOnly": true,
+  "ServerLoopbackOnly": true,
+  "ClientPortMin": 0,
+  "ClientPortMax": 0,
+  "ServerPortMin": 0,
+  "ServerPortMax": 0
+}
+```
+
+This is a field fragment inside the manifest. Loopback means the same computer;
+another phone or PC cannot reach a loopback-only server. Use the complete
+local HTTP recipe below to try client/server behavior without a fixed port.
+
+## Check, run and inspect do different jobs
+
+| Tool | Runs app code? | Use it for |
+| --- | --- | --- |
+| Check Types | No | Find source/type errors in declared Development files. It cannot prove that a host grant or endpoint is available. |
+| Run App | Yes | Try the native application with supported grants and providers. |
+| Inspect Layout | Yes, as a separate unprivileged copy | Inspect the shared Instance tree and layout. It does not attach to the running native window and refuses privileged capabilities/native extensions. |
+
+Restricted static checking is not supported. Do not remove a needed capability
+just to make Inspect Layout accept an app; use Run App for that behavior.
+
+## When the app will not start
+
+Save files, check types, then read **LUI Preview** in VS Code’s Output panel.
+Confirm the exact token, matching SDK pin and supported host. A callback failure
+can leave the window open while the operation fails, so a visible window alone
+does not establish success.
+
+For HTTP, distinguish a denied grant, a refused host address policy, an endpoint
+that is not running, and an HTTP error status. Start with the
+[complete local HTTP recipe](../recipes/#local-http-client-and-server), which
+includes both sides and keeps traffic on loopback. Do not add every capability
+as a recovery step.
+
+## Custom hosts and native extensions — advanced
+
+`HostServices` is for explicitly registered custom providers; their separate
+grants still apply. `NativeExtensions` is privileged native loading. These are
+host/framework integration topics, not requirements for an ordinary window,
+button, HTTP request or preference store.
+
+Native extensions require an explicitly approved host launch with `--allow-native`.
+Editor Run App does not request that approval. The
+[native-service design](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.2/docs/NATIVE-SERVICES.md)
+describes provider implementation and lifetime for people extending/embedding
+LUI. Application code should keep using the public Luau interfaces.

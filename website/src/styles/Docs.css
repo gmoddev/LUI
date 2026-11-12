@@ -18,10 +18,13 @@
   --sl-color-black: #fff;
 }
 .LuiHeader { width: 100%; }
+header.header { height: auto; }
 .LuiHeader .header { height: auto; }
 .LuiTopNav { display: flex; flex-wrap: wrap; gap: 1.6rem; padding-block-start: .7rem; font-size: .82rem; }
 .LuiTopNav a { color: var(--sl-color-gray-2); text-decoration: none; font-weight: 500; }
 .LuiTopNav a:hover { color: var(--sl-color-text-accent); text-decoration: underline; }
+.LuiVersion { display: inline-flex; align-items: center; gap: .4rem; margin-inline-start: auto; }
+.LuiVersion select { font: inherit; color: var(--sl-color-text); background: var(--sl-color-black); border: 1px solid var(--sl-color-gray-4); border-radius: .3rem; max-width: 10rem; padding: .2rem; }
 :root { --sl-nav-height: 6.8rem; }
 .hero { padding-block: 2.5rem; }
 .hero h1 { letter-spacing: -.045em; font-size: clamp(2rem, 4vw, 3rem); }
@@ -48,7 +51,8 @@
 .sl-markdown-content td code { white-space: normal; overflow-wrap: anywhere; }
 .LuiMember { scroll-margin-top: 8rem; }
 @media (max-width: 49.99rem) {
-  .LuiTopNav { padding-block-start: .45rem; gap: 1.2rem; }
-  :root { --sl-nav-height: 6.4rem; }
+  .LuiTopNav { padding-block-start: .45rem; column-gap: .7rem; row-gap: .4rem; width: calc(100% + 3rem); align-items: center; }
+  .LuiTopNav a { display: inline-flex; align-items: center; min-height: 2rem; }
+  :root { --sl-nav-height: 8rem; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0s !important; transition-duration: 0s !important; } }

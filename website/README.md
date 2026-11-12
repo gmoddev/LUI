@@ -20,6 +20,15 @@ Structural reference data comes from the repository's `types/schema.json` and
 `types/LUI.d.luau`; constructor and helper declarations are included as well.
 Generated pages, search data, downloads, dependencies and output are ignored.
 
+`scripts/Build.mjs` runs the frozen base generator, then an explicit editorial
+revision from `Documentation*.mjs` and `Content/Review/`. These inputs are hashed
+in each release entry too. They add member explanations, complete app examples,
+audience guidance and current library setup while validating the same SDK schema
+and preserving existing tutorial/recipe ZIP bytes. Qualification projects are
+written to `../build/DocsReference` and library entry files to `../build/DocsLibraries`.
+Do not edit generated pages. Example source and displayed source must stay the
+same; SDK checks validate the generated projects before publication.
+
 Tutorial snippets and downloadable chapter projects come from the same source
 in `scripts/Tutorials.mjs`. Generation writes complete projects to
 `../build/DocsTutorials` for checking with the real pinned SDK. The site build

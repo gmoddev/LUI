@@ -1,0 +1,89 @@
+---
+title: Use the bundled libraries
+description: Start an app with the optional SDK libraries without building the framework.
+sidebar:
+  order: 6
+---
+
+The preview.2 SDK includes eight optional Luau modules. They are **source
+libraries**, not extra global objects: your project must declare their files
+before `require("@Library/Module")` can load them. They do not download packages
+or start background services just because you import them.
+
+## Choose a starting project
+
+Run these commands from your extracted SDK folder. The `../` destinations are
+new application folders beside it. Open that application folder in VS Code and
+choose the same SDK.
+
+| I need | Start with |
+| --- | --- |
+| Named actions and shared button/shortcut commands | `./lui.cmd new ../MyCommands --template commands` |
+| Commands, documents, pane state, divider dragging or preferences | `./lui.cmd new ../MyWorkbench --template workbench` |
+| JSON encoding/decoding or an HTTP JSON client | Copy the complete `Examples/json-client` project. |
+| A number field with step buttons | Copy the complete `Examples/numeric-input` project. |
+
+For example, from the SDK folder:
+
+```powershell
+Copy-Item -LiteralPath ./Examples/numeric-input -Destination ../MyNumberApp -Recurse
+./lui.cmd check ../MyNumberApp/lui.json
+./lui.cmd run ../MyNumberApp/lui.json
+```
+
+**Expected result:** the copied app shows the numeric input example. Edit the
+copy, not the SDK’s original files; SDK integrity checks expect those originals
+to remain unchanged. Save files and use **LUI: Restart App** after edits.
+
+Keep `Vendor/`, `lui.json`, `Modules.lock.json` and `LuiToolchain.json` with the
+project. Copying only a Main.luau import into a basic starter leaves out required
+dependencies. The module lock records the declared vendor bytes; the toolchain
+pin selects the SDK. They solve different problems.
+
+## What each module does
+
+| Module | Use it for | What it does not do |
+| --- | --- | --- |
+| [Commands](../../libraries/luiworkbench/commands/) | Register actions and invoke them from buttons, palettes or shortcuts. | Draw a palette/menu automatically or capture global keyboard input. |
+| [Documents](../../libraries/luiworkbench/documents/) | Track text buffers, dirty state and load/save results. | Open arbitrary disk paths or perform the actual file write. |
+| [Workspace](../../libraries/luiworkbench/workspace/) | Track document IDs in two panes and calculate layout widths. | Create floating windows or arbitrary docking trees. |
+| [Split](../../libraries/luiworkbench/split/) | Track a primary-mouse divider gesture. | Own the UI or introduce a second input system. |
+| [Preferences](../../libraries/luiworkbench/preferences/) | Store small ordinary settings using scoped StorageService. | Encrypt secrets or provide transactions across keys. |
+| [Json](../../libraries/json/json/) | Encode/decode bounded JSON, including explicit null and empty containers. | Perform HTTP or validate your app’s data schema. |
+| [JsonClient](../../libraries/jsonclient/jsonclient/) | Make an HTTP request and decode its JSON body. | Treat malformed JSON as a successful typed response. |
+| [NumericInput](../../libraries/luiui/numericinput/) | Provide a bounded number field with step buttons. | Add a new core Instance class or a locale-aware number parser. |
+
+Each module page has a complete example, setup, expected result, limits and
+expandable exported types. A model/controller is an ordinary Luau object returned
+by the module; it is not automatically part of the Instance tree.
+
+## Save ordinary preferences
+
+The workbench starter already declares storage. For a different preview.2 app,
+add `Storage` to its existing Capabilities array and add this top-level field:
+
+```json
+"Storage": { "ApplicationId": "com.example.notes" }
+```
+
+That is a **field fragment**, not a complete lui.json. Keep the rest of your
+manifest. The supplied desktop runner provisions the app-private provider;
+ordinary SDK app authors do not call native installation functions.
+
+Use the same project folder when testing persistence. Restarting it preserves
+data; a copied or packaged project has separate data. Changing ApplicationId
+also selects a different scope. This storage is unencrypted and is not a safe
+place for passwords or access tokens.
+
+## App code versus private support files
+
+Use the eight public imports listed above. Some complete examples also contain
+support modules such as Scope, State or VirtualList. They help those examples
+manage cleanup/rendering and may be required by a public component’s content
+lock. Keep required support files with that component, but do not assume every
+vendored helper is a separately supported library API.
+
+The library catalogs still use the label Development to describe experimental
+API maturity. These eight modules are nevertheless included in the released
+preview.2 SDK. Python repository-staging commands in older source notes are for
+framework contributors; you can start from the bundled projects above.
