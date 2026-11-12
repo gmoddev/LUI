@@ -1,0 +1,61 @@
+---
+title: Setup and troubleshooting
+description: Download preview.2, select the matching SDK and resolve setup problems.
+sidebar:
+  order: 1
+---
+
+## Download preview.2
+
+Get the [Windows 64-bit ZIP and checksum](https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.2).
+Extract the whole archive, then select its `LUI-SDK-0.1.0-preview.2` folder with
+**LUI: Choose SDK**. Install the included extension **0.1.7** from `Editor/LUI.vsix`
+using VS Code's **Install from VSIX** command. The SDK tools are included; a global
+.NET SDK or C++ runtime was not needed on the selected Windows test recipient.
+
+Keep old SDK folders for projects pinned to them. Do not mix files between versions
+or change a project's inventory digest to silence a mismatch.
+
+## Verify the download
+
+```powershell
+Get-FileHash ./LUI-SDK-Windows-x64-0.1.0-preview.2.zip -Algorithm SHA256
+```
+
+Compare it with the release's `.sha256` file. The expected ZIP hash is:
+
+```text
+6e89f007e8012367c5ef183d46d50f41c3909c3b1d1e918e4b727cf842676d49
+```
+
+A checksum verifies unchanged bytes, not publisher identity. This is an unsigned,
+experimental preview. Do not disable Windows protections to run a download.
+
+## Check and create an app
+
+From the extracted SDK folder:
+
+```powershell
+./lui.cmd doctor
+./lui.cmd new MyApp
+./lui.cmd check ./MyApp/lui.json
+```
+
+Open `MyApp` in VS Code, select this SDK and use **LUI: Run App**. Save project
+files and use **LUI: Restart App** after changes. Restart discards app memory, so
+save documents inside your app first too. Native apps do not restart on save.
+
+## Common problems
+
+| Problem | Recovery |
+| --- | --- |
+| Commands are missing | Install this SDK's `Editor/LUI.vsix`. |
+| SDK cannot be found | Select the folder containing `SdkManifest.json`, not `Cli`. |
+| Inventory mismatch | Extract the complete original ZIP to a new folder. |
+| Project pin mismatch | Select the exact SDK recorded in `LuiToolchain.json`. |
+| A new source is excluded | Use Add File to Project, review and save the manifest, then check types. |
+| Native app shows old code | Save project files and use Restart App. |
+| Setup or capability failure | Read LUI Preview Output and the [capability guide](../capabilities/). |
+
+See the [workflow](../workflow/) and [tested scope](../platforms/). Windows 11,
+physical input methods, ordinary downloaded-file trust and signing remain open.

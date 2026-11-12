@@ -2,6 +2,10 @@
 
 The Windows x64 preview SDK is a portable developer bundle. Its build pipeline is experimental; a publicly signed download and general clean-machine support are not yet qualified. Use only an artifact whose publisher and release identity you trust. The adjacent checksum and `lui doctor` verify consistency, not publisher authenticity.
 
+Download [preview.2](https://github.com/gmoddev/LUI/releases/tag/sdk-v0.1.0-preview.2)
+and follow its [versioned setup guide](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.2/guides/setup/).
+See [release notes](SDK-PREVIEW-2.md) for tested profiles and remaining limits.
+
 ## Start a project
 
 Extract the complete SDK to a permanent folder. Keep all subdirectories together. The bundle includes a self-contained CLI, checker, native WinUI host, isolated layout inspector, packaging tool, types, offline guide and VS Code extension. Application authors do not need the .NET SDK or a compiler. Windows runtime prerequisites and the downloaded-file launch path must pass release qualification before this bundle is advertised as a supported public download.
@@ -21,7 +25,7 @@ For short `lui` commands, optionally add the SDK's `Cli` directory to your user 
 
 ## VS Code
 
-For next SDK `0.1.0-preview.2`, create a project with optional application
+With SDK `0.1.0-preview.2`, create a project with optional application
 libraries already included:
 
 ```powershell
@@ -42,10 +46,11 @@ Floating panes and application-authored code execution are not implemented.
 Editing, selection, clipboard, undo/redo and restart pass on the selected Windows
 and GTK/X11 test profiles. Chinese input also passes on the selected GTK profile.
 Real Windows input-method use and fresh Windows 11 installation remain release
-gates. Unreleased SDK08 passed the selected clean Windows 10 LTSC SDK journey and
-a separate app-only recipient journey without global build/runtime tools. Normal
-download/trust and signing remain open; these results apply to the exact candidate
-and profiles in the [platform matrix](PLATFORMS.md).
+gates. The preview.2 package also passes a real VS Code journey on a selected
+Windows 10 LTSC virtual recipient without a global .NET SDK or system C++ runtime.
+Earlier test installations remain in that OS. Normal download/trust and signing
+remain open; these results apply to the exact package and profiles in the
+[platform matrix](PLATFORMS.md).
 
 Use **Extensions: Install from VSIX** to install `Editor/LUI.vsix`. Open the LUI getting-started walkthrough, then:
 
@@ -53,22 +58,22 @@ Use **Extensions: Install from VSIX** to install `Editor/LUI.vsix`. Open the LUI
 2. **LUI: Create Project**: choose a parent folder and enter a name.
 3. Open `Src/Main.luau`, use **LUI: Check Types**, then **LUI: Run App**.
 
-Trust is required before application execution or checking. Setup errors appear in the LUI Preview output and status bar. Save edited project files before Run App. Development extension 0.1.4 adds **LUI: Restart App**: it stops the old app, validates the current SDK pin and runs saved source. Save documents inside the app first because restart discards its memory. Stop App also cancels pending launch/restart. Older tools require Stop App followed by Run App. **LUI: Inspect Layout** starts a separate unprivileged app generation for the Instance tree and layout map; it does not inspect the live native window and refuses privileged capabilities/native extensions. Use Run App for capability-gated projects. Native extensions need an explicitly approved native-host launch with `--allow-native`; Run App does not request native-extension approval.
+Trust is required before application execution or checking. Setup errors appear in the LUI Preview output and status bar. Save edited project files before Run App. Preview.2 includes **LUI: Restart App**: it stops the old app, validates the current SDK pin and runs saved source. Save documents inside the app first because restart discards its memory. Stop App also cancels pending launch/restart. Older tools require Stop App followed by Run App. **LUI: Inspect Layout** starts a separate unprivileged app generation for the Instance tree and layout map; it does not inspect the live native window and refuses privileged capabilities/native extensions. Use Run App for capability-gated projects. Native extensions need an explicitly approved native-host launch with `--allow-native`; Run App does not request native-extension approval.
 
-Development extension 0.1.5 adds **LUI: Add File to Project** for a saved `.luau`
+Use **LUI: Add File to Project** for a saved `.luau`
 file inside `Modules.Root`. Use its Problems quick fix, editor context menu or
 command palette action. Review the unsaved `Modules.Files` change, save the
 manifest, then run Check Types. Save or undo existing manifest edits first.
 Sources outside the declared list are excluded from checking and execution.
 This action preserves explicit declarations and never includes files silently.
 
-Development extension 0.1.6 shows persistent app status after Run. It marks
+The included extension shows persistent app status after Run. It marks
 unsaved project edits and offers restart after edits. Running describes the
 owned process, so check the native window too. Click the status to restart a
 running app, cancel preparation or retry a failed Stop. Save documents inside
 the app before restarting, and restart after edits outside VS Code as well.
 
-Development extension 0.1.7 cancels pending inspection/checking when you remove
+Extension 0.1.7 cancels pending inspection/checking when you remove
 the project's workspace folder or change tool settings. Run the command again after the change. Setup
 failures use fixed guidance in Output; check the saved UTF-8 manifest, selected
 SDK and tool paths, then run `lui doctor` for details.
@@ -79,13 +84,14 @@ grant them and supply the provider. Declared image names go in `Assets` and
 `ImageLabel.Source`; AssetService only exposes Has, not a disk loader. The bundled
 Luau os library already has time/date/clock/difftime; unrestricted file and
 environment access remain unavailable. See the version-bound
-[capability guide](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.1/guides/capabilities/)
-and [complete practical recipes](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.1/guides/recipes/).
+[capability guide](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.2/guides/capabilities/)
+and [complete practical recipes](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.2/guides/recipes/).
 
-Development source adds fixed capability/startup reasons in native editor output,
+Preview.2 adds fixed capability/startup reasons in native editor output,
 without arbitrary stderr or source text. Published preview.1 can still show only
 exit code 1. A callback failure can leave its window open while the refused
-operation fails. These source improvements do not replace the published SDK ZIP.
+operation fails. Install preview.2 to use these improvements; existing project
+pins and SDK installations never upgrade automatically.
 
 Offline capability reference, with exact case:
 
@@ -139,12 +145,13 @@ managed packages and bundled .NET runtime. The SDK also keeps a root copy in
 `ThirdPartyNotices`; packages with a license URL retain that reference and
 their copyright metadata.
 
-Development source also offers [NumericInput](../libraries/LuiUI/README.md), a
+Preview.2 also includes [NumericInput](../libraries/LuiUI/README.md), a
 bounded text field with step buttons. Stage its example with
 `python scripts/Stage-LibraryExample.py --example numeric-input --output build/NumericInputApp`.
 The stager captures its public module and private support sources in an ordinary
-module lock. Windows headless checks pass; native GUI/Linux qualification remains
-open. It is not included in prepared SDK12 or the released preview.1 download.
+module lock. Its library regressions pass within the selected Windows and Linux
+native suites; physical input and general GUI usability are not qualified by
+those checks. It is absent from preview.1.
 
 The qualified Windows native source-build profile uses MSVC 19.44.35228. CMake
 refuses Release builds with the exact MSVC 19.37.32822.0 x64 toolchain because its

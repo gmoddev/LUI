@@ -1,7 +1,8 @@
 import { defineConfig } from 'astro/config';
 import Starlight from '@astrojs/starlight';
 
-const Version = 'docs/sdk-0.1.0-preview.1';
+const Version = 'docs/sdk-0.1.0-preview.2';
+const Previous = 'docs/sdk-0.1.0-preview.1';
 export default defineConfig({
   site: 'https://gmoddev.github.io',
   base: '/LUI',
@@ -27,12 +28,17 @@ export default defineConfig({
         { label: 'Value and resource types', items: [{ autogenerate: { directory: `${Version}/api/types` } }], collapsed: true },
         { label: 'Globals and constructors', items: [{ autogenerate: { directory: `${Version}/api/globals` } }], collapsed: true },
       ] },
-      { label: 'Next SDK · Development', items: [
-        { label: 'Editor workflow', link: 'next/guides/workflow/' },
-        { label: 'Workbench libraries', link: 'next/libraries/luiworkbench/' },
-        { label: 'JSON codec', link: 'next/libraries/json/' },
-        { label: 'JSON HTTP client', link: 'next/libraries/jsonclient/' },
-        { label: 'Numeric input', link: 'next/libraries/luiui/' },
+      { label: 'Optional libraries · Preview.2', items: [
+        { label: 'Workbench libraries', link: `${Version}/libraries/luiworkbench/` },
+        { label: 'JSON codec', link: `${Version}/libraries/json/` },
+        { label: 'JSON HTTP client', link: `${Version}/libraries/jsonclient/` },
+        { label: 'Numeric input', link: `${Version}/libraries/luiui/` },
+      ] },
+      { label: 'Preview.1 archive', collapsed: true, items: [
+        { label: 'First project', link: `${Previous}/learn/first-project/` },
+        { label: 'Advanced project', link: `${Previous}/learn/advanced-project/` },
+        { label: 'Guides', items: [{ autogenerate: { directory: `${Previous}/guides` } }] },
+        { label: 'API', items: [{ autogenerate: { directory: `${Previous}/api` } }] },
       ] },
     ],
   })],

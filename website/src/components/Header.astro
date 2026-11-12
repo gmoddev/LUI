@@ -1,6 +1,8 @@
 ---
 import DefaultHeader from '@astrojs/starlight/components/Header.astro';
-const Base = '/LUI/docs/sdk-0.1.0-preview.1';
+import Catalog from '../../Releases.json';
+const Active = Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
+const Base = '/LUI/docs/sdk-' + Active;
 ---
 <div class="LuiHeader">
   <DefaultHeader {...Astro.props} />
@@ -8,5 +10,7 @@ const Base = '/LUI/docs/sdk-0.1.0-preview.1';
     <a href={`${Base}/learn/first-project/`}>Learn</a>
     <a href={`${Base}/api/`}>API reference</a>
     <a href={`${Base}/guides/workflow/`}>Guides</a>
+    <a href="/LUI/docs/sdk-0.1.0-preview.2/learn/first-project/" aria-current={Active === '0.1.0-preview.2' ? 'page' : undefined}>Preview.2</a>
+    <a href="/LUI/docs/sdk-0.1.0-preview.1/learn/first-project/" aria-current={Active === '0.1.0-preview.1' ? 'page' : undefined}>Preview.1</a>
   </nav>
 </div>

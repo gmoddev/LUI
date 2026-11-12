@@ -29,13 +29,12 @@ tests reject source drift, unknown documentation keys and invalid inheritance.
 The public repository's Documentation workflow builds and validates the site,
 then deploys main to GitHub Pages. Pull requests build without deployment.
 Existing version paths must be retained when new SDK documentation is introduced;
-do not point an existing version at a different API contract. The current generator
-builds one released runtime contract plus separate development-library and editor
-workflow pages. `Content/NextWorkflow.md.in` supplies only the development path;
-the released version's workflow guide remains separate.
-An immutable release-input catalog and two-version clean-build check are required
-before adding a second documented SDK. The first version has no single-option
-version picker.
+do not point an existing version at a different API contract. `Releases.json`
+builds preview.1 and preview.2 together and freezes their metadata, shared
+reference/tutorial inputs and authored template hashes. Shared input drift fails
+the build rather than rewriting old pages. Preserve old bytes at an archived
+input path before evolving a shared source for a later release. The header links
+both SDK versions, and tutorial projects retain their version-specific pins.
 
 Suggestions and bug reports are welcome. Code contributions are paused while
 the project changes quickly; see the repository's contribution guide.

@@ -1,0 +1,53 @@
+---
+title: Everyday workflow
+description: Edit, declare source files, check, run and restart with SDK preview.2.
+sidebar:
+  order: 2
+---
+
+## Edit, check and run
+
+1. Open your application folder and choose its exact pinned SDK.
+2. Edit and save a declared Luau source.
+3. Run **LUI: Check Types** and correct Problems errors.
+4. Use **LUI: Run App** and try the native window.
+5. After more edits, save project files and use **LUI: Restart App**.
+
+Restart discards application memory. Save documents inside your app first too.
+The editor retires its old child, validates the SDK and pin, then launches saved
+source. A failed Stop retains the child and offers retry. **LUI: Stop App** also
+cancels pending launch or restart.
+
+There is no native restart on save or application-authored `lui test` command.
+Running describes an owned process, not a certified ready window or exact source
+snapshot. External edits also require manual restart.
+
+## Add a source file
+
+Save the `.luau` file inside `Modules.Root`. Choose **LUI: Add File to Project**
+from its Problems quick fix, context menu or command palette. Review the unsaved
+`Modules.Files` change, save the manifest, then check types. Save or undo existing
+manifest edits first. The command does not silently save, execute or include files.
+
+## Inspect layout separately
+
+**LUI: Inspect Layout** starts a separate unprivileged generation for its Instance
+tree and layout map. It does not inspect the live native window. Use Run App for
+capability-gated behavior. Native extensions require an explicitly approved host
+launch with `--allow-native`; Run App does not request native-extension approval.
+
+Removing the project's workspace folder or changing tool settings cancels pending
+inspection/checking. Run the command again afterward. Retired clients cannot
+overwrite the replacement's tree, diagnostics or status.
+
+## Return later
+
+Open the same project folder and choose its recorded SDK if needed. Opening a
+project never silently updates its SDK or downloads dependencies. Read fixed
+setup guidance in **LUI Preview** Output, check the saved UTF-8 manifest and tool
+paths, and run `lui doctor` for details.
+
+Try the included `Examples/workbench`, `Examples/commands`, `Examples/json-client`
+and `Examples/numeric-input` projects. See the optional [Workbench libraries](../../libraries/luiworkbench/),
+[JSON codec](../../libraries/json/), [JSON client](../../libraries/jsonclient/) and
+[numeric control](../../libraries/luiui/).

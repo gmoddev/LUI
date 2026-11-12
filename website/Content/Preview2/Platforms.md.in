@@ -1,0 +1,39 @@
+---
+title: Platform support and limits
+description: The named preview.2 test profiles and remaining release gates.
+sidebar:
+  order: 6
+---
+
+## Windows preview SDK
+
+The downloadable SDK targets Windows x64 and includes its app-local runtime,
+native host, checker, CLI, layout preview and VS Code extension 0.1.7. The selected
+Windows 10 LTSC evaluation VM ran without a global .NET SDK or system C++ runtime.
+Fresh isolated VS Code 1.145.2 profiles passed two editor processes: checking and
+recovery, source enrollment, native launch/stop/restart, diagnostics and reopening.
+A fresh SDK-created app also displayed a responsive window, ran a scheduled
+callback and exited successfully. This is a virtual test profile with earlier
+test installations, not a virgin OS or a physical-input qualification.
+
+## Linux and other targets
+
+Windows Release and Linux/GTK each pass all 43 native suites. Windows and Linux
+each pass all 59 editor integration tests without skips. These Linux automated
+checks do not establish a fresh Linux SDK or real Linux VS Code recipient. The
+published binary bundle is Windows x64.
+
+GTK performance development remains separate. Browser and mobile hosts retain
+their existing experimental profiles; this SDK release does not expand their
+device support.
+
+## Still open
+
+Fresh Windows 11, real Windows input methods, physical accessibility/usability,
+ordinary downloaded-file trust, signing/publisher authenticity and a fresh Linux
+editor recipient remain open. NumericInput's headless owner-input tests do not
+qualify physical IME or assistive technology. Do not infer support for an unlisted
+device from desktop or headless results.
+
+The SDK is experimental and unsigned. Checksums establish unchanged bytes, not
+publisher authenticity. Keep SDKs side by side for pinned projects.

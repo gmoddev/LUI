@@ -1,0 +1,40 @@
+---
+title: Capabilities and execution modes
+description: Exact permission names, native-host grants and actionable preview.2 diagnostics.
+sidebar:
+  order: 7
+---
+
+A service name is not a permission token. `HttpService` needs `network.client`;
+`HttpServerService` needs `network.server`. Declare exact, case-sensitive tokens
+in the manifest, and request only what the app uses.
+
+| Token | Operation and required provider |
+| --- | --- |
+| `network.client` | Outbound HTTP/HTTPS; a supported transport and destination policy. |
+| `network.server` | Hosted HTTP; a supported transport and binding policy. |
+| `network.raw` | Raw TCP/UDP, together with its client/server direction grant. |
+| `Clipboard` | ClipboardService with the host clipboard adapter. |
+| `Dialogs` | File picking with a supported adapter; a picked path is not unrestricted file access. |
+| `Storage` | App-private storage with a host-installed scope and `Storage.ApplicationId`. |
+| `Notifications` / `Tray` | The selected Windows shell adapter; GTK reports unsupported. |
+| `HostServices` | Explicitly registered host bindings and their separate service grants. |
+| `NativeExtensions` | Declared, trusted native loading with explicit host approval. |
+
+The app requests capabilities; the host grants them. A manifest cannot install a
+missing provider or override platform policy. HTTP does not need `network.raw`.
+
+Check Types analyzes declared Development sources without executing them.
+Restricted static checking remains unsupported. **Run App** exercises supported
+native-host grants. **Inspect Layout** executes a separate unprivileged generation
+and refuses privileged capabilities and native extensions. Native extensions
+require an explicitly approved host launch with `--allow-native`; editor Run App
+does not request that approval.
+
+## When the app will not start
+
+Save source, check types and read **LUI Preview** Output. Preview.2 preserves fixed
+missing-capability and startup reasons without arbitrary native stderr or private
+source. A callback failure can leave the window open while the operation fails.
+Keep the SDK and project pin matched. Do not remove a required grant just to use
+the inspector. Try the [complete HTTP project](../recipes/#local-http-client-and-server).

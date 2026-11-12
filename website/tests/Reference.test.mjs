@@ -5,8 +5,9 @@ import { Hash, Declarations, Validate, MakeZip } from '../scripts/Reference.mjs'
 import { Summaries } from '../scripts/Editorial.mjs';
 import { Checkpoints, ProjectFiles } from '../scripts/Tutorials.mjs';
 import { Recipes } from '../scripts/Recipes.mjs';
+import { LoadReleases } from '../scripts/Releases.mjs';
 import { ModuleDeclarations, GenerateLibraryReference } from '../scripts/LibraryReference.mjs';
-import { mkdtemp as MakeTemporary, mkdir as MakeDirectory, writeFile as WriteFile, rm as Remove } from 'node:fs/promises';
+import { mkdtemp as MakeTemporary, mkdir as MakeDirectory, writeFile as WriteFile, rm as Remove, copyFile as CopyFile } from 'node:fs/promises';
 import { existsSync as Exists } from 'node:fs';
 import { tmpdir as TemporaryDirectory } from 'node:os';
 import { fileURLToPath as FilePath } from 'node:url';
@@ -15,6 +16,25 @@ import Path from 'node:path';
 const Schema = JSON.parse(ReadFile(new URL('../../types/schema.json', import.meta.url), 'utf8'));
 const Definitions = ReadFile(new URL('../../types/LUI.d.luau', import.meta.url), 'utf8');
 const Release = JSON.parse(ReadFile(new URL('../Release.json', import.meta.url), 'utf8'));
+Test('two release inputs retain independent SDK pins and refuse historical input drift', async () => {
+  const Repository = FilePath(new URL('../../', import.meta.url));
+  const Catalog = await LoadReleases(Repository);
+  Assert.equal(Catalog.Current, '0.1.0-preview.2');
+  Assert.deepEqual(Catalog.Releases.map(Entry => Entry.Metadata.SdkVersion), ['0.1.0-preview.1','0.1.0-preview.2']);
+  Assert.equal(Catalog.Releases[0].Metadata.SdkManifestSha256, Release.SdkManifestSha256);
+  Assert.notEqual(Catalog.Releases[1].Metadata.SdkManifestSha256, Release.SdkManifestSha256);
+  const Temporary = await MakeTemporary(Path.join(TemporaryDirectory(), 'lui-release-inputs-'));
+  try {
+    const Data = JSON.parse(ReadFile(Path.join(Repository, 'website/Releases.json'), 'utf8'));
+    const Files = new Set(['website/Releases.json', ...Data.Releases.flatMap(Entry => Object.keys(Entry.Inputs))]);
+    for (const Name of Files) { await MakeDirectory(Path.dirname(Path.join(Temporary, Name)), {recursive:true}); await CopyFile(Path.join(Repository, Name), Path.join(Temporary, Name)); }
+    await WriteFile(Path.join(Temporary,'website/Content/Setup.md.in'), 'changed historical guide');
+    await Assert.rejects(LoadReleases(Temporary), /Frozen release input differs/);
+    await CopyFile(Path.join(Repository,'website/Content/Setup.md.in'),Path.join(Temporary,'website/Content/Setup.md.in'));
+    await WriteFile(Path.join(Temporary,'website/scripts/Generate.mjs'),'changed historical generator');
+    await Assert.rejects(LoadReleases(Temporary), /Frozen release input differs/);
+  } finally { await Remove(Temporary,{recursive:true,force:true}); }
+});
 Test('development generation removes retired pages only inside its generated library subtree', async () => {
   const Site = await MakeTemporary(Path.join(TemporaryDirectory(), 'lui-library-docs-'));
   try {
