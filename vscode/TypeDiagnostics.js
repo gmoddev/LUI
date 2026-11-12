@@ -5,6 +5,7 @@ const Path = require('node:path');
 const { TypeCheckSession } = require('./TypeCheckClient');
 const {SafeSource}=require('./ProjectProtocol');
 const { UsesSdk, GetBinding, ResolveSdk, GetManifest } = require('./SdkClient');
+const { ReadText, ReadManifest, GetSettingsIdentity, HasFolder, Contains, ProjectSetupError, SetupMessage } = require('./ProjectSetup');
 
 function GetTypePaths(Folder, Vscode) {
     const Root = Folder.uri.fsPath;
@@ -32,20 +33,19 @@ function GetTypePaths(Folder, Vscode) {
 }
 
 function GetEntry(ManifestPath) {
-    if (Fs.statSync(ManifestPath).size > 64 * 1024) throw new Error('Application manifest exceeds 64 KiB');
-    const Manifest = JSON.parse(Fs.readFileSync(ManifestPath, 'utf8'));
+    const Manifest = ReadManifest(ManifestPath, 64 * 1024);
     const Root = Path.dirname(ManifestPath);
     if (Manifest.SchemaVersion !== 1 || typeof Manifest.Script !== 'string' || !Manifest.Script || Path.isAbsolute(Manifest.Script))
-        throw new Error('Invalid application entry script');
+        throw new ProjectSetupError('Entry');
     const Script = Path.resolve(Root, Manifest.Script);
     const Relative = Path.relative(Root, Script);
     if (!Relative || Relative === '..' || Relative.startsWith('..' + Path.sep) || Path.isAbsolute(Relative))
-        throw new Error('Application entry script left the manifest directory');
+        throw new ProjectSetupError('Outside');
     // Match the shared manifest's prohibition on reparse points/symlinks.
     let Component = Root;
     for (const Part of Relative.split(Path.sep)) {
         Component = Path.join(Component, Part);
-        if (Fs.lstatSync(Component).isSymbolicLink()) throw new Error('Application entry script uses a symlink');
+        if (Fs.lstatSync(Component).isSymbolicLink()) throw new ProjectSetupError('Linked');
     }
     return { Script, SourceName: Manifest.Script.replaceAll('\\', '/') };
 }
@@ -89,70 +89,75 @@ class TypeDiagnostics {
     Log(Message) { this.Output.appendLine('[LUI:Types] ' + Message); }
 
     async Check(Folder, Explicit = false) {
+        if (this.Disposed) return;
         this.Invalidate();
+        const Request = this.SdkRequest;
         if (!Folder) { if (Explicit) this.Log('Open an application workspace folder to check types.'); return; }
         const Vscode = this.Vscode;
         if (!Vscode.workspace.isTrusted) { if (Explicit) this.Log('Type checking requires a trusted workspace.'); return; }
-        if (!Explicit && !Vscode.workspace.getConfiguration('lui', Folder.uri).get('autoCheck', true)) return;
         try {
+            if (!HasFolder(Folder, Vscode)) return;
+            if (!Explicit && !Vscode.workspace.getConfiguration('lui', Folder.uri).get('autoCheck', true)) return;
+            const Identity = GetSettingsIdentity(Folder, Vscode);
+            this.Folder = Folder;
             if (!Fs.existsSync(GetManifest(Folder, Vscode))) {
                 if (Explicit) this.Log('Application manifest was not found.');
                 return;
             }
             if (UsesSdk(Folder, Vscode)) {
-                const Request = this.SdkRequest = (this.SdkRequest || 0) + 1;
                 await ResolveSdk(Folder, Vscode);
-                if (this.Disposed || Request !== this.SdkRequest || !Vscode.workspace.isTrusted) return;
             }
+            if (this.Disposed || Request !== this.SdkRequest || !Vscode.workspace.isTrusted || !HasFolder(Folder, Vscode) || Identity !== GetSettingsIdentity(Folder, Vscode)) return;
             const Paths = GetTypePaths(Folder, Vscode);
             if (!Fs.existsSync(Paths.Manifest)) { if (Explicit) this.Log('Application manifest was not found.'); return; }
-            for (const [Name, Value] of [['CLI', Paths.Cli], ['checker', Paths.Checker], ['definitions', Paths.Definitions]])
-                if (!Value || !Fs.existsSync(Value)) throw new Error(`${Name} was not found. Build the tooling or set the LUI type-check settings.`);
-            this.Modular=JSON.parse(Fs.readFileSync(Paths.Manifest,'utf8')).SchemaVersion===2;
+            for (const Value of [Paths.Cli, Paths.Checker, Paths.Definitions])
+                if (!Value || !Fs.existsSync(Value)) throw new ProjectSetupError('Tools');
+            this.Modular=ReadManifest(Paths.Manifest).SchemaVersion===2;
             if(this.Modular) {
                 this.Manifest=Paths.Manifest;
                 if(Vscode.workspace.textDocuments.some(Document=>Document.isDirty && Document.uri.scheme==='file' &&
-                    Path.resolve(Document.uri.fsPath).startsWith(Path.dirname(Paths.Manifest)+Path.sep))) {
+                    Contains(Path.dirname(Paths.Manifest), Document.uri.fsPath))) {
                     if(Explicit) this.Log('Save project files before checking.'); return;
                 }
                 this.Session.Start({...Paths,Modular:true}); return;
             }
             const { Script, SourceName } = GetEntry(Paths.Manifest);
             const Dirty = Vscode.workspace.textDocuments.some(Document => Document.isDirty &&
-                [Script, Paths.Manifest].includes(Path.resolve(Document.uri.fsPath)));
+                [Script, Paths.Manifest].some(File => Path.relative(File, Document.uri.fsPath) === ''));
             if (Dirty) { if (Explicit) this.Log('Save the entry script and manifest before checking types.'); return; }
-            if (Fs.statSync(Script).size > 8 * 1024 * 1024) throw new Error('Entry script exceeds 8 MiB');
-            const Source = new TextDecoder('utf-8', { fatal: true }).decode(Fs.readFileSync(Script));
+            const Source = ReadText(Script, 8 * 1024 * 1024, 'Source');
             this.Script = Script;
             this.Manifest = Paths.Manifest;
             this.Session.Start({ ...Paths, SourceName, Source });
-        } catch (Error) { this.Log(Error.message); }
+        } catch (Failure) { if (!this.Disposed && Request === this.SdkRequest) this.Log(SetupMessage(Failure)); }
     }
 
     OnChange(Document) {
+        if (this.Disposed) return;
         const File = Path.resolve(Document.uri.fsPath);
-        if (File === this.Script || File === this.Manifest || (this.Modular && File.startsWith(Path.dirname(this.Manifest)+Path.sep))) this.Invalidate();
+        if ((this.Script && Path.relative(this.Script,File) === '') || (this.Manifest && Path.relative(this.Manifest,File) === '') ||
+            (this.Modular && Contains(Path.dirname(this.Manifest),File))) this.Invalidate();
     }
 
     OnDocument(Document) {
+        if (this.Disposed) return;
         if (Document.uri.scheme !== 'file') return;
         const Folder = this.Vscode.workspace.getWorkspaceFolder(Document.uri);
         if (!Folder) return;
-        if (UsesSdk(Folder, this.Vscode)) {
-            if (Fs.existsSync(GetManifest(Folder, this.Vscode))) this.Check(Folder);
-            return;
-        }
         try {
+            if (UsesSdk(Folder, this.Vscode)) {
+                if (Fs.existsSync(GetManifest(Folder, this.Vscode))) this.Check(Folder);
+                return;
+            }
             const { Manifest } = GetTypePaths(Folder, this.Vscode);
             const File = Path.resolve(Document.uri.fsPath);
-            if(Fs.statSync(Manifest).size>256*1024) throw new Error('[LUI:Project] LimitExceeded');
-            const Modular=JSON.parse(Fs.readFileSync(Manifest,'utf8')).SchemaVersion===2;
-            if(Modular && (File===Manifest || File.startsWith(Path.dirname(Manifest)+Path.sep))) {this.Check(Folder); return;}
-            if (File === Manifest || File === GetEntry(Manifest).Script) this.Check(Folder);
+            const Modular=ReadManifest(Manifest).SchemaVersion===2;
+            if(Modular && Contains(Path.dirname(Manifest),File)) {this.Check(Folder); return;}
+            if (Path.relative(Manifest,File) === '' || Path.relative(GetEntry(Manifest).Script,File) === '') this.Check(Folder);
         } catch { /* No matching readable entry script yet. Explicit checks report setup errors. */ }
     }
 
-    Invalidate() { this.SdkRequest = (this.SdkRequest || 0) + 1; this.Session.Stop(); this.Diagnostics.clear(); }
+    Invalidate() { this.SdkRequest = (this.SdkRequest || 0) + 1; this.Session.Stop(); if (!this.Disposed) this.Diagnostics.clear(); }
     Dispose() {
         if (this.Disposed) return;
         this.Disposed = true;

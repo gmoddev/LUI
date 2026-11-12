@@ -11,6 +11,14 @@ LUI 0.0.1 is experimental. These records describe selected test profiles, not a 
 
 ## Limits
 
+Unreleased preview.2 SDK08 passed a selected clean Windows 10 LTSC 19044.1288 SDK
+journey and a separate app-only recipient without globally installed SDK/compiler,
+.NET or required C++ runtime. This is exact-candidate evidence, not an update to
+the released preview.1 ZIP or a general Windows certification. Fresh Windows 11,
+real Windows IME, normal downloaded-file trust, signing and human first-session
+usability remain open. UIA discovery with a fresh COM client passed; broader
+control-pattern and human screen-reader qualification remains separate.
+
 Native service ABI v2 is experimental on Windows/Linux x64, with an independent
 Rust debug/release proof. Scoped StorageService uses native file operations on
 both systems and requires explicit trusted-host installation. Notifications and

@@ -7,6 +7,30 @@ target_compile_definitions(LuiHeadlessTests PRIVATE LUI_WINUI_FOCUS_CASE_PATH="$
 target_compile_definitions(LuiHeadlessTests PRIVATE LUI_WINUI_INPUT_CASE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/winui/InputQualification.luau")
 target_compile_definitions(LuiHeadlessTests PRIVATE LUI_WINUI_NATIVE_CASE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/winui/NativeMapping.luau")
 enable_testing()
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME LuiLibraryTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/libraries/Run.py"
+        --runtime "$<TARGET_FILE:LuiRuntime>" --checker "$<TARGET_FILE:LuiTypeCheck>" --suite all)
+    set_tests_properties(LuiLibraryTests PROPERTIES TIMEOUT 90)
+    add_test(NAME LuiNumericInputTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/libraries/Numeric.py"
+        --runtime "$<TARGET_FILE:LuiRuntime>" --checker "$<TARGET_FILE:LuiTypeCheck>" --output "${CMAKE_CURRENT_BINARY_DIR}/NumericInput.json")
+    set_tests_properties(LuiNumericInputTests PROPERTIES TIMEOUT 30)
+    add_test(NAME LuiJsonQuotaTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/libraries/Run.py"
+        --runtime "$<TARGET_FILE:LuiRuntime>" --suite Json --max-interrupts 1000000 --expect-limit)
+    set_tests_properties(LuiJsonQuotaTests PROPERTIES TIMEOUT 30)
+    add_test(NAME LuiJsonHttpTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/libraries/JsonHttp.py"
+        --runtime "$<TARGET_FILE:LuiRuntime>" --checker "$<TARGET_FILE:LuiTypeCheck>"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/JsonHttp.json")
+    set_tests_properties(LuiJsonHttpTests PROPERTIES TIMEOUT 30)
+    add_test(NAME LuiWorkbenchTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/libraries/Workbench.py"
+        --runtime "$<TARGET_FILE:LuiRuntime>")
+    set_tests_properties(LuiWorkbenchTests PROPERTIES TIMEOUT 45)
+endif()
 if(WIN32)
     add_test(NAME LuiWinUIFrameBitmapTests COMMAND LuiWinUIFrameBitmapTests)
     add_test(NAME LuiWinUIFrameGpuTests COMMAND LuiWinUIFrameGpuTests)

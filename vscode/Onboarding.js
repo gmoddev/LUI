@@ -33,7 +33,7 @@ async function CreateProject(Vscode, Output, Context) {
         if (!Name || !Vscode.workspace.isTrusted) return;
         const Destination = Path.join(Parent[0].fsPath, Name);
         await new Promise((Resolve, Reject) => ExecFile(Sdk.Components.Cli, ['new', Destination, '--sdk', Sdk.SdkRoot],
-            { cwd: Sdk.SdkRoot, shell: false, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 }, Error => Error ? Reject(new Error('Project creation failed. Choose a new directory and check the SDK.')) : Resolve()));
+            { cwd: Sdk.SdkRoot, shell: false, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 }, Failure => Failure ? Reject(new Error('Project creation failed. Choose a new directory and check the SDK.')) : Resolve()));
         await Vscode.commands.executeCommand('setContext', 'lui.projectCreated', true);
         if (Context) await Context.globalState.update('LuiPendingProject', Destination);
         await Vscode.commands.executeCommand('vscode.openFolder', Vscode.Uri.file(Destination));

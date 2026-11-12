@@ -9,6 +9,7 @@ const { EventEmitter } = require('node:events');
 const { PreviewClient } = require('../../vscode/PreviewClient');
 const { ValidateSchema, ValidateTree, GetProperties } = require('../../vscode/PreviewModel');
 const { NativePreview, ResolveNativeHost } = require('../../vscode/NativePreview');
+const { ReadDiagnostic } = require('../../vscode/NativeDiagnostics');
 
 function WaitFor(Emitter, Event, Predicate = () => true) {
     return new Promise((Resolve, Reject) => {
@@ -105,6 +106,73 @@ Test('native preview uses the WinUI host and tracks its process lifecycle', () =
         Assert.match(Failure, /spawn denied/);
         Assert.equal(FailedExit.LaunchFailed, true);
         Assert.equal(Failed.Process, null);
+    } finally { Fs.rmSync(Directory, { recursive: true, force: true }); }
+});
+
+Test('native diagnostics reject free text and deliver fixed reasons from a real child', async () => {
+    const Directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'LuiDiagnosticChild-'));
+    let Native;
+    try {
+        const Manifest = Path.join(Directory, 'lui.json');
+        Fs.writeFileSync(Manifest, '{"SchemaVersion":2}');
+        const Frame = { Version: 1, Code: 'NetworkServerRequired', Phase: 'Startup' };
+        const Line = '[LUI:Diagnostic] ' + JSON.stringify(Frame);
+        for (const Bad of ['PRIVATE_CANARY', Line.replace('"Version":1', '"Version":2'),
+            '[LUI:Diagnostic] ' + JSON.stringify({ ...Frame, Message: 'PRIVATE_CANARY' }),
+            '[LUI:Diagnostic] ' + JSON.stringify({ ...Frame, Code: ['NetworkServerRequired'] }),
+            '[LUI:Diagnostic] ' + JSON.stringify({ ...Frame, Code: 'PRIVATE_CANARY' })]) Assert.equal(ReadDiagnostic(Bad), null);
+        const Program = `process.stderr.write('PRIVATE_STDERR_CANARY\\n'+'x'.repeat(4096)+'\\n');
+            process.stderr.write(${JSON.stringify(Line.slice(0, 18))});
+            setImmediate(()=>{process.stderr.write(${JSON.stringify(Line.slice(18) + '\n')} +
+                ${JSON.stringify('[LUI:Diagnostic] ' + JSON.stringify({ ...Frame, Phase: 'Runtime' }) + '\n')});process.exitCode=1;});`;
+        Native = new NativePreview(Manifest, 'SyntheticHost', (Exe, Arguments, Options) =>
+            require('node:child_process').spawn(process.execPath, ['-e', Program], Options), 'win32');
+        const Diagnostics = [];
+        Native.on('diagnostic', Value => Diagnostics.push(Value));
+        const Exited = WaitFor(Native, 'exit');
+        Native.Start();
+        const [Exit] = await Exited;
+        Assert.equal(Exit.Code, 1); Assert.equal(Exit.StartupDiagnostic, true);
+        Assert.deepEqual(Diagnostics.map(Value => Value.Phase), ['Startup', 'Runtime']);
+        Assert.match(Diagnostics[0].Message, /network.server/);
+        Assert.match(Diagnostics[1].Message, /window may still be open/);
+        Assert.doesNotMatch(JSON.stringify(Diagnostics), /PRIVATE_|xxxx/);
+    } finally { Native?.Stop(); Fs.rmSync(Directory, { recursive: true, force: true }); }
+});
+
+Test('native editor consumes the real managed diagnostic producer', async Context => {
+    const Producer = process.env.LUI_TEST_DIAGNOSTICS;
+    if (!Producer) { Context.skip('Set LUI_TEST_DIAGNOSTICS'); return; }
+    const Directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'LuiManagedDiagnostics-'));
+    let Native;
+    try {
+        const Manifest = Path.join(Directory, 'lui.json'); Fs.writeFileSync(Manifest, '{}');
+        Native = new NativePreview(Manifest, Producer, (Exe, Arguments, Options) =>
+            Path.extname(Exe) === '.dll' ? require('node:child_process').spawn('dotnet', [Exe, '--transport'], Options) :
+                require('node:child_process').spawn(Exe, ['--transport'], Options), 'win32');
+        const Records = []; Native.on('diagnostic', Value => Records.push(Value));
+        const Exited = WaitFor(Native, 'exit'); Native.Start();
+        Assert.equal((await Exited)[0].Code, 0);
+        Assert.deepEqual(Records.map(Value => [Value.Code, Value.Phase]), [
+            ['UnknownCapability', 'Startup'], ['StartupFailed', 'Startup'],
+            ['NetworkServerRequired', 'Runtime'], ['OperationFailed', 'Runtime'],
+        ]);
+        Assert.doesNotMatch(JSON.stringify(Records), /PRIVATE_|CANARY/);
+    } finally { Native?.Stop(); Fs.rmSync(Directory, { recursive: true, force: true }); }
+});
+
+Test('native diagnostic floods are bounded and stopped or retired children cannot report', () => {
+    const Directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'LuiDiagnosticBound-'));
+    try {
+        const Manifest = Path.join(Directory, 'lui.json'); Fs.writeFileSync(Manifest, '{}');
+        const Child = new EventEmitter(); Child.stderr = new (require('node:stream').PassThrough)(); Child.kill = () => true;
+        const Native = new NativePreview(Manifest, 'SyntheticHost', () => Child, 'win32');
+        const Values = []; Native.on('diagnostic', Value => Values.push(Value)); Native.Start();
+        const Line = '[LUI:Diagnostic] {"Version":1,"Code":"OperationFailed","Phase":"Runtime"}\n';
+        Child.stderr.write(Line.repeat(400)); Assert.equal(Values.length, 256);
+        Native.Stop(); Child.stderr.write(Line); Assert.equal(Values.length, 256);
+        Child.emit('close', 0, null); Child.stderr.write(Line); Assert.equal(Values.length, 256);
+        Child.stderr.destroy();
     } finally { Fs.rmSync(Directory, { recursive: true, force: true }); }
 });
 

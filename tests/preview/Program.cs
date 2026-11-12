@@ -190,6 +190,12 @@ internal static class Program
         Require(!(Hello+Prepared+Printed+Protected).Contains("CANARY"),"Restricted IPC canary leaked");
         Restricted.StandardInput.WriteLine("{\"version\":2,\"type\":\"shutdown\"}"); Restricted.StandardInput.Close();
         Require(Restricted.WaitForExit(5000) && Restricted.ExitCode==0,"Restricted preview shutdown failed");
+        File.WriteAllText(Manifest, File.ReadAllText(Manifest).Replace("\"Capabilities\":[]", "\"Capabilities\":[\"network.server\"]"));
+        using Process Privileged = Process.Start(Start) ?? throw new Exception("privileged refusal test did not start");
+        Privileged.StandardInput.Close();
+        string Refusal = Privileged.StandardError.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        Require(Privileged.WaitForExit(5000) && Privileged.ExitCode == 1 && Refusal.Contains("Run App") &&
+            Refusal.Contains("Inspect Layout") && !Refusal.Contains("CANARY"), "privileged inspector refusal was vague or leaked source");
         Console.WriteLine("[LUI:PreviewTests] Modular identity, redaction and generation retirement passed");
     }
     private static string ReadLine(Process Child) => Child.StandardOutput.ReadLineAsync()

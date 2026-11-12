@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 
 namespace Lui.WinUI;
 
@@ -11,6 +12,40 @@ internal static class LuiDiagnostics
     private static bool PolicyEnabled;
     private static string? PolicyDirectory;
     private static Mutex? FileGate;
+    private static int TransportRecords;
+    internal static volatile bool ApplicationRunning;
+    private sealed record TransportRecord(string? Line, TaskCompletionSource? Flushed = null);
+    private static readonly Channel<TransportRecord> Transport = Channel.CreateBounded<TransportRecord>(64);
+    private static readonly Task TransportWorker = Task.Run(async () => {
+        using StreamWriter Writer = new(Console.OpenStandardError()) { AutoFlush = true };
+        await foreach (TransportRecord Record in Transport.Reader.ReadAllAsync()) {
+            try { if (Record.Line is not null) await Writer.WriteLineAsync(Record.Line); }
+            catch { } // Missing or closed pipes never interrupt the application.
+            Record.Flushed?.TrySetResult();
+        }
+    });
+
+    internal static async Task FlushAsync()
+    {
+        using CancellationTokenSource Limit = new(TimeSpan.FromSeconds(1));
+        TaskCompletionSource Flushed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try {
+            await Transport.Writer.WriteAsync(new(null, Flushed), Limit.Token);
+            await Flushed.Task.WaitAsync(Limit.Token);
+        } catch (OperationCanceledException) { }
+    }
+
+    internal static void Report(string Message)
+    {
+        int Observed;
+        do {
+            Observed = Volatile.Read(ref TransportRecords);
+            if (Observed >= 256) return;
+        } while (Interlocked.CompareExchange(ref TransportRecords, Observed + 1, Observed) != Observed);
+        bool Running = ApplicationRunning;
+        string Code = ApplicationDiagnostic.GetCode(Message) ?? (Running ? "OperationFailed" : "StartupFailed");
+        Transport.Writer.TryWrite(new("[LUI:Diagnostic] " + ApplicationDiagnostic.Record(Code, Running ? "Runtime" : "Startup")));
+    }
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
@@ -99,6 +134,7 @@ internal static class LuiDiagnostics
 
     public static void Error(string Subsystem, string Message)
     {
+        Report(Message);
         if(PolicyEnabled) Message="[LUI:Diagnostics] OperationFailed";
         Trace.TraceError("[LUI:{0}] {1}", Subsystem, Message);
         Log(Subsystem, "ERROR " + Message);

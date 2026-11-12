@@ -46,6 +46,10 @@ Anchor::Anchor(const std::filesystem::path& Root) : Data(std::make_unique<State>
         FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     Info(Data->Root->Value, true);
 }
+std::string Anchor::GetIdentity() const {
+    const auto Value = Info(Data->Root->Value, true);
+    return std::to_string(Value.dwVolumeSerialNumber) + ":" + std::to_string(Value.nFileIndexHigh) + ":" + std::to_string(Value.nFileIndexLow);
+}
 static std::shared_ptr<Handle> Open(const std::shared_ptr<Handle>& Root, const std::string& Relative) {
     if (!PathValid(Relative)) Fail("InvalidPath");
     std::vector<std::shared_ptr<Handle>> Held{Root};
@@ -154,6 +158,11 @@ struct Handle {
 struct Anchor::State { std::shared_ptr<Handle> Root; };
 Anchor::Anchor(const std::filesystem::path& Root) : Data(std::make_unique<State>()) {
     Data->Root = std::make_shared<Handle>(open(Root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+}
+std::string Anchor::GetIdentity() const {
+    struct stat Value{};
+    if (fstat(Data->Root->Value, &Value) || !S_ISDIR(Value.st_mode)) Fail("IoError");
+    return std::to_string(Value.st_dev) + ":" + std::to_string(Value.st_ino);
 }
 static bool WrongCase(int Parent, const std::string& Name) {
     int Copy = openat(Parent, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);

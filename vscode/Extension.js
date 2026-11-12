@@ -7,8 +7,10 @@ const { PreviewClient } = require('./PreviewClient');
 const { InspectorProvider } = require('./InspectorProvider');
 const { NativePreview, ResolveNativeHost } = require('./NativePreview');
 const { TypeDiagnostics } = require('./TypeDiagnostics');
-const { UsesSdk, GetBinding, ResolveSdk } = require('./SdkClient');
+const { UsesSdk, GetBinding, ResolveSdk, GetRoot, GetManifest } = require('./SdkClient');
 const { ChooseSdk, CreateProject } = require('./Onboarding');
+const { ProjectFiles } = require('./ProjectFiles');
+const { ReadManifest, GetSettingsIdentity, HasFolder, SetupMessage } = require('./ProjectSetup');
 
 function GetFolder() {
     const ActivePath = Vscode.window.activeTextEditor?.document.uri.fsPath;
@@ -69,11 +71,9 @@ function GetNativeHostPath(Folder) {
     }) || '';
 }
 
-function GetEntryScript(ManifestPath) {
-    try {
-        const Manifest = JSON.parse(Fs.readFileSync(ManifestPath, 'utf8'));
-        return typeof Manifest.Script === 'string' ? Path.resolve(Path.dirname(ManifestPath), Manifest.Script) : '';
-    } catch { return ''; }
+function GetNativeIdentity(Folder) {
+    return JSON.stringify([GetRoot(Vscode), GetManifest(Folder, Vscode),
+        Vscode.workspace.getConfiguration('lui', Folder.uri).get('nativeHostPath', '')]);
 }
 
 class ExplorerProvider {
@@ -125,14 +125,19 @@ class EditorController {
     constructor(Context) {
         this.Context = Context;
         this.Output = Vscode.window.createOutputChannel('LUI Preview');
+        this.NativeStatus = Vscode.window.createStatusBarItem(Vscode.StatusBarAlignment.Left, 10);
+        this.NativeStatus.name = 'LUI App';
         this.Diagnostics = Vscode.languages.createDiagnosticCollection('LUI Preview');
         this.Types = new TypeDiagnostics(Vscode, this.Output);
+        this.ProjectFiles = new ProjectFiles(Vscode, this.Output);
         this.Explorer = new ExplorerProvider();
         this.Inspector = new InspectorProvider(Message => this.OnInspectorAction(Message));
         this.TreeView = Vscode.window.createTreeView('lui.explorer', { treeDataProvider: this.Explorer });
         this.TreeView.message = 'Run “LUI: Start Preview” to inspect an app.';
         this.Client = null;
         this.Native = null;
+        this.NativeFolder = null;
+        this.NativePendingFolder = null;
         this.SelectedId = 0;
         this.Status = 'Preview stopped';
         this.Error = '';
@@ -141,33 +146,103 @@ class EditorController {
         this.ManifestPath = '';
         this.ScriptPath = '';
         this.Folder = null;
+        this.PreviewFolder = null;
         this.ReloadTimer = null;
-        Context.subscriptions.push(this.Output, this.Diagnostics, this.TreeView, this.Explorer,
+        Context.subscriptions.push(this.Output, this.NativeStatus, this.Diagnostics, this.TreeView, this.Explorer,
             Vscode.window.registerWebviewViewProvider('lui.inspector', this.Inspector),
             Vscode.commands.registerCommand('lui.startPreview', () => this.Start()),
             Vscode.commands.registerCommand('lui.chooseSdk', () => ChooseSdk(Vscode, this.Output)),
             Vscode.commands.registerCommand('lui.createProject', () => CreateProject(Vscode, this.Output, Context)),
+            Vscode.commands.registerCommand('lui.addProjectFile', Uri => this.ProjectFiles.AddFile(Uri)),
             Vscode.commands.registerCommand('lui.reloadPreview', () => this.Client?.RequestReload()),
             Vscode.commands.registerCommand('lui.stopPreview', () => this.Stop()),
             Vscode.commands.registerCommand('lui.openNativePreview', () => this.OpenNative()),
+            Vscode.commands.registerCommand('lui.restartNativePreview', () => this.OpenNative(true)),
             Vscode.commands.registerCommand('lui.stopNativePreview', () => this.StopNative()),
             Vscode.commands.registerCommand('lui.checkTypes', () => this.Types.Check(GetFolder(), true)),
             Vscode.commands.registerCommand('lui.activateNode', Item => this.Activate(Item?.Id)),
             Vscode.commands.registerCommand('lui.openSource', Item => this.OpenSource(Item?.Id, 'created')),
             Vscode.workspace.onDidSaveTextDocument(Document => this.OnSave(Document)),
-            Vscode.workspace.onDidOpenTextDocument(Document => this.Types.OnDocument(Document)),
-            Vscode.workspace.onDidChangeTextDocument(Event => this.Types.OnChange(Event.document)),
+            Vscode.workspace.onDidOpenTextDocument(Document => { this.Types.OnDocument(Document); this.ProjectFiles.OnDocument(Document); }),
+            Vscode.workspace.onDidChangeTextDocument(Event => {
+                this.Types.OnChange(Event.document);
+                if (Event.contentChanges.length) this.OnNativeSourceChange(Event.document);
+            }),
             Vscode.workspace.onDidChangeConfiguration(Event => {
-                if (Event.affectsConfiguration('lui')) this.Types.Check(GetFolder());
+                if (Event.affectsConfiguration('lui')) {
+                    if (this.Disposed) return;
+                    this.CancelNativeLaunch();
+                    if (this.Client || this.PreviewFolder) this.Stop();
+                    this.ProjectFiles.Refresh();
+                    this.Types.Check(GetFolder());
+                }
             }),
             this.TreeView.onDidChangeSelection(Event => this.Select(Event.selection[0]?.Id || 0)));
-        for (const Document of Vscode.workspace.textDocuments) this.Types.OnDocument(Document);
+        for (const Document of Vscode.workspace.textDocuments) { this.Types.OnDocument(Document); this.ProjectFiles.OnDocument(Document); }
+        if (Vscode.workspace.onDidChangeWorkspaceFolders) Context.subscriptions.push(Vscode.workspace.onDidChangeWorkspaceFolders(Event => {
+            if (this.Disposed) return;
+            if (Event.removed.some(Removed => [this.NativeFolder, this.NativePendingFolder].some(Folder => Folder && Folder.uri.fsPath === Removed.uri.fsPath))) this.StopNative();
+            if (Event.removed.some(Removed => [this.Folder, this.PreviewFolder].some(Folder => Folder && Folder.uri.fsPath === Removed.uri.fsPath))) this.Stop();
+            if (Event.removed.some(Removed => this.Types.Folder?.uri.fsPath === Removed.uri.fsPath)) this.Types.Invalidate();
+            this.ProjectFiles.Refresh();
+        }));
+        this.NativeContext('lui.nativeRunning', false);
+        this.NativeContext('lui.nativeStarting', false);
     }
 
     Log(Message) { this.Output.appendLine('[LUI:Editor] ' + Message); }
     NativeMessage(Message) {
         this.Log(Message);
         Vscode.window.setStatusBarMessage('[LUI:NativePreview] ' + Message, 7000);
+        this.RenderNativeState();
+    }
+
+    NativeContext(Name, Value) {
+        try { Vscode.commands.executeCommand('setContext', Name, Value)?.then(undefined, () => {}); }
+        catch { /* Window shutdown may retire the command channel first. */ }
+        this.RenderNativeState();
+    }
+
+    RenderNativeState() {
+        if (!this.NativeShown || this.Disposed) { this.NativeStatus.hide(); return; }
+        const Native = this.Native;
+        let Text = '$(debug-stop) LUI · App stopped', Command = 'lui.openNativePreview';
+        let Advice = 'Run App launches the active project using saved files.';
+        if (this.NativePendingFolder) {
+            Text = Native?.Process ? '$(sync~spin) LUI · Restarting app' : '$(sync~spin) LUI · Preparing app';
+            Command = 'lui.stopNativePreview'; Advice = 'Click to cancel the pending launch or restart.';
+        } else if (Native?.Process) {
+            Command = 'lui.restartNativePreview';
+            Advice = 'Click to restart this app. Save documents inside the app first; restart discards its memory. Restart after edits outside VS Code too.';
+            if (Native.Exited) { Text = '$(sync~spin) LUI · Finishing app shutdown'; Command = 'lui.stopNativePreview'; Advice = 'The app process exited; finishing shutdown.'; }
+            else if (Native.StopFailed) { Text = '$(warning) LUI · Stop failed · See Output'; Command = 'lui.stopNativePreview'; Advice = 'Click to retry Stop App, or close its native window if it is open. See LUI Preview output.'; }
+            else if (Native.Stopping) { Text = '$(sync~spin) LUI · Stopping app'; Command = 'lui.stopNativePreview'; Advice = 'Waiting for the owned app to exit. A replacement cannot overlap it.'; }
+            else if (!this.NativeLaunched) { Text = '$(sync~spin) LUI · Starting app'; Command = 'lui.stopNativePreview'; Advice = 'Click to cancel app startup.'; }
+            else if (this.NativeFolder && this.NativeDirty(this.NativeFolder)) Text = '$(play) LUI · Running · Unsaved project edits';
+            else if (this.NativeEdited) Text = '$(play) LUI · Running · Restart after project edits';
+            else Text = '$(play) LUI · Running';
+        }
+        this.NativeStatus.text = Text;
+        this.NativeStatus.command = Command;
+        this.NativeStatus.tooltip = Advice;
+        this.NativeStatus.show();
+    }
+
+    OnNativeSourceChange(Document) {
+        if (!this.Native?.Process || !this.NativeFolder || Document.uri.scheme !== 'file') return;
+        const Relative = Path.relative(this.NativeFolder.uri.fsPath, Document.uri.fsPath);
+        if (Relative === '..' || Relative.startsWith('..' + Path.sep) || Path.isAbsolute(Relative)) return;
+        this.NativeEdited = true;
+        this.RenderNativeState();
+    }
+
+    NativeDirty(Folder) {
+        const Root = Path.resolve(Folder.uri.fsPath);
+        return Vscode.workspace.textDocuments.some(Document => {
+            if (!Document.isDirty || Document.uri.scheme !== 'file') return false;
+            const Relative = Path.relative(Root, Document.uri.fsPath);
+            return Relative === '' || (Relative !== '..' && !Relative.startsWith('..' + Path.sep) && !Path.isAbsolute(Relative));
+        });
     }
 
     SetStatus(Status, Error = '') {
@@ -184,6 +259,7 @@ class EditorController {
     }
 
     async Start(PreferredFolder) {
+        if (this.Disposed) return;
         this.Stop();
         const Request = this.PreviewRequest = (this.PreviewRequest || 0) + 1;
         if (!Vscode.workspace.isTrusted) {
@@ -192,59 +268,70 @@ class EditorController {
         }
         const Folder = PreferredFolder || GetFolder();
         if (!Folder) { this.SetStatus('Open a workspace folder to start preview.'); return; }
-        try { if (UsesSdk(Folder, Vscode)) await ResolveSdk(Folder, Vscode); }
-        catch (Error) { this.SetStatus('Preview could not start.', Error.message); return; }
-        if (this.Disposed || Request !== this.PreviewRequest || !Vscode.workspace.isTrusted) return;
-        const { Manifest, Host, Runtime } = GetPaths(Folder);
-        for (const [Name, Value] of [['manifest', Manifest], ['preview host', Host], ['native runtime', Runtime]]) {
-            if (!Value || !Fs.existsSync(Value)) {
-                const Error = `${Name} was not found. Check the LUI Preview settings.`;
-                this.Log(Error);
-                this.SetStatus('Preview could not start.', Error);
-                return;
+        this.PreviewFolder = Folder;
+        try {
+            const Identity = GetSettingsIdentity(Folder, Vscode);
+            if (!HasFolder(Folder, Vscode)) return;
+            if (UsesSdk(Folder, Vscode)) await ResolveSdk(Folder, Vscode);
+            if (this.Disposed || Request !== this.PreviewRequest || !Vscode.workspace.isTrusted || !HasFolder(Folder, Vscode) || Identity !== GetSettingsIdentity(Folder, Vscode)) return;
+            const { Manifest, Host, Runtime } = GetPaths(Folder);
+            for (const [Name, Value] of [['manifest', Manifest], ['preview host', Host], ['native runtime', Runtime]]) {
+                if (!Value || !Fs.existsSync(Value)) {
+                    const Error = `${Name} was not found. Check the LUI Preview settings.`;
+                    this.Log(Error);
+                    this.SetStatus('Preview could not start.', Error);
+                    return;
+                }
             }
+            this.ManifestPath = Manifest;
+            const Data = ReadManifest(Manifest);
+            this.ScriptPath = Data.SchemaVersion === 2 ? '' : typeof Data.Script === 'string' ? Path.resolve(Path.dirname(Manifest), Data.Script) : '';
+            this.Folder = Folder;
+            this.Client = new PreviewClient(Manifest, Host, Runtime);
+            this.LastRuntimeErrorGeneration = 0;
+            const Client = this.Client;
+            this.TreeView.message = 'Connecting to preview host…';
+            this.SetStatus('Connecting to preview host…');
+            Client.on('tree', (Tree, Generation, ChangedGeneration) => {
+                if (this.Client !== Client) return;
+                if (ChangedGeneration && this.LastDiagnosticGeneration !== Generation) this.Diagnostics.clear();
+                if (ChangedGeneration || !Tree.ById.has(this.SelectedId))
+                    this.SelectedId = Tree.Nodes.find(Node => Node.className === 'Window')?.id || Tree.Nodes[0]?.id || 0;
+                this.Explorer.Update(Tree);
+                this.TreeView.message = Tree.Nodes.length ? undefined : 'No live Instances in this generation.';
+                if (!Tree.Nodes.length && this.LastRuntimeErrorGeneration === Generation)
+                    this.SetStatus('Preview script failed.', this.Error);
+                else this.SetStatus(`${Tree.Nodes.length} Instances · preview running`);
+            });
+            Client.on('consoleMessage', Message => { if (this.Client === Client) this.Log('Console: ' + Message); });
+            Client.on('diagnostic', (Message, Generation, Location) => {
+                if (this.Client !== Client) return;
+                this.Log('Diagnostic: ' + Message);
+                this.PublishDiagnostic(Message, Location, Generation);
+                this.SetStatus(this.Status, Message);
+            });
+            Client.on('runtimeError', (Message, Generation, Location) => {
+                if (this.Client !== Client) return;
+                this.LastRuntimeErrorGeneration = Generation;
+                this.Log('Runtime error: ' + Message);
+                this.PublishDiagnostic(Message, Location, Generation);
+                this.SetStatus('Preview script failed.', Message);
+            });
+            Client.on('failure', Message => { if (this.Client === Client) { this.Log(Message); this.SetStatus('Preview protocol failed.', Message); } });
+            Client.on('exit', ({ Code, Signal, WasClosed }) => {
+                if (this.Client !== Client) return;
+                this.Client = null;
+                this.Explorer.Update({ Nodes: [], ById: new Map(), Children: new Map([[0, []]]) });
+                this.SelectedId = 0;
+                this.TreeView.message = 'Run “LUI: Start Preview” to inspect an app.';
+                if (!WasClosed) this.SetStatus('Preview host exited.', `Exit code: ${Code ?? 'unknown'}${Signal ? ' · ' + Signal : ''}`);
+                else this.Render();
+            });
+        } catch (Failure) {
+            if (!this.Disposed && Request === this.PreviewRequest) this.SetStatus('Preview could not start.', SetupMessage(Failure));
+        } finally {
+            if (Request === this.PreviewRequest) this.PreviewFolder = null;
         }
-        this.ManifestPath = Manifest;
-        this.ScriptPath = JSON.parse(Fs.readFileSync(Manifest,'utf8')).SchemaVersion===2?'':GetEntryScript(Manifest);
-        this.Folder = Folder;
-        this.Client = new PreviewClient(Manifest, Host, Runtime);
-        this.LastRuntimeErrorGeneration = 0;
-        const Client = this.Client;
-        this.TreeView.message = 'Connecting to preview host…';
-        this.SetStatus('Connecting to preview host…');
-        Client.on('tree', (Tree, Generation, ChangedGeneration) => {
-            if (this.Client !== Client) return;
-            if (ChangedGeneration && this.LastDiagnosticGeneration !== Generation) this.Diagnostics.clear();
-            if (ChangedGeneration || !Tree.ById.has(this.SelectedId))
-                this.SelectedId = Tree.Nodes.find(Node => Node.className === 'Window')?.id || Tree.Nodes[0]?.id || 0;
-            this.Explorer.Update(Tree);
-            this.TreeView.message = Tree.Nodes.length ? undefined : 'No live Instances in this generation.';
-            if (!Tree.Nodes.length && this.LastRuntimeErrorGeneration === Generation)
-                this.SetStatus('Preview script failed.', this.Error);
-            else this.SetStatus(`${Tree.Nodes.length} Instances · preview running`);
-        });
-        Client.on('consoleMessage', Message => this.Log('Console: ' + Message));
-        Client.on('diagnostic', (Message, Generation, Location) => {
-            this.Log('Diagnostic: ' + Message);
-            this.PublishDiagnostic(Message, Location, Generation);
-            this.SetStatus(this.Status, Message);
-        });
-        Client.on('runtimeError', (Message, Generation, Location) => {
-            this.LastRuntimeErrorGeneration = Generation;
-            this.Log('Runtime error: ' + Message);
-            this.PublishDiagnostic(Message, Location, Generation);
-            this.SetStatus('Preview script failed.', Message);
-        });
-        Client.on('failure', Message => { this.Log(Message); this.SetStatus('Preview protocol failed.', Message); });
-        Client.on('exit', ({ Code, Signal, WasClosed }) => {
-            if (this.Client !== Client) return;
-            this.Client = null;
-            this.Explorer.Update({ Nodes: [], ById: new Map(), Children: new Map([[0, []]]) });
-            this.SelectedId = 0;
-            this.TreeView.message = 'Run “LUI: Start Preview” to inspect an app.';
-            if (!WasClosed) this.SetStatus('Preview host exited.', `Exit code: ${Code ?? 'unknown'}${Signal ? ' · ' + Signal : ''}`);
-            else this.Render();
-        });
     }
 
     Stop() {
@@ -252,6 +339,8 @@ class EditorController {
         if (this.ReloadTimer) { clearTimeout(this.ReloadTimer); this.ReloadTimer = null; }
         const Client = this.Client;
         this.Client = null;
+        this.Folder = null;
+        this.PreviewFolder = null;
         Client?.Stop();
         this.Explorer.Update({ Nodes: [], ById: new Map(), Children: new Map([[0, []]]) });
         this.SelectedId = 0;
@@ -261,7 +350,8 @@ class EditorController {
         this.SetStatus('Preview stopped');
     }
 
-    async OpenNative() {
+    async OpenNative(Restart = false) {
+        this.NativeShown = true;
         if (process.platform!=='win32' && process.platform!=='linux') {
             this.NativeMessage('Native preview requires Windows or Linux.');
             return;
@@ -270,40 +360,80 @@ class EditorController {
             this.NativeMessage('Native preview requires a trusted workspace.');
             return;
         }
-        if (this.Native?.Process) {
-            this.NativeMessage('Native preview is already open.');
+        if (this.Native?.Process && !Restart) {
+            this.NativeMessage(this.Native.Exited ? 'The previous app is finishing shutdown. Use Stop App or wait.' : 'Native preview is already open.');
             return;
         }
-        const Folder = GetFolder();
+        const Folder = (Restart && this.NativeFolder) || GetFolder();
         if (!Folder) { this.NativeMessage('Open a workspace folder to launch native preview.'); return; }
+        if (this.NativeDirty(Folder)) { this.NativeMessage('Save project files before running or restarting the app.'); return; }
+        let Identity;
+        try { Identity = GetNativeIdentity(Folder); }
+        catch { this.NativeMessage('Could not read launch settings. Check the project and selected SDK.'); return; }
         const Request = this.NativeRequest = (this.NativeRequest || 0) + 1;
-        try { if (UsesSdk(Folder, Vscode)) await ResolveSdk(Folder, Vscode); }
-        catch (Error) { this.NativeMessage(Error.message); return; }
-        if (!Vscode.workspace.isTrusted || this.Disposed || this.Native?.Process || Request !== this.NativeRequest) return;
-        const Manifest = GetPaths(Folder).Manifest;
-        if (!Fs.existsSync(Manifest)) { this.NativeMessage('Native preview manifest was not found.'); return; }
-        let Host;
-        try { Host = ResolveNativeHost(GetNativeHostPath(Folder)); }
-        catch (Error) { this.NativeMessage(Error.message + ' Set lui.nativeHostPath to the built native host.'); return; }
-        const Native = new NativePreview(Manifest, Host);
-        this.Native = Native;
-        Native.once('started', () => { if (this.Native === Native) Vscode.commands.executeCommand('setContext', 'lui.appLaunched', true); });
-        Native.on('failure', Message => this.NativeMessage(Message));
-        Native.on('exit', ({ Code, Signal, WasStopped, LaunchFailed }) => {
-            if (this.Native === Native) this.Native = null;
-            if (LaunchFailed) return;
-            if (WasStopped) this.Log('Native preview stopped.');
-            else if (Code === 0) this.Log('Native preview window closed.');
-            else this.NativeMessage(`Native preview exited with code ${Code ?? 'unknown'}${Signal ? ' · ' + Signal : ''}. ` +
-                'See native host diagnostics when enabled.');
-        });
+        this.NativePendingFolder = Folder;
+        this.NativeContext('lui.nativeStarting', true);
         try {
-            Native.Start();
-            this.Log('Opening native preview for ' + Manifest);
-        } catch (Error) { this.Native = null; this.NativeMessage('Could not launch native preview: ' + Error.message); }
+            if (Restart && this.Native?.Process && !await this.Native.StopAsync()) return;
+            if (this.Disposed || Request !== this.NativeRequest || !Vscode.workspace.isTrusted || Identity !== GetNativeIdentity(Folder)) return;
+            try { if (UsesSdk(Folder, Vscode)) await ResolveSdk(Folder, Vscode); }
+            catch (Error) { if (!this.Disposed && Request === this.NativeRequest) this.NativeMessage(Error.message); return; }
+            if (!Vscode.workspace.isTrusted || this.Disposed || this.Native?.Process || Request !== this.NativeRequest || Identity !== GetNativeIdentity(Folder)) return;
+            if (!Vscode.workspace.workspaceFolders?.some(Current => Current.uri.fsPath === Folder.uri.fsPath)) return;
+            if (this.NativeDirty(Folder)) { this.NativeMessage('Save project files before running or restarting the app.'); return; }
+            const Manifest = GetPaths(Folder).Manifest;
+            if (!Fs.existsSync(Manifest)) { this.NativeMessage('Native preview manifest was not found.'); return; }
+            let Host;
+            try { Host = ResolveNativeHost(GetNativeHostPath(Folder)); }
+            catch (Error) { this.NativeMessage(Error.message + ' Set lui.nativeHostPath to the built native host.'); return; }
+            const Native = new NativePreview(Manifest, Host);
+            this.Native = Native;
+            this.NativeFolder = Folder;
+            this.NativeEdited = false;
+            this.NativeLaunched = false;
+            Native.once('started', () => { if (this.Native === Native) { this.NativeLaunched = true; this.NativeContext('lui.appLaunched', true); this.NativeContext('lui.nativeRunning', true); this.NativeContext('lui.nativeStarting', false); } });
+            Native.once('retiring', () => { if (this.Native === Native) { this.NativeContext('lui.nativeRunning', false); this.NativeContext('lui.nativeStarting', true); } });
+            Native.on('failure', Message => { if (this.Native === Native) this.NativeMessage(Message); });
+            Native.on('diagnostic', Diagnostic => { if (this.Native === Native) this.NativeMessage(Diagnostic.Message); });
+            Native.on('exit', ({ Code, Signal, WasStopped, LaunchFailed, StartupDiagnostic }) => {
+                if (this.Native !== Native) return;
+                this.Native = null;
+                this.NativeFolder = null;
+                this.NativeContext('lui.nativeRunning', false);
+                this.NativeContext('lui.nativeStarting', Boolean(this.NativePendingFolder));
+                if (LaunchFailed) return;
+                if (WasStopped) this.Log('Native preview stopped.');
+                else if (Code === 0) this.Log('Native preview window closed.');
+                else if (!StartupDiagnostic) this.NativeMessage(`App stopped with exit code ${Code ?? 'unknown'}${Signal ? ' · ' + Signal : ''}. ` +
+                    'No startup reason was received. Run Check Types, check the selected SDK with lui doctor, and include the SDK version and reproduction steps in a bug report.');
+            });
+            try {
+                Native.Start();
+                this.Log('Opening native preview for ' + Manifest);
+            } catch { this.Native = null; this.NativeFolder = null; this.NativeMessage('Could not launch native preview. Check the project and selected SDK.'); }
+        } catch {
+            if (!this.Disposed && Request === this.NativeRequest) this.NativeMessage('Could not launch native preview. Check the project and selected SDK.');
+        } finally {
+            if (Request === this.NativeRequest) { this.NativePendingFolder = null; this.NativeContext('lui.nativeStarting', Boolean(this.Native?.Process && !this.NativeLaunched)); }
+        }
     }
 
-    StopNative() { this.NativeRequest = (this.NativeRequest || 0) + 1; this.Native?.Stop(); }
+    CancelNativeLaunch() {
+        this.NativeRequest = (this.NativeRequest || 0) + 1;
+        this.NativePendingFolder = null;
+        this.NativeContext('lui.nativeStarting', Boolean(this.Native?.Process && (!this.NativeLaunched || this.Native.Exited)));
+    }
+
+    async StopNative() {
+        this.CancelNativeLaunch();
+        const Native = this.Native;
+        if (!Native) return true;
+        const Stopped = Native.StopAsync();
+        this.RenderNativeState();
+        const Result = await Stopped;
+        this.RenderNativeState();
+        return Result;
+    }
 
     Select(Id) {
         if (!this.Client?.Tree.ById.has(Id)) return;
@@ -374,6 +504,8 @@ class EditorController {
 
     OnSave(Document) {
         this.Types.OnDocument(Document);
+        this.ProjectFiles.Refresh();
+        this.RenderNativeState();
         if (!this.Client) return;
         if (Path.resolve(Document.uri.fsPath) === Path.resolve(this.ManifestPath)) {
             this.Start(this.Folder);
@@ -391,7 +523,9 @@ class EditorController {
     Dispose() {
         if (this.Disposed) return;
         this.Disposed = true;
+        this.RenderNativeState();
         this.Types.Dispose();
+        this.ProjectFiles.Dispose();
         this.Native?.removeAllListeners();
         this.StopNative();
         this.Native = null;

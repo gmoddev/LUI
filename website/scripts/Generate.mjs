@@ -4,6 +4,8 @@ import Path from 'node:path';
 import { Hash, Validate, MakeZip } from './Reference.mjs';
 import { Summaries, Notes, Examples, GlobalSummaries } from './Editorial.mjs';
 import { Checkpoints, ProjectFiles } from './Tutorials.mjs';
+import { Recipes } from './Recipes.mjs';
+import { GenerateLibraryReference } from './LibraryReference.mjs';
 
 const Root = Path.resolve(FileUrlToPath(new URL('..', import.meta.url)));
 const Repository = Path.dirname(Root);
@@ -66,12 +68,14 @@ function MemberSections(Item) {
 for (const Group of ['classes', 'services', 'objects']) for (const Item of Schema[Group]) {
   const Name = Item.name; let Text = Header(Name, Summaries[Name]) + Summaries[Name] + '\n\n';
   if (Group === 'classes') {
-    Text += '**Inheritance:** ' + (Item.base ? Ref(Item.base) : 'None') + '. **Creatable:** ' + (Item.creatable ? 'Yes' : 'No — use a concrete subclass') + '.\n\n';
+    Text += '**Inheritance:** ' + (Item.base ? Ref(Item.base) : 'None') + '. **Creatable:** ' + (Item.creatable ? 'Yes' : 'No: use a concrete subclass') + '.\n\n';
     Text += '**Children:** ' + (Item.acceptsChildren ? 'Accepts child content.' : 'Does not accept visual child content.') + ' Parent rule: ' + Inline(Item.parentRule) + '.\n\n';
   }
+  if (Group === 'services') Text += '## Required setup\n\n' + (Name === 'HttpService' ? 'Requires `network.client`.' : Name === 'HttpServerService' ? 'Requires `network.server`.' : Name === 'NetworkService' ? 'Requires `network.raw` and the operation’s `network.client` or `network.server` grant.' : Name === 'ClipboardService' ? 'Requires `Clipboard` and a supported clipboard adapter.' : Name === 'DialogService' ? 'Requires `Dialogs` and a supported file-picker adapter.' : Name === 'StorageService' ? 'Requires `Storage` and trusted host installation of an app-private scope. Released preview.1 does not support `Storage.ApplicationId`.' : Name === 'NotificationService' ? 'Requires `Notifications` and the selected Windows shell adapter. GTK reports unsupported.' : Name === 'TrayService' ? 'Requires `Tray` and the selected Windows shell adapter. GTK reports unsupported.' : 'No additional capability token is needed for service lookup. Host feature and declared-input requirements still apply.') + '\n\nRead [capabilities and execution modes](' + SiteBase + '/guides/capabilities/) before adding a manifest token. A declaration does not install a provider.\n\n';
+  if (['AssetService', 'ImageLabel', 'PerformanceService', 'GuiObject', 'HttpService', 'HttpServerService', 'Window'].includes(Name)) Text += '## Try a complete project\n\nSee [practical SDK recipes](' + SiteBase + '/guides/recipes/) for full source, a manifest, an SDK pin, required assets and failure recovery. The recipes include declared images, time, right-click input and local HTTP.\n\n';
   if (Notes[Name]) Text += '## Behavior and limits\n\n' + Notes[Name].map(Note => '- ' + Note).join('\n') + '\n\n';
   if (Examples[Name]) Text += '## Example\n\n' + (Name === 'Window' ? 'This is a complete minimal window.\n' : 'This fragment assumes an existing `Window`' + (Name === 'UIListLayout' ? ' and a container named `Content`' : '') + '. For a complete runnable project, follow [your first project](' + SiteBase + '/learn/first-project/).\n') + Fence(Examples[Name]);
-  else if (Group === 'services') Text += '## Get the service\n\n' + Fence('local Service = app:GetService("' + Name + '")') + '\nThe service must be available in the host and its capabilities granted. Merely looking it up does not install a provider or add permissions.\n';
+  else if (Group === 'services') Text += '## Get the service\n\n' + Fence('local Service = app:GetService("' + Name + '")') + '\nUse the setup requirements above for this service. Merely looking it up does not install a provider or add permissions.\n';
   Text += MemberSections(Item);
   if (Item.base) {
     Text += '\n## Inherited members\n\n'; let Base = Item.base;
@@ -103,11 +107,11 @@ for (const [Name, Declaration] of Parsed.Globals) {
   await Page('api/globals/' + Name.toLowerCase() + '.md', Text);
 }
 let Index = Header('API reference', 'Find implemented LUI classes, services, value types, globals and exact signatures.') + 'Find the exact names, signatures, defaults and inherited members available in **SDK ' + Release.SdkVersion + '**. Start with [your first project](' + SiteBase + '/learn/first-project/) if you are learning LUI.\n\nUse the search box to find a class or member, including names such as `Activated`, `CanvasPosition` or `RequestClose`.\n';
-for (const [Group, Label] of [['classes','Classes'], ['services','Services'], ['objects','Value and resource types']]) Index += '\n## ' + Label + '\n\n' + Schema[Group].map(Item => '- ' + Ref(Item.name) + ' — ' + Summaries[Item.name]).join('\n') + '\n';
-Index += '\n## Globals and constructors\n\n' + [...Parsed.Globals.keys()].map(Name => '- [' + Name + '](' + SiteBase + '/api/globals/' + Name.toLowerCase() + '/) — ' + GlobalSummaries[Name]).join('\n') + '\n\n## Helper and initializer types\n\n' + [...Parsed.Exports.keys()].filter(Name=>![...Schema.classes,...Schema.services,...Schema.objects].some(Item=>Item.name===Name)).map(Name=>'- '+Ref(Name)).join('\n') + '\n\n## Version and availability\n\nThe reference uses reflection and generated definitions from the public SDK source [' + Release.PublicCommit.slice(0,7) + '](' + SourceBase.replace('/blob/','/tree/') + '). Written notes explain behavior but do not replace those signatures. Types, defaults and inherited links are checked during the site build.\n\nThe API is experimental. Platform and capability limits remain explicit; see [platform support](' + SiteBase + '/guides/platforms/).\n';
+for (const [Group, Label] of [['classes','Classes'], ['services','Services'], ['objects','Value and resource types']]) Index += '\n## ' + Label + '\n\n' + Schema[Group].map(Item => '- ' + Ref(Item.name) + ': ' + Summaries[Item.name]).join('\n') + '\n';
+Index += '\n## Globals and constructors\n\n' + [...Parsed.Globals.keys()].map(Name => '- [' + Name + '](' + SiteBase + '/api/globals/' + Name.toLowerCase() + '/): ' + GlobalSummaries[Name]).join('\n') + '\n\n## Helper and initializer types\n\n' + [...Parsed.Exports.keys()].filter(Name=>![...Schema.classes,...Schema.services,...Schema.objects].some(Item=>Item.name===Name)).map(Name=>'- '+Ref(Name)).join('\n') + '\n\n## Version and availability\n\nThe reference uses reflection and generated definitions from the public SDK source [' + Release.PublicCommit.slice(0,7) + '](' + SourceBase.replace('/blob/','/tree/') + '). Written notes explain behavior but do not replace those signatures. Types, defaults and inherited links are checked during the site build.\n\nThe API is experimental. Platform and capability limits remain explicit; see [platform support](' + SiteBase + '/guides/platforms/).\n';
 await Page('api/index.md', Index);
 
-const Tutorials = Checkpoints(); const ProjectReport = [];
+const Tutorials = [...Checkpoints(), ...Recipes()]; const ProjectReport = [];
 for (const Checkpoint of Tutorials) {
   const Files = ProjectFiles(Checkpoint, Release); const Archive = MakeZip(Files);
   const Directory = Path.join(Projects, Checkpoint.Name); await MakeDirectory(Directory, { recursive: true });
@@ -124,7 +128,7 @@ function Expand(Text) {
     return Fence(Checkpoint.Files[File]);
   });
 }
-const Authored = { 'FirstProject.md.in':'learn/first-project.md', 'AdvancedProject.md.in':'learn/advanced-project.md', 'Setup.md.in':'guides/setup.md', 'Workflow.md.in':'guides/workflow.md', 'Modules.md.in':'guides/modules.md', 'Layout.md.in':'guides/layout.md', 'Packaging.md.in':'guides/packaging.md', 'Platforms.md.in':'guides/platforms.md' };
+const Authored = { 'FirstProject.md.in':'learn/first-project.md', 'AdvancedProject.md.in':'learn/advanced-project.md', 'Setup.md.in':'guides/setup.md', 'Workflow.md.in':'guides/workflow.md', 'Modules.md.in':'guides/modules.md', 'Layout.md.in':'guides/layout.md', 'Packaging.md.in':'guides/packaging.md', 'Platforms.md.in':'guides/platforms.md', 'Capabilities.md.in':'guides/capabilities.md', 'Recipes.md.in':'guides/recipes.md' };
 for (const [Source, Destination] of Object.entries(Authored)) {
   const Text = Expand(await ReadFile(Path.join(Root, 'Content', Source), 'utf8'));
   if (/\{\{/.test(Text)) throw new Error('[LUI:Docs] Unexpanded tutorial placeholder');
@@ -136,7 +140,7 @@ const Home = Expand(await ReadFile(Path.join(Root, 'Content/Index.mdx.in'), 'utf
 if (/\{\{/.test(Home)) throw new Error('[LUI:Docs] Unexpanded home content');
 await WriteFile(Path.join(Root, 'src/content/docs/index.mdx'), Home);
 await Remove(Path.join(Root, 'src/content/docs/404.md'), { force: true });
-let Notices = 'LUI documentation website — open-source notices\n\n' + await ReadFile(Path.join(Repository,'LICENSE'),'utf8') + '\n\n';
+let Notices = 'LUI documentation website: open-source notices\n\n' + await ReadFile(Path.join(Repository,'LICENSE'),'utf8') + '\n\n';
 Notices += 'The following inventory includes browser and build dependencies. License and notice files supplied by each installed package are reproduced below.\n\n';
 const PackageRoots = [];
 for (const Entry of await ReadDirectory(Path.join(Root,'node_modules'),{withFileTypes:true})) {
@@ -153,5 +157,9 @@ for(const Directory of PackageRoots.sort()) {
   }
 }
 await WriteFile(Path.join(Root,'public/ThirdPartyNotices.txt'),Notices);
-await WriteFile(Path.join(Root, 'BuildReport.json'), JSON.stringify({ SdkVersion: Release.SdkVersion, PublicCommit: Release.PublicCommit, SchemaSha256: Hash(SchemaText), DefinitionsSha256: Hash(Definitions), Classes: Schema.classes.length, Services: Schema.services.length, Objects: Schema.objects.length, PublicTypes: Parsed.Exports.size, Globals: Parsed.Globals.size, Pages: Pages.length + 2, TutorialCheckpoints: ProjectReport }, null, 2) + '\n');
-console.log('[LUI:Docs] Generated ' + (Pages.length+2) + ' pages and ' + Tutorials.length + ' complete tutorial projects.');
+const Development = await GenerateLibraryReference(Repository, Root);
+await WriteFile(Path.join(Root, 'BuildReport.json'), JSON.stringify({ SdkVersion: Release.SdkVersion, PublicCommit: Release.PublicCommit, SchemaSha256: Hash(SchemaText), DefinitionsSha256: Hash(Definitions), Classes: Schema.classes.length, Services: Schema.services.length, Objects: Schema.objects.length, PublicTypes: Parsed.Exports.size, Globals: Parsed.Globals.size, Pages: Pages.length + 2 + Development.Pages, Development,
+  TutorialCheckpoints: ProjectReport.filter(Project => !Project.Name.startsWith('Recipe-')),
+  RecipeProjects: ProjectReport.filter(Project => Project.Name.startsWith('Recipe-')),
+}, null, 2) + '\n');
+console.log('[LUI:Docs] Generated ' + (Pages.length+2+Development.Pages) + ' pages, including ' + Development.Pages + ' development pages, and ' + Tutorials.length + ' complete example projects.');

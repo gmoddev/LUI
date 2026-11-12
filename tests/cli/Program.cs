@@ -25,6 +25,25 @@ static (int Status, string Output, string Error) Syntax(string Manifest, string 
 
 try
 {
+    string? Producer = Environment.GetEnvironmentVariable("LUI_TEST_DIAGNOSTICS");
+    if (Producer is not null) {
+        System.Diagnostics.ProcessStartInfo Start = new(Producer.EndsWith(".dll", StringComparison.Ordinal) ? "dotnet" : Producer) { UseShellExecute = false, CreateNoWindow = true };
+        if (Producer.EndsWith(".dll", StringComparison.Ordinal)) Start.ArgumentList.Add(Producer);
+        Start.ArgumentList.Add("--transport");
+        using StringWriter Advice = new();
+        Require(CliProgram.RunNative(Start, Advice) == 0 && Advice.ToString().Contains("network.server") &&
+            Advice.ToString().Contains("window may still be open") && !Advice.ToString().Contains("CANARY") &&
+            !Advice.ToString().Contains("[LUI:Diagnostic]"), "native CLI transport was vague, raw or disclosed private data");
+        Start.ArgumentList[Start.ArgumentList.Count - 1] = "--transport-noise";
+        using StringWriter Noise = new();
+        Require(CliProgram.RunNative(Start, Noise) == 1 && Noise.ToString().Contains("without a startup reason") &&
+            !Noise.ToString().Contains("CANARY") && !Noise.ToString().Contains("xxxxx") && !Noise.ToString().Contains("Capabilities"),
+            "native CLI accepted raw, oversized, unversioned or incomplete records");
+        Start.ArgumentList[Start.ArgumentList.Count - 1] = "--transport-flood";
+        using StringWriter Flood = new();
+        Require(CliProgram.RunNative(Start, Flood) == 0 && Flood.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Length is > 0 and <= 256 &&
+            !Flood.ToString().Contains("CANARY"), "native CLI flood was unbounded or disclosed data");
+    }
     SdkTests.Run(TempRoot, Checker, Runtime);
     string Project = Path.Combine(TempRoot, "My_LUI_Project");
     var Created = Invoke("new", Project);
@@ -92,9 +111,10 @@ try
     Require(Syntax(ManifestPath, Runtime).Status == 1,
         "malformed JSON escaped CLI error handling");
     File.WriteAllText(ManifestPath,
-        "{\"SchemaVersion\":1,\"Script\":\"src/main.luau\",\"Capabilities\":[\"Unknown\"]}");
-    Require(Syntax(ManifestPath, Runtime).Status == 1,
-        "check accepted an invalid manifest");
+        "{\"SchemaVersion\":1,\"Script\":\"src/main.luau\",\"Capabilities\":[\"PRIVATE_CAPABILITY_CANARY\"]}");
+    var InvalidCapability = Syntax(ManifestPath, Runtime);
+    Require(InvalidCapability.Status == 1 && InvalidCapability.Error.Contains("network.server") &&
+        !InvalidCapability.Error.Contains("CANARY"), "invalid capability did not provide safe corrective advice");
 
     string Modular = Path.Combine(TempRoot, "Modular_\u03bc");
     Directory.CreateDirectory(Path.Combine(Modular, "Src"));
@@ -111,6 +131,15 @@ try
     File.WriteAllText(ModularManifest, JsonSerializer.Serialize(ProjectManifest("Development")));
     string ProjectTool = Path.Combine(Path.GetDirectoryName(Checker)!, OperatingSystem.IsWindows() ? "LuiProjectTool.exe" : "LuiProjectTool");
     File.WriteAllText(ModuleData, "return {Count=4}"); File.WriteAllText(ModuleUnused, "error('CHECK_MUST_NOT_EXECUTE'); return false");
+    File.WriteAllText(ModuleEntry, "return true");
+    string ValidModularManifest = File.ReadAllText(ModularManifest);
+    foreach (string Tokens in new[] { "\"PRIVATE_CAPABILITY_CANARY\"", "\"network.server\",\"network.server\"" }) {
+        File.WriteAllText(ModularManifest, ValidModularManifest.Replace("\"Capabilities\":[]", "\"Capabilities\":[" + Tokens + "]"));
+        var InvalidProject = Invoke("check", ModularManifest, "--mode", "project", "--diagnostics", "development", "--checker", Checker);
+        Require(InvalidProject.Status == 1 && InvalidProject.Error.Contains("Capabilities") && !InvalidProject.Error.Contains("CANARY"),
+            "project capability reason was lost or disclosed input");
+    }
+    File.WriteAllText(ModularManifest, ValidModularManifest);
     string NativeDeclarationPath = Path.Combine(Modular, "Native.json"), NativeFile = Path.Combine(Modular, "Synthetic.dll");
     byte[] NativeBytes = [0, 255, 1, 2, 3]; File.WriteAllBytes(NativeFile, NativeBytes);
     string NativeHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(NativeBytes)).ToLowerInvariant();

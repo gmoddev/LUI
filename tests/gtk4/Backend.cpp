@@ -1,5 +1,7 @@
 #include "Backend.h"
 #include "LuiProject.h"
+#include "LuiApplicationServices.h"
+#include "Files.h"
 #include "../conversation/Fixture.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -8,6 +10,7 @@
 #include <stdexcept>
 #include <fstream>
 #include <unistd.h>
+#include <algorithm>
 
 namespace Lui::Gtk {
 // Explicit private test interop; never part of the public Luau or extension API.
@@ -26,6 +29,7 @@ struct Qualification {
     static size_t Events(Backend& Host) {return Host.Events.size();}
     static uint64_t Dropped(Backend& Host) {return Host.Dropped;}
     static size_t Views(Backend& Host) {return Host.Views.size();}
+    static std::string Style(Backend& Host,int Id) {return Host.Views.at(Id)->StyleJson;}
     static size_t CodeTags(Backend& Host,int Id) {return Host.Views.at(Id)->CodeTags.size();}
     static GtkTextTag* CodeTag(Backend& Host,int Id,int Index) {return Host.Views.at(Id)->CodeTags.at(static_cast<size_t>(Index));}
     static size_t ImageBytes(Backend& Host) {return Host.ImageCacheUsage();}
@@ -262,6 +266,36 @@ static void AdvancedText() {
     gtk_text_buffer_set_text(Buffer,"A\xF0\x9F\x99\x82\xE6\x96\x87",-1);
     g_signal_emit_by_name(Input,"preedit-changed",""); Host.Pump();
     Run(Host,"assert(not Input.IsComposing and Input.Text=='A\\u{1F642}\\u{6587}' and Starts==1 and Changes==1 and Ends==1)","native composition commit");
+    Run(Host,"Save=Instance.new('TextButton',{Parent=W,Name='Save',Text='Save'});Save.Activated:Connect(function() Saved=Input.Text;SavedComposing=Input.IsComposing end)");
+    g_signal_emit_by_name(Input,"preedit-changed","ni");
+    gtk_text_buffer_set_text(Buffer,"\xE4\xBD\xA0\xE5\xA5\xBD",-1);
+    g_signal_emit_by_name(Input,"preedit-changed","");
+    g_signal_emit_by_name(Qualification::Native(Host,Id(Host,"Save")),"clicked");
+    Host.Pump();
+    Run(Host,"assert(Saved=='\\u{4F60}\\u{597D}' and not SavedComposing)","IME commit precedes following native Save in one GTK batch");
+    // Include GTK's other commit ordering: empty preedit before buffer change.
+    g_signal_emit_by_name(Input,"preedit-changed","first");
+    g_signal_emit_by_name(Input,"preedit-changed","");
+    gtk_text_buffer_set_text(Buffer,"first",-1);
+    g_signal_emit_by_name(Qualification::Native(Host,Id(Host,"Save")),"clicked");
+    g_signal_emit_by_name(Input,"preedit-changed","second");
+    gtk_text_buffer_set_text(Buffer,"second",-1);
+    g_signal_emit_by_name(Input,"preedit-changed","");
+    Host.Pump();
+    Run(Host,"assert(Saved=='first' and Input.Text=='second' and not Input.IsComposing and Starts==4 and Ends==4)","two IME commits preserve intervening Save boundary");
+    g_signal_emit_by_name(Input,"preedit-changed","first");
+    gtk_text_buffer_set_text(Buffer,"first",-1);
+    g_signal_emit_by_name(Input,"preedit-changed","");
+    g_signal_emit_by_name(Qualification::Native(Host,Id(Host,"Save")),"clicked");
+    gtk_text_buffer_set_text(Buffer,"ordinary",-1);
+    Host.Pump();
+    Run(Host,"assert(Saved=='first' and Input.Text=='ordinary' and not Input.IsComposing)","ordinary edit cannot rewrite an earlier IME/Save boundary");
+    g_signal_emit_by_name(Input,"preedit-changed","old");
+    gtk_text_buffer_set_text(Buffer,"old",-1);
+    g_signal_emit_by_name(Input,"preedit-changed","");
+    Run(Host,"Input.Text='script'"); Host.Pump();
+    gtk_text_buffer_get_end_iter(Buffer,&Last); gtk_text_buffer_insert(Buffer,&Last,"x",1); Host.Pump();
+    Run(Host,"assert(Input.Text=='scriptx' and not Input.IsComposing);Save:Destroy()","retired IME revision does not suppress subsequent native editing");
     Run(Host,"Input.Multiline=false; Input.Text='normal'"); Settle(Host);
     gtk_editable_set_text(GTK_EDITABLE(Qualification::Native(Host,2)),"native old");
     Run(Host,"Input.Text='script current'"); Host.Pump();
@@ -498,6 +532,107 @@ static void WindowShortcuts() {
     Host.Stop(); Require(Qualification::Views(Host)==0,"shortcut shutdown retained views");
 }
 
+// Run against a fresh project captured by Stage-LibraryExample.py. This uses
+// the existing GTK widget callbacks and shared workload counters, not a second
+// benchmark harness. Native XTest split/keyboard journeys remain separate.
+static void Workbench(const char* Manifest,const char* Storage,const char* Report) {
+    const auto Began=std::chrono::steady_clock::now();
+    const auto Path=std::filesystem::absolute(std::filesystem::u8path(Manifest));
+    LuiProject* Project=nullptr;char Error[256]{};
+    LuiProjectOptionsV1 Options{};Options.StructSize=sizeof(Options);Options.AbiVersion=1;
+    Require(Lui_ProjectPrepare(&Options,Path.string().data(),Path.string().size(),&Project,Error,sizeof(Error)),Error);
+    struct Release {LuiProject* Value;~Release(){Lui_ProjectRelease(Value);}} Released{Project};
+    Backend Host;auto* Runtime=Host.GetRuntime();
+    Json Result{{"Passed",false},{"Transitions",0},{"WorkingSetBaselineBytes",WorkingSet()}};
+    auto Node=[&](const char* Name) {for(const auto& Value:Tree(Host)) if(Value.at("name")==Name) return Value;throw std::runtime_error("workbench node absent");};
+    auto NoteEditor=[&] {return Node("LeftEditor").at("text").template get<std::string>().find("Synthetic document 3")!=std::string::npos?"LeftEditor":"RightEditor";};
+    auto Rows=[&] {Json Values=Json::array();for(const auto& Value:Tree(Host)) if(Value.at("name").template get<std::string>().find("Open-")==0) Values.push_back({Value.at("name"),Value.at("bounds")});return Values;};
+    auto Tick=[&] {for(int Frame=0;Frame<8;++Frame){Host.Pump();g_usleep(4000);}};
+    auto Until=[&](auto Predicate,const char* Code) {
+        const auto Started=std::chrono::steady_clock::now();
+        while(!Predicate() && std::chrono::steady_clock::now()-Started<std::chrono::seconds(5)) Tick();
+        Require(Predicate(),Code);
+    };
+    GtkWidget* Left=nullptr;GtkWidget* Right=nullptr;
+    try {
+        LuiCapabilityDeclarationV1 Caps{sizeof(Caps),1,LUI_CAPABILITY_STORAGE};
+        Require(Lui_DeclareCapabilities(Runtime,&Caps),"workbench grants");
+        Require(Lui_InstallProjectStorageV1(Runtime,Project,Storage,Path.parent_path().string().c_str())==0,"workbench storage");
+        LuiProjectRunOptionsV1 RunOptions{sizeof(RunOptions),1,0,0,0};Require(Lui_RunProject(Runtime,Project,&RunOptions),"workbench execution");
+        Tick();Until([&]{return Node("Inspector").at("text").template get<std::string>().find("open documents")!=std::string::npos;},"workbench ready");
+        const double Startup=std::chrono::duration<double>(std::chrono::steady_clock::now()-Began).count();
+        Result["StartupSeconds"]=Startup;Require(Startup<=10,"workbench startup budget");
+        Left=Qualification::Native(Host,Id(Host,"LeftEditor"));Right=Qualification::Native(Host,Id(Host,"RightEditor"));
+        g_object_add_weak_pointer(G_OBJECT(Left),reinterpret_cast<gpointer*>(&Left));
+        g_object_add_weak_pointer(G_OBJECT(Right),reinterpret_cast<gpointer*>(&Right));
+        size_t Peak=WorkingSet(),PeakViews=0,PeakEditors=0;std::vector<double> EditSamples;
+        for(int Index=0;Index<200;++Index) {
+            switch(Index%8) {
+                case 0: Click(Host,Id(Host,"Tab-Note-3"));break;
+                case 1: {
+                    Click(Host,Id(Host,"Tab-Note-3"));Tick();
+                    const char* Name=NoteEditor();
+                    const std::string Before=Node(Name).at("text");
+                    auto* Editor=GTK_TEXT_VIEW(Qualification::Native(Host,Id(Host,Name)));
+                    Require(gtk_widget_grab_focus(GTK_WIDGET(Editor)),"workbench focus");
+                    auto* Buffer=gtk_text_view_get_buffer(Editor);GtkTextIter End;
+                    gtk_text_buffer_get_end_iter(Buffer,&End);gtk_text_buffer_place_cursor(Buffer,&End);
+                    const auto EditAt=std::chrono::steady_clock::now();gtk_text_buffer_insert_at_cursor(Buffer,"x",1);Host.Pump();
+                    const double EditMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-EditAt).count();
+                    EditSamples.push_back(EditMs);Lui_RecordPerformance(Runtime,1,EditMs);
+                    const std::string After=Node(Name).at("text");
+                    Require(After==Before+"x" && Node("Tab-Note-3").at("text").template get<std::string>().find("* ")==0,"workbench native edit");
+                    break;
+                }
+                case 2:
+                    Click(Host,Id(Host,"Document.Save"));Until([&]{return Node("Tab-Note-3").at("text").template get<std::string>().find("* ")!=0;},"workbench save");break;
+                case 3: {
+                    const std::string Before=NoteEditor();Click(Host,Id(Host,"Workspace.Move"));Tick();Require(NoteEditor()!=Before,"workbench redock");break;
+                }
+                case 4: {
+                    const auto Before=Node("LeftEditor").at("bounds").at("width");
+                    gtk_window_set_default_size(GTK_WINDOW(Qualification::Native(Host,Id(Host,"Workbench"))),Index%16==4?1220:1180,780);
+                    Until([&]{return Node("LeftEditor").at("bounds").at("width")!=Before;},"workbench resize");break;
+                }
+                case 5: {
+                    const auto Before=Qualification::Style(Host,Id(Host,"LeftEditor"));Click(Host,Id(Host,"View.Theme"));Tick();
+                    Require(Qualification::Style(Host,Id(Host,"LeftEditor"))!=Before,"workbench theme");break;
+                }
+                case 6: {
+                    auto* Controller=Qualification::Controller(Host,Id(Host,"Navigation"),GTK_TYPE_EVENT_CONTROLLER_SCROLL);
+                    const auto Before=Rows();gboolean Handled=false;g_signal_emit_by_name(Controller,"scroll",0.0,Index%16==6?120.0:-120.0,&Handled);Tick();
+                    Require(Handled && Rows()!=Before,"workbench native navigation scroll");break;
+                }
+                case 7:
+                    Click(Host,Id(Host,"Tab-Note-2"));Tick();Require(Node("Inspector").at("text").template get<std::string>().find("\n\nNote 2\n")!=std::string::npos,"workbench tab2");
+                    Click(Host,Id(Host,"Tab-Note-3"));Tick();Require(Node("Inspector").at("text").template get<std::string>().find("\n\nNote 3\n")!=std::string::npos,"workbench tab3");break;
+            }
+            Tick();Result["Transitions"]=Index+1;
+            Peak=std::max(Peak,WorkingSet());PeakViews=std::max(PeakViews,Qualification::Views(Host));
+            size_t Editors=0;for(const auto& Value:Tree(Host)) if(Value.at("className")=="CodeEditor") ++Editors;
+            PeakEditors=std::max(PeakEditors,Editors);
+            Require(Left && Right && Left==Qualification::Native(Host,Id(Host,"LeftEditor")) && Right==Qualification::Native(Host,Id(Host,"RightEditor")) && Editors==2 && PeakViews<=256 && Qualification::ImageBytes(Host)<=32*1024*1024 && Qualification::ImageRequests(Host)<=32,"workbench native resource budget");
+            const auto Sample=Json::parse(Lui_GetPerformanceJson(Runtime));Require(Sample.at("LuaMemoryBytes")<=67108864,"workbench VM budget");
+        }
+        Click(Host,Id(Host,"Workspace.Save"));Until([&]{return Node("Status").at("text")=="Layout saved locally.";},"workbench layout save");
+        const auto Metrics=Json::parse(Lui_GetPerformanceJson(Runtime));Result["Metrics"]=Metrics;
+        std::sort(EditSamples.begin(),EditSamples.end());Result["EditSamplesMs"]=EditSamples;
+        Require(EditSamples.size()==25 && EditSamples[23]<=100 && EditSamples[24]<=250,"workbench native edit budget");
+        Result["WorkingSetPeakBytes"]=Peak;Result["PeakViews"]=PeakViews;Result["PeakEditors"]=PeakEditors;
+        Require(Peak<=512*1024*1024 && Metrics.at("LiveInstances")<=256 && Metrics.at("Connections")<=192,"workbench memory/object budget");
+        Require(Metrics["Input"]["Samples"]>=100 && Metrics["Input"]["P95Ms"]<=100 && Metrics["Input"]["P99Ms"]<=250,"workbench input budget");
+        Require(Metrics["Layout"]["Samples"]>=200 && Metrics["Layout"]["P95Ms"]<=50 && Metrics["Layout"]["P99Ms"]<=100 && Metrics["Render"]["Samples"]>=100 && Metrics["Render"]["P95Ms"]<=50,"workbench presentation budget");
+        Host.Stop();Result["Retired"]=!Left && !Right && Qualification::Views(Host)==0 && Qualification::ImageRequests(Host)==0;
+        Require(Result["Retired"],"workbench retirement");Result["Passed"]=true;
+    } catch(const std::exception& Failure) {Result["Failure"]=Failure.what();}
+    Host.Stop();
+    if(Left) g_object_remove_weak_pointer(G_OBJECT(Left),reinterpret_cast<gpointer*>(&Left));
+    if(Right) g_object_remove_weak_pointer(G_OBJECT(Right),reinterpret_cast<gpointer*>(&Right));
+    Result["Boundary"]="Native GTK widget callbacks through owner response and existing native render submission counters; excludes physical input/display and pacing";
+    std::ofstream Output(Report);Output<<Result.dump(2)<<'\n';Require(static_cast<bool>(Output),"workbench report");
+    std::printf("[LUI:WorkbenchTest] %s\n",Result.dump().c_str());Require(Result["Passed"],"workbench qualification failed");
+}
+
 static void WindowLifecycle() {
     Backend Host;
     Run(Host,R"(
@@ -541,9 +676,11 @@ static void Group(const char* Name,void (*Execute)()) {
     Execute();
     std::printf("[LUI:GtkTest] Passed %s\n",Name); std::fflush(stdout);
 }
-int main() {
+int main(int Count,char** Arguments) {
     try {
         Require(Backend::Initialize(),"display unavailable");
+        if(Count==5 && std::string(Arguments[1])=="--workbench") {Workbench(Arguments[2],Arguments[3],Arguments[4]);return 0;}
+        Require(Count==1,"unexpected test arguments");
         Group("Controls",Controls); Group("WindowShortcuts",WindowShortcuts);
         Group("WindowLifecycle",WindowLifecycle); Group("Modular",Modular);
         Group("Clipboard",Clipboard); Group("Dialogs",Dialogs); Group("Viewports",Viewports);

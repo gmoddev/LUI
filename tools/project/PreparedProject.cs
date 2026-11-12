@@ -41,6 +41,8 @@ internal sealed class PreparedProject : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CapCall(IntPtr Runtime, ref Capabilities Value);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int NetworkCall(IntPtr Runtime, ref NetworkPolicy Value);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int AssetCall(IntPtr Runtime,[MarshalAs(UnmanagedType.LPUTF8Str)] string Name);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate uint StorageCall(IntPtr Runtime,IntPtr Project,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string DataRoot,[MarshalAs(UnmanagedType.LPUTF8Str)] string ApplicationRoot);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr ErrorCall(IntPtr Runtime);
     private IntPtr Library;
     private IntPtr Handle;
@@ -96,6 +98,12 @@ internal sealed class PreparedProject : IDisposable
         Capabilities Caps=new(){StructSize=(uint)Marshal.SizeOf<Capabilities>(),AbiVersion=1,Granted=Requested};
         if(Export<CapCall>("Lui_DeclareCapabilities")(Runtime,ref Caps)==0) throw new InvalidDataException(Error(Runtime));
         ConfigureServices?.Invoke();
+        if(Manifest.TryGetProperty("Storage",out _))
+        {
+            string DataRoot=Environment.GetFolderPath(OperatingSystem.IsWindows()?Environment.SpecialFolder.LocalApplicationData:Environment.SpecialFolder.UserProfile);
+            if(string.IsNullOrEmpty(DataRoot) || Export<StorageCall>("Lui_InstallProjectStorageV1")(Runtime,Handle,DataRoot,Path.GetDirectoryName(ManifestPath)!)!=0)
+                throw new InvalidDataException("[LUI:Project] StorageUnavailable");
+        }
         foreach(JsonElement Name in Manifest.GetProperty("Assets").EnumerateArray())
             if(Export<AssetCall>("Lui_RegisterAsset")(Runtime,Name.GetString()!)==0) throw new InvalidDataException(Error(Runtime));
         if(Manifest.TryGetProperty("NetworkPolicy",out JsonElement Data))

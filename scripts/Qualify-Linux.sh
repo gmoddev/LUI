@@ -11,6 +11,7 @@ ctest --test-dir "$Build" -C Debug --output-on-failure --no-tests=error -E '^Lui
 dotnet run --project tests/manifest/ManifestTests.csproj --configuration Release -- "$PWD"
 dotnet run --project tests/packaging/PackagingTests.csproj --configuration Release
 dotnet run --project tests/diagnostics/DiagnosticsTests.csproj --configuration Release
+export LUI_TEST_DIAGNOSTICS="$PWD/tests/diagnostics/bin/Release/net10.0/DiagnosticsTests.dll"
 dotnet build tools/cli/Lui.Cli.csproj --configuration Release
 dotnet run --project tests/cli/CliTests.csproj --configuration Release -- "$Build/libLuiRuntime.so" "$Build/LuiTypeCheck"
 Cli="$PWD/tools/cli/bin/Release/net10.0/lui.dll"
@@ -20,7 +21,7 @@ dotnet build tools/preview-host/Lui.PreviewHost.csproj --configuration Release
 Preview="$PWD/tools/preview-host/bin/Release/net10.0/lui-preview-host.dll"
 dotnet run --project tests/preview/PreviewTests.csproj --configuration Release -- "$Preview" "$Build/libLuiRuntime.so"
 LUI_TEST_PREVIEW_HOST="$Preview" LUI_TEST_RUNTIME="$Build/libLuiRuntime.so" LUI_TEST_CLI="$Cli" LUI_TEST_TYPECHECK="$Build/LuiTypeCheck" \
-    node --test tests/editor/EditorTests.js tests/editor/TypeTests.js tests/editor/ProjectTests.js tests/editor/SdkTests.js
+    node --test tests/editor/EditorTests.js tests/editor/TypeTests.js tests/editor/ProjectTests.js tests/editor/SdkTests.js tests/editor/NativeRestartTests.js tests/editor/ProjectFilesTests.js
 "$Build/LuiSchemaDump" > "$Build/schema.json"
 cmp types/schema.json "$Build/schema.json"
 echo '[LUI:Build] Linux qualification passed'

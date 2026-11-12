@@ -23,6 +23,15 @@ try
     }
     Reject(ManifestPath, "{\"SchemaVersion\":2,\"Script\":\"app.luau\"}");
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"Unknown\"]}");
+    foreach (var Case in new[] { (Tokens: "\"PRIVATE_TOKEN_CANARY\"", Code: "UnknownCapability"),
+            (Tokens: "\"network.server\",\"network.server\"", Code: "DuplicateCapability") }) {
+        File.WriteAllText(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[" + Case.Tokens + "]}");
+        try { AppManifest.Load(ManifestPath); throw new Exception("invalid capability accepted"); }
+        catch (InvalidDataException Error) {
+            if (ApplicationDiagnostic.GetCode(Error.Message) != Case.Code || ApplicationDiagnostic.Describe(Error.Message).Contains("CANARY"))
+                throw new Exception("[LUI:ManifestTest] capability reason or privacy failed");
+        }
+    }
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Extensions\":[\"a.dll\"]}");
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"app.luau\",\"Capabilities\":[\"NativeExtensions\"],\"Extensions\":[\"../a.dll\"]}");
     Reject(ManifestPath, "{\"SchemaVersion\":1,\"Script\":\"../outside.luau\"}");

@@ -268,7 +268,8 @@ static int BindTcp(lua_State* State, bool Raw) {
     auto* Runtime = GetRuntime(State);
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) ||
         (Raw && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW)))
-        return Raise(State, "[LUI:Network] network.server and network.raw grants are required");
+        return Raise(State, !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) ?
+            "[LUI:Capabilities] NetworkServerRequired" : "[LUI:Capabilities] NetworkRawRequired");
     luaL_checktype(State, 2, LUA_TTABLE);
     std::string Address = OptionString(State, 2, "Address", "loopback");
     std::string Family = OptionString(State, 2, "Family", "");
@@ -469,7 +470,8 @@ static int ConnectTcp(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     if ((Runtime->GrantedCapabilities & (LUI_CAPABILITY_NETWORK_CLIENT | LUI_CAPABILITY_NETWORK_RAW)) !=
         (LUI_CAPABILITY_NETWORK_CLIENT | LUI_CAPABILITY_NETWORK_RAW))
-        return Raise(State, "[LUI:Network] network.client and network.raw grants are required");
+        return Raise(State, !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT) ?
+            "[LUI:Capabilities] NetworkClientRequired" : "[LUI:Capabilities] NetworkRawRequired");
     luaL_checktype(State, 2, LUA_TTABLE);
     std::string Host = OptionString(State, 2, "Address", "loopback");
     if (Host == "loopback") Host = "127.0.0.1";
@@ -636,7 +638,7 @@ static int HttpRequest(lua_State* State, bool Get) {
     CheckModuleEffect(State);
     auto* Runtime = GetRuntime(State);
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
-        return Raise(State, "[LUI:Http] network.client grant is required");
+        return Raise(State, "[LUI:Capabilities] NetworkClientRequired");
     Lui::Http::Message Request;
     std::string Url;
     size_t Timeout = 10000, MaxBody = 1024 * 1024;
@@ -767,7 +769,7 @@ static int CancelHttp(lua_State* State) {
     CheckModuleEffect(State);
     auto* Runtime = GetRuntime(State);
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
-        return Raise(State, "[LUI:Http] network.client grant is required");
+        return Raise(State, "[LUI:Capabilities] NetworkClientRequired");
     if (auto* Network = Runtime->Network) {
         Network->HttpCancelThrough = Network->HttpSequence;
         if (!Network->HttpCancelPending.exchange(true)) asio::post(Network->Io, [Network] {

@@ -42,9 +42,18 @@ is implied. Completed advanced UI/native-service exits retain their original sco
 The initial SDK tooling prepares a portable Windows preview, an offline VSIX,
 matched component discovery, exact project pins and modular starters. Native
 Run is the first application testing loop; the independent inspector visualizes
-shared layout. Native restart supervision and application-authored tests follow
-separately. Signing, downloaded-file launch and clean-machine qualification
-remain prerequisites for a supported SDK download. See [the SDK guide](docs/SDK.md).
+shared layout and refuses privileged project execution. The immediate work is
+better capability/startup diagnostics and practical guides for declared images,
+time, right-click input and local HTTP. Next come fuller member/service reference
+contracts, retained versioned docs and the everyday development loop. Native
+restart supervision and application-authored tests remain separate slices.
+
+Unreleased SDK08 passed the selected clean Windows 10 LTSC SDK journey and an
+independent app-only recipient. Windows 11, real Windows IME, signing, ordinary
+downloaded-file trust and human first-session usability retain independent gates.
+New user-selected document IO, native menus and window customization need explicit
+API design before implementation. See [the SDK guide](docs/SDK.md). Published
+preview.1 artifacts remain unchanged.
 
 ## Android and iOS
 

@@ -2,6 +2,7 @@ node_modules/
 .astro/
 dist/
 src/content/docs/docs/
+src/content/docs/next/
 src/content/docs/index.mdx
 src/content/docs/404.md
 public/downloads/

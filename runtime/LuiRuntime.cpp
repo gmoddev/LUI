@@ -90,11 +90,14 @@ static void* VmAllocate(void* Context, void* Pointer, size_t OldSize, size_t New
     return Result;
 }
 
-static void VmInterrupt(lua_State* State, int) {
+static void VmInterrupt(lua_State* State, int Gc) {
     auto* Runtime = static_cast<LuiRuntime*>(lua_callbacks(State)->userdata);
     if (Runtime && Runtime->MaxInterrupts && ++Runtime->InterruptCount > Runtime->MaxInterrupts) {
         MarkModuleLimit(Runtime);
-        luaL_error(State, "[LUI:Sandbox] execution limit exceeded");
+        // Luau also calls this hook inside its collector. Unwinding there can
+        // leave the collector inconsistent. Keep counting and reject execution
+        // at the next ordinary VM safepoint instead.
+        if (Gc < 0) luaL_error(State, "[LUI:Sandbox] execution limit exceeded");
     }
 }
 
@@ -1699,19 +1702,19 @@ static int AppGetService(lua_State* State) {
         luaL_error(State, "unknown service '%s'", Name.c_str());
     if (((Runtime->Sandboxed && HasExtensionService(Runtime, Name)) || NativeServiceNeedsHostGrant(Runtime, Name)) &&
         !(Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES))
-        luaL_error(State, "host service capability was not granted");
+        luaL_error(State, "[LUI:Capabilities] HostServicesRequired");
     if ((Name == "StorageService" || Name == "NotificationService" || Name == "TrayService") && !HasNativeService(Runtime, Name))
-        luaL_error(State, "[LUI:NativeService] Unsupported");
+        luaL_error(State, "[LUI:Capabilities] ProviderUnavailable");
     if ((Name == "ClipboardService" || Name == "DialogService") &&
         !PlatformServiceAvailable(Runtime, Name))
-        luaL_error(State, "%s capability was not granted or backend is unavailable", Name.c_str());
+        luaL_error(State, "%s", Name == "ClipboardService" ? "[LUI:Capabilities] ClipboardUnavailable" : "[LUI:Capabilities] DialogsUnavailable");
     if (Name == "NetworkService" &&
         !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW))
-        luaL_error(State, "network.raw capability was not granted");
+        luaL_error(State, "[LUI:Capabilities] NetworkRawRequired");
     if (Name == "HttpService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
-        luaL_error(State, "network.client capability was not granted");
+        luaL_error(State, "[LUI:Capabilities] NetworkClientRequired");
     if (Name == "HttpServerService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER))
-        luaL_error(State, "network.server capability was not granted");
+        luaL_error(State, "[LUI:Capabilities] NetworkServerRequired");
     auto Found = Runtime->ServiceRefs.find(Name);
     if (Found != Runtime->ServiceRefs.end()) {
         lua_getref(State, Found->second);
@@ -2514,6 +2517,7 @@ extern "C" LUI_API int LUI_CALL Lui_RunProject(LuiRuntime* Runtime, const LuiPro
     Runtime->ApplicationStarted = true; Runtime->ProjectBootstrap = true;
     int Status = LUA_ERRRUN;
     std::string Failure = "LoadFailed";
+    std::string CapabilityFailure;
     try {
         {
             DepthGuard Guard(Runtime->VmDepth, Runtime);
@@ -2522,6 +2526,8 @@ extern "C" LUI_API int LUI_CALL Lui_RunProject(LuiRuntime* Runtime, const LuiPro
         if (Status == LUA_ERRMEM || Runtime->InterruptCount > Runtime->MaxInterrupts) Failure = "LimitExceeded";
         else if (Status != LUA_OK) {
             const char* Message = lua_tostring(Runtime->State, -1);
+            const auto Projected = ProjectError(Runtime, Message ? Message : "");
+            if (Projected.rfind("[LUI:Capabilities] ", 0) == 0) CapabilityFailure = Projected;
             if (Message) for (const auto* Code : {"InvalidPath","MissingModule","ForbiddenImport","EntryImportDenied","Cycle",
                 "InitializationEffect","YieldNotAllowed","InvalidResult","LoadFailed","LimitExceeded","ProjectNotConfigured"})
                 if (std::string(Message) == std::string("[LUI:Modules] ") + Code) Failure = Code;
@@ -2551,7 +2557,7 @@ extern "C" LUI_API int LUI_CALL Lui_RunProject(LuiRuntime* Runtime, const LuiPro
     // Retire callbacks/VM/cache/queued work before returning a fail-empty tree.
     Runtime->BackendFailed = true;
     StopGeneration(Runtime); Runtime->ProjectBootstrap = false;
-    Runtime->LastError = "[LUI:Modules] " + Failure;
+    Runtime->LastError = CapabilityFailure.empty() ? "[LUI:Modules] " + Failure : CapabilityFailure;
     EmitLog(Runtime, "Error", Runtime->LastError); return 0;
 }
 

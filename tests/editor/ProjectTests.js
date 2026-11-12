@@ -65,7 +65,7 @@ Test('first saved modular document starts project checking without an earlier ex
         const Folder={uri:{fsPath:Root}}, Session=new(require('node:events').EventEmitter)(); let Started;
         Session.Stop=()=>{}; Session.Start=Paths=>{Started=Paths;};
         const Collection={clear(){},dispose(){}};
-        const Vscode={workspace:{isTrusted:true,textDocuments:[],getWorkspaceFolder:()=>Folder,getConfiguration:()=>({get:(Name,Default)=>Settings[Name]??Default})},
+        const Vscode={workspace:{isTrusted:true,textDocuments:[],workspaceFolders:[Folder],getWorkspaceFolder:()=>Folder,getConfiguration:()=>({get:(Name,Default)=>Settings[Name]??Default})},
             languages:{createDiagnosticCollection:()=>Collection}};
         const Controller=new TypeDiagnostics(Vscode,{appendLine(){}},Session);
         Controller.OnDocument({uri:{scheme:'file',fsPath:Path.join(Root,'Src/State.luau')}});

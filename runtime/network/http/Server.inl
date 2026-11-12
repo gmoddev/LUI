@@ -179,7 +179,7 @@ static int CreateServer(lua_State* State) {
     CheckModuleEffect(State);
     auto* Runtime = GetRuntime(State);
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER))
-        return Raise(State, "[LUI:HttpServer] network.server grant is required");
+        return Raise(State, "[LUI:Capabilities] NetworkServerRequired");
     luaL_checktype(State, 2, LUA_TTABLE);
     auto* Network = Context(Runtime);
     if (Network->Servers.size() >= 4) return Raise(State, "[LUI:HttpServer] TooManyServers");

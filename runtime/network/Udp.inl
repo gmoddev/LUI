@@ -31,7 +31,8 @@ static int BindUdp(lua_State* State) {
     auto* Runtime = GetRuntime(State);
     const auto Grants = LUI_CAPABILITY_NETWORK_SERVER | LUI_CAPABILITY_NETWORK_RAW;
     if ((Runtime->GrantedCapabilities & Grants) != Grants)
-        return Raise(State, "[LUI:Network] network.server and network.raw grants are required");
+        return Raise(State, !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) ?
+            "[LUI:Capabilities] NetworkServerRequired" : "[LUI:Capabilities] NetworkRawRequired");
     luaL_checktype(State, 2, LUA_TTABLE);
     std::string Address = OptionString(State, 2, "Address", "loopback");
     std::string Family = OptionString(State, 2, "Family", "");
@@ -151,7 +152,7 @@ static int SendToAsync(lua_State* State) {
     CheckModuleEffect(State);
     auto* Runtime = GetRuntime(State);
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
-        return Raise(State, "[LUI:Network] network.client grant is required");
+        return Raise(State, "[LUI:Capabilities] NetworkClientRequired");
     auto Socket = GetUdpSocket(State);
     if (!Socket->Open) return Raise(State, "[LUI:Network] Closed");
     luaL_checktype(State, 2, LUA_TTABLE);

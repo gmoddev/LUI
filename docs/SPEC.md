@@ -37,9 +37,31 @@ Schema v2 declares exact-case application/dependency sources and pinned vendored
 
 Read [project hosting](PROJECT-HOST.md), [typechecking](PROJECT-TYPECHECK.md), [host declarations](PROJECT-DECLARATIONS.md), [native provider bindings](PROJECT-NATIVE-BINDINGS.md) and [packaging](PROJECT-PACKAGE.md).
 
+Development editor tools offer explicit Restart App after saving project files.
+It retires the current app before fresh SDK validation and launch; application
+memory is discarded. Stop cancels pending launches. Development extension 0.1.5
+also warns about undeclared source and offers Add File to Project. This stages
+only Modules.Files in the unsaved manifest for review and saving. The shared
+checker remains authoritative; neither action executes undeclared files.
+Development extension 0.1.6 adds persistent process state and conservative restart
+hints after editor changes. Running does not certify window readiness or an exact
+source snapshot. Stop remains available before spawn and during bounded shutdown.
+
+Development extension 0.1.7 also cancels inspector/type-check preparation when its
+workspace or tool settings change. Retired clients cannot overwrite a replacement.
+Setup reads accept bounded regular UTF-8 files and report fixed nonmodal guidance
+without echoing malformed manifest content.
+
 ## Capabilities and diagnostics
 
 Hosts grant capabilities explicitly; manifests can narrow them. VM execution/memory limits do not sandbox privileged native libraries. Policy-enabled projects choose diagnostics before VM creation. Sensitive fields use fixed redacted projections in framework diagnostics; explicit application output can still disclose application data. Development and Restricted modes have different inspection/checking permissions.
+
+Development hosts add bounded fixed-code native/editor diagnostics for missing
+grants, invalid capability tokens and startup failures. Runtime operation errors
+can leave the window open. The isolated layout inspector remains unprivileged and
+directs privileged projects to Run App. This transport carries no private source,
+paths or arbitrary native stderr; published preview.1 still has its older generic
+exit-code limitation. Refer to the [versioned capability guide](https://gmoddev.github.io/LUI/docs/sdk-0.1.0-preview.1/guides/capabilities/).
 
 ## Networking
 
@@ -54,11 +76,33 @@ cancellation and retirement suppress stale work. Nonquiescent native code stays
 pinned and charged rather than being force-unloaded. Structured schema 3/ABI 2
 declarations derive checker types and match captured registrations before Init.
 
-Storage is explicitly installed by trusted embedders on Windows/Linux. Separate
-grants control Windows notifications/tray; GTK reports these unsupported. Native
+Trusted embedders explicitly install storage on Windows/Linux. Desktop SDK
+projects in next SDK preview.2 can request `Storage.ApplicationId` alongside the Storage
+capability; released preview.1 does not admit this field. The desktop owner provisions a scope bound to that identity and the
+native project directory. Restarting retains data; copied and packaged roots
+have separate scopes. Invalid identities or unavailable storage fail startup
+without granting a fallback scope. See [SDK setup](SDK.md).
+Separate grants control Windows notifications/tray; GTK reports these unsupported. Native
 payloads stay out of framework-owned diagnostics. These interfaces do not
 establish encryption, rollback, secure deletion or application protocol security.
 See [the complete service contract](NATIVE-SERVICES.md).
+
+## Optional development libraries
+
+The [LuiWorkbench contract](../libraries/LuiWorkbench/README.md) describes
+explicitly vendored development modules for the next SDK. Commands, document
+buffers/save receipts, workspace presentation and preference adapters reuse
+existing public runtime APIs. Module exported types and the library catalog
+drive the separate development reference. Importing a module starts no service
+or task. Storage remains ordinary unencrypted bytes with explicit host grants
+and scope provisioning. These modules are not in SDK 0.1.0-preview.1; native
+ABI and the released runtime schema remain unchanged.
+
+The optional [NumericInput composition](../libraries/LuiUI/README.md) adds a
+bounded text/step control using existing Instances and private canonical support
+sources. Windows headless types, cleanup and owner-input checks pass. Linux and
+actual native GUI/input remain unqualified for this component. Its catalog
+records public module types and exact SupportFiles without a new native API.
 
 ## Qualification evidence
 

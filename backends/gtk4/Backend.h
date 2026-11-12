@@ -40,6 +40,7 @@ private:
         std::vector<GObject*> TextSources;
         std::vector<GtkTextTag*> CodeTags;
         uint64_t Epoch=0;
+        uint64_t CompositionRevision=0;
         std::string ClassName;
         std::string AccessibilityLabel;
         GtkWidget* Native=nullptr;
@@ -98,6 +99,7 @@ private:
     void Connect(View& Target);
     void ConnectText(View& Target);
     void TextEvent(View& Target);
+    bool ReadTextEvent(View& Target,Event& Value);
     void ClearCodeStyles(View& Target);
     bool ApplyCodeStyles(View& Target,const std::string& Encoded);
     void ApplySelection(View& Target);

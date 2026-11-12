@@ -1,0 +1,10 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Json",
+  "TargetSdk": "0.1.0-preview.2",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {"Name": "Json", "Summary": "Encode and decode bounded UTF-8 JSON with explicit null and container identities.", "Types": ["Limits"], "Functions": ["Array", "Object", "Encode", "Decode"]}
+  ]
+}

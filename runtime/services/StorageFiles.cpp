@@ -5,6 +5,8 @@
 #include <cstring>
 #include <cerrno>
 #include <map>
+#include <vector>
+#include <utility>
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -45,6 +47,12 @@ bool DataName(const std::string& Name) {
 struct File {
     HANDLE Value = INVALID_HANDLE_VALUE;
     explicit File(HANDLE Value) : Value(Value) { if (Value == INVALID_HANDLE_VALUE) Fail("ProviderFailure"); }
+    File(const File&) = delete;
+    File(File&& Other) noexcept : Value(std::exchange(Other.Value,INVALID_HANDLE_VALUE)) {}
+    File& operator=(File&& Other) noexcept {
+        if (this != &Other) { Close(); Value = std::exchange(Other.Value,INVALID_HANDLE_VALUE); }
+        return *this;
+    }
     ~File() { if (Value != INVALID_HANDLE_VALUE) CloseHandle(Value); }
     void Close() { if (Value != INVALID_HANDLE_VALUE) { CloseHandle(Value); Value = INVALID_HANDLE_VALUE; } }
 };
@@ -62,10 +70,26 @@ std::wstring Final(HANDLE Value) {
     if (!Count || Count >= Length) Fail("ProviderFailure"); Result.resize(Count); return Result;
 }
 uint64_t Size(const BY_HANDLE_FILE_INFORMATION& Value) { return (uint64_t(Value.nFileSizeHigh)<<32) | Value.nFileSizeLow; }
+std::vector<File> OpenScope(const std::filesystem::path& Base, const std::string& Scope) {
+    std::vector<File> Held; Held.reserve(4);
+    Held.emplace_back(CreateFileW(Base.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    Info(Held.back().Value, true);
+    for (const auto& Part : {std::string("LUI"), std::string("Applications"), Scope}) {
+        const auto Path = Final(Held.back().Value) + L"\\" + std::wstring(Part.begin(), Part.end());
+        if (!CreateDirectoryW(Path.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) Fail("ProviderFailure");
+        Held.emplace_back(CreateFileW(Path.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+        Info(Held.back().Value, true);
+    }
+    return Held;
+}
 #else
 struct File {
     int Value = -1;
     explicit File(int Value) : Value(Value) { if (Value < 0) Fail("ProviderFailure"); }
+    File(const File&) = delete;
+    File(File&& Other) noexcept : Value(std::exchange(Other.Value,-1)) {}
     ~File() { if (Value >= 0) close(Value); }
 };
 struct stat Info(int Value, bool Directory = false) {
@@ -73,23 +97,51 @@ struct stat Info(int Value, bool Directory = false) {
     if (fstat(Value,&Result) || (Directory ? !S_ISDIR(Result.st_mode) : (!S_ISREG(Result.st_mode) || Result.st_nlink != 1))) Fail("ProviderFailure");
     return Result;
 }
+std::vector<File> OpenScope(const std::filesystem::path& Base, const std::string& Scope) {
+    std::vector<File> Held; Held.reserve(4);
+    Held.emplace_back(open(Base.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    Info(Held.back().Value, true);
+    for (const auto& Part : {std::string(".lui"), std::string("Applications"), Scope}) {
+        if (mkdirat(Held.back().Value, Part.c_str(), 0700) && errno != EEXIST) Fail("ProviderFailure");
+        Held.emplace_back(openat(Held.back().Value, Part.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+        const auto Value = Info(Held.back().Value, true);
+        if (Value.st_uid != geteuid() || (Value.st_mode & 077)) Fail("ProviderFailure");
+    }
+    return Held;
+}
 #endif
 }
 struct StorageFiles::State {
     File Root;
     std::unique_ptr<File> Lock;
+    // Keep the complete provisioning walk pinned until lock acquisition and
+    // the Windows root-sharing transition have both completed.
+    explicit State(std::vector<File> Scope) : State(std::move(Scope.back())) {}
 #if defined(_WIN32)
-    explicit State(const std::filesystem::path& Path) : Root(CreateFileW(Path.c_str(),FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,nullptr)) {
+    explicit State(const std::filesystem::path& Path) : State(File(CreateFileW(Path.c_str(),FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,nullptr))) {}
+    explicit State(File Handle) : Root(std::move(Handle)) {
         Info(Root.Value,true);
-        Lock = std::make_unique<File>(CreateFileW((Final(Root.Value)+L"\\.lui-lock").c_str(),GENERIC_READ | GENERIC_WRITE,
-            0,nullptr,OPEN_ALWAYS,FILE_FLAG_OPEN_REPARSE_POINT,nullptr)); Info(Lock->Value);
+        Lock = std::make_unique<File>(File(CreateFileW((Final(Root.Value)+L"\\.lui-lock").c_str(),GENERIC_READ | GENERIC_WRITE,
+            0,nullptr,OPEN_ALWAYS,FILE_FLAG_OPEN_REPARSE_POINT,nullptr))); Info(Lock->Value);
+        // MoveFileEx's durable replacement requires write sharing on the root.
+        // The exclusive nondelete-shared lock now keeps this directory nonempty,
+        // preventing conversion to a directory reparse point. No unheld gap:
+        // open and compare the replacement while the restrictive root is held.
+        const auto Before = Info(Root.Value,true);
+        File Writable(CreateFileW(Final(Root.Value).c_str(),FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,nullptr));
+        const auto After = Info(Writable.Value,true);
+        if (Before.dwVolumeSerialNumber != After.dwVolumeSerialNumber || Before.nFileIndexHigh != After.nFileIndexHigh ||
+            Before.nFileIndexLow != After.nFileIndexLow) Fail("ProviderFailure");
+        Root = std::move(Writable);
     }
     std::wstring Path(const std::string& Name) { return Final(Root.Value)+L"\\"+std::wstring(Name.begin(),Name.end()); }
 #else
-    explicit State(const std::filesystem::path& Path) : Root(open(Path.c_str(),O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) {
+    explicit State(const std::filesystem::path& Path) : State(File(open(Path.c_str(),O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC))) {}
+    explicit State(File Handle) : Root(std::move(Handle)) {
         Info(Root.Value,true);
-        Lock = std::make_unique<File>(openat(Root.Value,".lui-lock",O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,0600)); Info(Lock->Value);
+        Lock = std::make_unique<File>(File(openat(Root.Value,".lui-lock",O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,0600))); Info(Lock->Value);
         if (flock(Lock->Value,LOCK_EX | LOCK_NB)) Fail("ProviderFailure");
     }
 #endif
@@ -137,6 +189,13 @@ StorageFiles::StorageFiles(const std::filesystem::path& Root) {
     Data = std::make_unique<State>(Root); Data->Scan();
 }
 StorageFiles::~StorageFiles() = default;
+StorageFiles::StorageFiles(const std::filesystem::path& DataRoot, const std::string& Scope) {
+    NonModal Guard;
+    if (!DataRoot.is_absolute() || Scope.size() != 64 || !std::all_of(Scope.begin(), Scope.end(), [](char Byte) {
+        return (Byte >= 'a' && Byte <= 'f') || (Byte >= '0' && Byte <= '9');
+    })) Fail("InvalidArgument");
+    Data = std::make_unique<State>(OpenScope(DataRoot, Scope)); Data->Scan();
+}
 bool StorageFiles::Read(const std::string& Key, std::string& Result) {
     NonModal Guard;
     const auto Name = FileName(Key); const auto Entries = Data->Scan();

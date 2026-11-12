@@ -39,6 +39,7 @@ else()
     FetchContent_MakeAvailable(Luau)
     set(LUI_LUAU_LICENSE "${luau_SOURCE_DIR}/LICENSE.txt")
 endif()
+include(cmake/CompilerQualification.cmake)
 
 if(EMSCRIPTEN)
     include(cmake/Browser.cmake)

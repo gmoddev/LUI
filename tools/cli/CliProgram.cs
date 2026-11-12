@@ -18,7 +18,7 @@ internal static class CliProgram
             if (Arguments.Length == 0 || Arguments[0] is "help" or "--help" or "-h")
             {
                 Output.WriteLine("LUI developer CLI\n" +
-                    "  lui new <directory>\n" +
+                    "  lui new <directory> [--template basic|commands|workbench]\n" +
                     "  lui doctor [manifest] [--sdk <SDK directory>] [--format text|json]\n" +
                     "  SDK commands discover matched tools and honor LuiToolchain.json; --sdk selects an installation.\n" +
                     "  lui check [manifest] --checker <LuiTypeCheck executable> [--definitions <LUI.d.luau>] [--format text|json]\n" +
@@ -79,10 +79,14 @@ internal static class CliProgram
                     Output.WriteLine(Summary.GetRawText()); return 0;
                 }
                 case "new":
-                    if (Position is null || Options.Count != 0)
-                        throw new ArgumentException("new requires one directory and no options");
-                    if (Sdk is null) CreateProject(Position);
-                    else CreateSdkProject(Position, Sdk);
+                    RequireOptions(Options,"--template");
+                    if (Position is null) throw new ArgumentException("new requires a new project directory");
+                    string Template=Options.GetValueOrDefault("--template","basic");
+                    if (Sdk is null) {
+                        if(Template!="basic") throw new ArgumentException("Choose the SDK with --sdk to use optional templates");
+                        CreateProject(Position);
+                    }
+                    else CreateSdkProject(Position, Sdk,Template);
                     Output.WriteLine("[LUI:CLI] Created project at " + Path.GetFullPath(Position));
                     return 0;
                 case "check":
@@ -172,14 +176,11 @@ internal static class CliProgram
                         ProcessStartInfo Start=new(Host){UseShellExecute=false,WorkingDirectory=Path.GetDirectoryName(Path.GetFullPath(Position??"lui.json"))!};
                         Start.ArgumentList.Add("--project"); Start.ArgumentList.Add(Path.GetFullPath(Position??"lui.json"));
                         if(Options.GetValueOrDefault("--allow-native")=="true") Start.ArgumentList.Add("--allow-native");
-                        using Process App=Process.Start(Start)??throw new IOException("[LUI:CLI] LaunchFailed"); App.WaitForExit(); return App.ExitCode;
+                        return RunNative(Start, Errors);
                     }
                     AppManifest Manifest = AppManifest.Load(Position ?? "lui.json");
                     CheckSource(Manifest, Path.Combine(Path.GetDirectoryName(Host)!, "LuiRuntime.dll"));
-                    using Process Child = Process.Start(CreateRunStartInfo(Host, Position ?? "lui.json"))
-                        ?? throw new IOException("Unable to start the WinUI host");
-                    Child.WaitForExit();
-                    return Child.ExitCode;
+                    return RunNative(CreateRunStartInfo(Host, Position ?? "lui.json"), Errors);
                 }
                 case "preview":
                 {
@@ -238,18 +239,25 @@ internal static class CliProgram
             UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException or
             BadImageFormatException or PlatformNotSupportedException or JsonException or Win32Exception or InvalidOperationException or KeyNotFoundException or FormatException)
         {
-            Errors.WriteLine("[LUI:CLI] " + Error.Message);
+            Errors.WriteLine("[LUI:CLI] " + ApplicationDiagnostic.Describe(Error.Message));
             return 1;
         }
     }
 
-    private static void CreateSdkProject(string DirectoryValue, SdkInstallation Sdk)
+    private static void CreateSdkProject(string DirectoryValue, SdkInstallation Sdk,string Template="basic")
     {
         string Root = Path.GetFullPath(DirectoryValue);
         string Name = Path.GetFileName(Path.TrimEndingDirectorySeparator(Root));
         if (Name.Length is < 1 or > 64 || !char.IsAsciiLetter(Name[0]) || Name.Any(Character => !char.IsAsciiLetterOrDigit(Character) && Character is not ('_' or '-')))
             throw new ArgumentException("Project name must start with a letter and use letters, digits, _ or -");
         if (Directory.Exists(Root)) throw new IOException("Choose a new project directory; existing directories are preserved");
+        if(Template!="basic")
+        {
+            Sdk.CopyExample(Template,Root);
+            File.WriteAllText(Path.Combine(Root,".gitignore"),"Dist/\n.lui/\n");
+            File.WriteAllText(Path.Combine(Root,"README.md"),$"# {Name}\n\nRun `lui check`, then `lui run`. Edit Src/Main.luau, save, close and run again.\n\nThis {Template} example uses optional vendored libraries. Keep Modules.lock.json and LuiToolchain.json with the project.\n\nStorage, when requested, belongs to this project directory. Packaged and copied projects use separate data.\n");
+            return;
+        }
         Directory.CreateDirectory(Path.Combine(Root, "Src"));
         File.WriteAllText(Path.Combine(Root, "lui.json"), JsonSerializer.Serialize(new
         {
@@ -398,6 +406,45 @@ internal static class CliProgram
         if (Source.StartsWith('\uFEFF')) Source = Source[1..];
         if (Source.Contains('\0')) throw new InvalidDataException("Application script contains a NUL character");
         return Source;
+    }
+
+    internal static int RunNative(ProcessStartInfo Start, TextWriter Errors)
+    {
+        Start.RedirectStandardError = true;
+        Start.StandardErrorEncoding = new UTF8Encoding(false, false);
+        using Process Child = Process.Start(Start) ?? throw new IOException("[LUI:CLI] LaunchFailed");
+        using CancellationTokenSource Stop = new();
+        bool StartupReported = false;
+        async Task DrainAsync()
+        {
+            StringBuilder Pending = new();
+            char[] Buffer = new char[4096];
+            bool Oversized = false;
+            int Records = 0, Count;
+            try {
+                while ((Count = await Child.StandardError.ReadAsync(Buffer.AsMemory(), Stop.Token)) != 0) {
+                    if (Records >= 256) continue;
+                    for (int Index = 0; Index < Count; ++Index) {
+                        if (Stop.IsCancellationRequested) return;
+                        char Value = Buffer[Index];
+                        if (Value == '\n') {
+                            if (!Oversized && Records < 256 && ApplicationDiagnostic.TryReadRecord(Pending.ToString().TrimEnd('\r'), out string Message, out bool Startup)) {
+                                ++Records; StartupReported |= Startup; Errors.WriteLine(Message);
+                            }
+                            Pending.Clear(); Oversized = false;
+                        } else if (Pending.Length < 1025) Pending.Append(Value);
+                        else Oversized = true;
+                    }
+                }
+            } catch (Exception Error) when (Error is OperationCanceledException or ObjectDisposedException or IOException) { }
+        }
+        Task Drain = DrainAsync();
+        Child.WaitForExit();
+        try { Drain.WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult(); }
+        catch (TimeoutException) { Stop.Cancel(); }
+        if (Child.ExitCode != 0 && !StartupReported)
+            Errors.WriteLine("[LUI:CLI] App stopped without a startup reason. Run Check Types, check the SDK with lui doctor, and include the SDK version and reproduction steps in a bug report.");
+        return Child.ExitCode;
     }
 
     internal static ProcessStartInfo CreateRunStartInfo(string Host, string ManifestPath)

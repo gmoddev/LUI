@@ -120,6 +120,14 @@ void Backend::Queue(View* Target,Event Value) noexcept {
         Value.Id=Target->Id; Value.Epoch=Target->Epoch;
         if((Value.Type==Kind::TextInput || Value.Type==Kind::Composition || Value.Type==Kind::Text) &&
             !Lui_GetTextInputRevision(Runtime,Value.Id,&Value.TextRevision)) return;
+        if(Value.Type==Kind::Composition && Value.Phase!=2) Target->CompositionRevision=Value.TextRevision;
+        if(Value.Type!=Kind::Composition && Value.Type!=Kind::TextInput && Value.Type!=Kind::Text) {
+            // An admitted action seals earlier commit snapshots. Later ordinary
+            // native edits belong after that action, even within this GTK batch.
+            for(auto& Pair:Views) if(Pair.second->CompositionEnding) {
+                Pair.second->CompositionEnding=false; Pair.second->Composing=false;
+            }
+        }
         Value.QueuedAt=std::chrono::steady_clock::now();
         if(Value.Text.size()>8*1024*1024) {Overflow=true; ++Dropped; return;}
         if(Events.size()>=256 || EventBytes+Value.Text.size()>8*1024*1024) {Events.clear(); EventBytes=0; Overflow=true; ++Dropped;}
@@ -130,23 +138,27 @@ void Backend::Queue(View* Target,Event Value) noexcept {
 void Backend::ResetInput() {
     std::vector<int> Ids; for(const auto& Pair:Views) Ids.push_back(Pair.first);
     for(int Id:Ids) {
-        auto Found=Views.find(Id); if(Found!=Views.end()) {Found->second->Keys.clear(); Found->second->ActiveButtons.clear();}
+        auto Found=Views.find(Id); if(Found!=Views.end()) {
+            Found->second->Keys.clear(); Found->second->ActiveButtons.clear();
+            Found->second->Composing=false; Found->second->CompositionEnding=false;
+        }
         Lui_FocusChanged(Runtime,Id,0); Lui_HoverChanged(Runtime,Id,0);
         Lui_PointerInputV2(Runtime,Id,3,0,0,0,0,0);
     }
 }
 void Backend::Drain() {
-    for(auto& Pair:Views) if(Pair.second->CompositionEnding) {
-        auto& Target=*Pair.second; Target.CompositionEnding=false; Target.Composing=false;
-        TextEvent(Target); Event End{Kind::Composition,0,0}; End.Phase=2; Queue(&Target,std::move(End));
-    }
     if(Overflow) {Overflow=false; ResetInput();}
     auto Ready=std::move(Events); Events.clear(); EventBytes=0;
     for(auto& Value:Ready) {
         auto Found=Views.find(Value.Id);
         if(Found==Views.end() || Found->second->Epoch!=Value.Epoch || !Found->second->Alive) continue;
         uint64_t Revision=0;
-        if(Value.TextRevision && (!Lui_GetTextInputRevision(Runtime,Value.Id,&Revision) || Revision!=Value.TextRevision)) continue;
+        if(Value.TextRevision && (!Lui_GetTextInputRevision(Runtime,Value.Id,&Revision) || Revision!=Value.TextRevision)) {
+            if(Value.Type==Kind::Composition && Found->second->CompositionRevision==Value.TextRevision) {
+                Found->second->Composing=false; Found->second->CompositionEnding=false;
+            }
+            continue;
+        }
         auto& Target=*Found->second;
         if(Value.Type==Kind::Close) {
             Lui_WindowCloseRequested(Runtime,Value.Id);
@@ -171,7 +183,15 @@ void Backend::Drain() {
             case Kind::Shortcut: Lui_WindowShortcut(Runtime,Value.Id,Value.Button,Value.Text.c_str(),Value.Device,Value.Phase); break;
             case Kind::Scroll: Lui_ScrollInput(Runtime,Value.Id,Value.X,Value.Y); break;
             case Kind::TextInput: Lui_TextInput(Runtime,Value.Id,Value.Text.c_str(),static_cast<int>(Value.X),static_cast<int>(Value.Y)); break;
-            case Kind::Composition: Lui_TextComposition(Runtime,Value.Id,Value.Phase,Value.Text.c_str()); break;
+            case Kind::Composition:
+                if(Value.Phase==2) {
+                    Target.CompositionEnding=false; Target.Composing=false;
+                    Lui_TextInput(Runtime,Value.Id,Value.Text.c_str(),static_cast<int>(Value.X),static_cast<int>(Value.Y));
+                    auto Current=Views.find(Value.Id);
+                    if(Current==Views.end() || Current->second->Epoch!=Value.Epoch || !Current->second->Alive ||
+                        !Lui_GetTextInputRevision(Runtime,Value.Id,&Revision) || Revision!=Value.TextRevision) break;
+                } else Target.Composing=true;
+                Lui_TextComposition(Runtime,Value.Id,Value.Phase,Value.Phase==2?"":Value.Text.c_str()); break;
             default: break;
         }
         if(!Stopping && Runtime) Lui_RecordPerformance(Runtime,1,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-Value.QueuedAt).count());
@@ -336,7 +356,28 @@ void Backend::Connect(View& Target) {
     }
 }
 void Backend::TextEvent(View& Target) {
-    if(!Target.Alive || Target.Applying) return;
+    Event Value{Kind::TextInput,0,0};
+    if(!ReadTextEvent(Target,Value)) return;
+    if(Target.Composing) {
+        if(Target.CompositionEnding) {
+            // Empty preedit can precede GTK's committed buffer update. Update
+            // that boundary's snapshot in place, before any following action,
+            // rather than sampling a future composition during queue replay.
+            for(auto End=Events.rbegin();End!=Events.rend();++End) {
+                if(End->Id!=Target.Id || End->Epoch!=Target.Epoch || End->Type!=Kind::Composition || End->Phase!=2) continue;
+                if(EventBytes-End->Text.size()+Value.Text.size()>8*1024*1024) {
+                    Events.clear(); EventBytes=0; Overflow=true; ++Dropped; return;
+                }
+                EventBytes=EventBytes-End->Text.size()+Value.Text.size();
+                End->Text=std::move(Value.Text); End->X=Value.X; End->Y=Value.Y; break;
+            }
+        }
+        return;
+    }
+    Queue(&Target,std::move(Value));
+}
+bool Backend::ReadTextEvent(View& Target,Event& Value) {
+    if(!Target.Alive || Target.Applying) return false;
     std::string Text; int Start=0,End=0;
     if(Target.Multiline) {
         auto* Buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native)); GtkTextIter First,Last;
@@ -351,16 +392,15 @@ void Backend::TextEvent(View& Target) {
     int Characters;
     if(!(Target.ClassName=="CodeEditor"?LuiText::CountCodeEditor(Text,Characters):
         LuiText::Count(Text,Characters)) || Characters>Target.MaxLength) {
-        if(Target.ClassName=="CodeEditor") return; // Insert-text admission rejects invalid edits before the native buffer changes.
+        if(Target.ClassName=="CodeEditor") return false; // Insert-text admission rejects invalid edits before the native buffer changes.
         Target.Applying=true;
         if(Target.Multiline) gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(Target.Native)),Target.Text.c_str(),static_cast<int>(Target.Text.size()));
         else gtk_editable_set_text(GTK_EDITABLE(Target.Native),Target.Text.c_str());
-        ApplySelection(Target); Target.Applying=false; return;
+        ApplySelection(Target); Target.Applying=false; return false;
     }
     if(Target.ClassName!="CodeEditor") Target.Text=Text;
     Target.SelectionStart=Target.Secret?0:std::min(Start,End); Target.SelectionLength=Target.Secret?0:std::abs(End-Start);
-    if(Target.Composing) return;
-    Event Value{Kind::TextInput,0,0}; Value.Text=Text; Value.X=Target.SelectionStart; Value.Y=Target.SelectionLength; Queue(&Target,std::move(Value));
+    Value.Text=std::move(Text); Value.X=Target.SelectionStart; Value.Y=Target.SelectionLength; return true;
 }
 void Backend::ClearCodeStyles(View& Target) {
     if(Target.ClassName!="CodeEditor" || !GTK_IS_TEXT_VIEW(Target.Native)) return;
@@ -425,8 +465,15 @@ void Backend::ConnectText(View& Target) {
     gpointer Data=&Target;
     auto Preedit=+[](GObject*,const char* Text,gpointer Context) {
         auto* Target=static_cast<View*>(Context); if(Target->Applying || !Target->Alive || Target->Secret) return;
-        if(!Text || !*Text) {if(Target->Composing) Target->CompositionEnding=true; return;}
-        Event Value{Kind::Composition,0,0}; Value.Phase=Target->Composing?1:0; Value.Text=Text;
+        if(!Text || !*Text) {
+            if(Target->Composing && !Target->CompositionEnding) {
+                Target->CompositionEnding=true;
+                Event End{Kind::Composition,0,0}; End.Phase=2;
+                if(Target->Owner->ReadTextEvent(*Target,End)) Target->Owner->Queue(Target,std::move(End));
+            }
+            return;
+        }
+        Event Value{Kind::Composition,0,0}; Value.Phase=Target->Composing && !Target->CompositionEnding?1:0; Value.Text=Text;
         Target->Composing=true; Target->CompositionEnding=false; Target->Owner->Queue(Target,std::move(Value));
     };
     if(Target.Multiline) {

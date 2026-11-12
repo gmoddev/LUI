@@ -13,7 +13,8 @@ Build the runtime, `tools/preview-host/Lui.PreviewHost.csproj`, CLI and `LuiType
 
 - **LUI: Choose SDK** / **Create Project** configure the matched SDK and scaffold a pinned modular application.
 - **LUI: Inspect Layout** / **Stop Preview** manage the isolated inspector host.
-- **LUI: Run App** / **Stop App** launch/close the real WinUI or GTK application. Stop and run again after source changes.
+- **LUI: Run App** / **Restart App** / **Stop App** manage the real native app. Save project files before Run/Restart, and save documents inside the app before restarting because its memory is discarded. Stop cancels pending launch/restart.
+- **LUI: Add File to Project** stages a small unsaved `Modules.Files` edit for a saved module inside `Modules.Root`. Review and save it, then check. Problems warns when a source is not part of the saved project; a quick fix offers this action for undeclared modules.
 - **LUI: Check Types** checks saved declared sources. Saving a modular project source invalidates older generation/check/navigation results.
 
 The inspector supports activation, resize, focus/blur, pointer phases and portable key press/repeat/release for supported GUI Instances. Focus before sending keys; Reset input cancels presses. These commands exercise signals, not native text editing/IME/shortcuts. Pointer signals do not automatically activate buttons. Reload suppresses stale input.

@@ -1,0 +1,60 @@
+---
+title: Capabilities and execution modes
+description: Choose exact capability names, understand host grants, and recover when an app cannot start.
+sidebar:
+  order: 7
+---
+
+A service name identifies an API. A capability identifies permission to use an operation. For example, `app:GetService("HttpService")` needs the capability **`network.client`**, while `HttpServerService` needs **`network.server`**. `HttpService` itself is not a valid capability token.
+
+## Declare the capability you need
+
+The `Capabilities` array in `lui.json` uses exact, case-sensitive names:
+
+```json
+"Capabilities": ["network.server"]
+```
+
+This is one field of the project manifest, not a complete manifest. Use the [complete local HTTP project](../recipes/#local-http-client-and-server) for a runnable example with both direction grants. Do not add every capability to make an error disappear.
+
+| Token | What it permits | What else must be available |
+| --- | --- | --- |
+| `network.client` | Outbound HTTP/HTTPS and outbound raw network operations | A supported transport and the host's destination policy; raw operations also need `network.raw`. |
+| `network.server` | Hosted HTTP and inbound raw network operations | A supported transport and the host's binding policy; raw operations also need `network.raw`. |
+| `network.raw` | Raw TCP/UDP through NetworkService | The operation's client/server grant. HTTP services do not need this token. |
+| `Clipboard` | ClipboardService | An installed clipboard adapter. |
+| `Dialogs` | DialogService | A supported host file picker. Picking a path does not add a general Luau file-read API. |
+| `Storage` | App-private StorageService | A trusted host-installed storage scope. The released preview.1 does not support `Storage.ApplicationId`. |
+| `Notifications` | NotificationService | The selected Windows shell adapter; GTK reports unsupported. |
+| `Tray` | TrayService | The selected Windows shell adapter; GTK reports unsupported. |
+| `HostServices` | Host/provider bindings that require the general host grant | Explicit trusted host registration and any separate service grant. This does not grant Storage, Notifications or Tray. |
+| `NativeExtensions` | Privileged native provider loading | An explicitly trusted owner, declared provider and the appropriate native-loading workflow. Native code is outside the Luau sandbox. |
+
+AssetService, PerformanceService, WindowService, PlatformService and ThemeService do not need an additional token just to look them up. Assets must still be declared, and platform features must still be supported.
+
+The manifest declares what the app requests. The owner host decides what it grants. An embedding host can refuse a request; a manifest cannot grant itself permissions or install a missing provider. The supplied desktop project hosts grant supported declared capabilities, with separate explicit trust required for native providers. A type check does not execute the app or prove those runtime requirements.
+
+## Choose the right action
+
+| Action | Executes app code? | Privileged project? | What the result means |
+| --- | --- | --- | --- |
+| Check Types / `lui check` | No | Can check supported Development projects | Validates declared sources/types. It does not test a network connection or install services. Restricted static checking remains unsupported. |
+| Run App / `lui run` | Yes | Uses the native host's supported declared grants | Exercises the native app. Host/platform policy and runtime failures still apply. |
+| Inspect Layout | Yes, in a separate generation | Refuses privileged capabilities and native extensions | Inspects an unprivileged tree/layout. It does not attach to the running native window. |
+| Build / `lui build` | Does not run app entry | Stages the declared project under its packaging contract | Creates an app folder. Test that folder independently. |
+
+Use **Run App** for the HTTP project. Removing its capability just to enter the inspector makes its network behavior invalid. A separate unprivileged UI fixture can help inspect layout, provided you understand that it is a different app execution.
+
+## When the app will not start
+
+1. Save your source and run **LUI: Check Types**. Correct manifest/source errors first.
+2. Check the exact token above. Remove duplicate entries and service names used as tokens.
+3. Confirm the selected SDK with `lui doctor`. Keep its tools together and match `LuiToolchain.json`.
+4. Use **Run App** for privileged behavior. Check that the host supplies the service on your platform.
+5. Read **Output → LUI Preview**. Record the SDK version, action and a small reproduction when reporting a bug.
+
+**Released preview.1 limitation:** its native editor launcher can discard the underlying host reason and display only exit code 1. Its isolated preview can also reduce a privileged-project failure to StartupFailed. The checks above help narrow it down, but they do not recover information that was never delivered. A failed callback can leave the rest of the window open; that does not mean the refused operation succeeded or permission was granted.
+
+Development SDK improvements add fixed capability/startup reasons and corrective advice, distinguish runtime operations from startup, and discard arbitrary native stderr. Those changes are not included in the existing preview.1 ZIP. No replacement SDK is announced by this guide.
+
+For the detailed boundaries, read the released [HTTP contract](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/NETWORKING-FOUNDATION-B.md), [native service contract](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/NATIVE-SERVICES.md) and [platform matrix](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/PLATFORMS.md).

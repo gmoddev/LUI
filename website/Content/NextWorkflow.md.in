@@ -1,0 +1,62 @@
+---
+title: Development editor workflow
+description: Explicit files, checking, native restart and safe setup recovery in the next LUI editor.
+---
+
+> **Development source for the next SDK.** These changes are not in the released
+> preview.1 download or prepared SDK12. The current source extension is 0.1.7.
+> Windows/Linux native and editor integration checks pass. SDK13 also passes a
+> two-process VS Code journey on the selected Windows10LTSC virtual recipient.
+> Fresh Windows11, physical input, ordinary download/trust and signing remain open.
+
+## Edit, check and run
+
+1. Open the application folder and choose its exact pinned SDK.
+2. Edit and save a declared Luau source.
+3. Run **LUI: Check Types** and correct any Problems errors.
+4. Run **LUI: Run App** and try the actual native window.
+5. After further edits, save project files and use **LUI: Restart App**.
+
+Save documents inside your app before restarting too. Restart discards application
+memory. The editor waits for its previous child to retire, then validates the
+selected SDK and project pin before launching the saved project. A failed Stop
+keeps the old child owned; retry Stop before launching another copy.
+
+There is no native restart on save. The app status shows the owned process and
+conservative edit/restart advice. Running does not prove the native window is
+ready, and external edits also require a manual restart. **LUI: Stop App** cancels
+pending launch or restart as well as stopping a running app.
+
+## Add a source file explicitly
+
+Save the new `.luau` file inside `Modules.Root`. Choose **LUI: Add File to Project**
+from its Problems quick fix, editor context menu or command palette. Review the
+unsaved `Modules.Files` change, save the manifest, then check types again. Save or
+undo existing manifest edits first.
+
+The action changes only the declared file list. Files outside that list remain
+excluded from checking and execution; opening a file never includes it silently.
+Project preparation still validates paths, dependencies and byte/source limits.
+
+## Inspect layout separately
+
+**LUI: Inspect Layout** runs a separate unprivileged generation for the Instance
+tree and layout map. It does not inspect your running native app. Use Run App
+for projects with privileged capabilities. Native-extension projects require an
+explicitly approved native-host launch with `--allow-native`; Run App does not
+request that approval.
+
+Removing the project's workspace folder or changing tool settings cancels pending inspection/checking.
+Run the command again after the change. Stopped inspector clients cannot replace
+the new client's tree, diagnostics or status.
+
+## Recover from setup failures
+
+Read the fixed guidance in **LUI Preview** Output. Confirm the manifest is a saved
+regular UTF-8 JSON file with the intended schema and that the exact SDK and tool
+paths exist. Run `lui doctor` from the selected SDK for details. Setup failures
+do not echo malformed manifest text or arbitrary configuration exceptions.
+
+Capabilities retain their exact tokens and host grants. For example,
+`HttpService` requires `network.client`, and `HttpServerService` requires
+`network.server`. Changing the editor workflow never grants extra permissions.

@@ -8,6 +8,7 @@ const Path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { TypeCheckSession, ValidateDiagnostics } = require('../../vscode/TypeCheckClient');
 const { TypeDiagnostics, GetEntry } = require('../../vscode/TypeDiagnostics');
+const { ReadText, ReadManifest } = require('../../vscode/ProjectSetup');
 
 const Result = {
     version: 1, source: 'main.luau', truncated: false, diagnostics: [{ kind: 'type', message: 'Expected number',
@@ -87,7 +88,7 @@ Test('editor publishes Problems independently of preview, clears errors on edit 
         const Collection = { Items: [], Disposed: false, set(Uri, Items) { this.Items = Items; this.Uri = Uri; },
             clear() { Assert.equal(this.Disposed, false); this.Items = []; }, dispose() { this.Disposed = true; } };
         const Vscode = {
-            workspace: { isTrusted: false, textDocuments: [], getConfiguration: () => ({ get: (Key, Default) => Settings.get(Key) ?? Default }) },
+            workspace: { isTrusted: false, textDocuments: [], workspaceFolders: [{uri:{fsPath:Directory}}], getConfiguration: () => ({ get: (Key, Default) => Settings.get(Key) ?? Default }) },
             languages: { createDiagnosticCollection: () => Collection },
             Uri: { file: File => File }, DiagnosticSeverity: { Error: 0 },
             Range: class { constructor(...Arguments) { this.Arguments = Arguments; } },
@@ -118,6 +119,14 @@ Test('editor publishes Problems independently of preview, clears errors on edit 
         Controller.Check(Folder, true);
         Assert.equal(Started, 1);
         Assert.match(Messages.at(-1), /Save/);
+        if (process.platform === 'win32') {
+            Fs.writeFileSync(Manifest, '{"SchemaVersion":2}');
+            Settings.set('manifestPath', Manifest.replace(/^[a-z]:/i, Drive=>Drive.toUpperCase()));
+            Vscode.workspace.textDocuments = [{isDirty:true,uri:{scheme:'file',fsPath:Script.replace(/^[a-z]:/i,Drive=>Drive.toLowerCase())}}];
+            const Previous = Started; Controller.Check(Folder,true);
+            Assert.equal(Started,Previous); Assert.match(Messages.at(-1),/Save/);
+            Settings.delete('manifestPath');
+        }
         Fs.writeFileSync(Manifest, JSON.stringify({ SchemaVersion: 1, Script: '../outside.luau' }));
         Assert.throws(() => GetEntry(Manifest), /left/);
         Settings.set('checkerPath', { Invalid: 'configuration' });
@@ -126,6 +135,58 @@ Test('editor publishes Problems independently of preview, clears errors on edit 
         Controller.Dispose();
         Assert.doesNotThrow(() => Controller.Dispose());
     } finally { Fs.rmSync(Directory, { recursive: true, force: true }); }
+});
+
+Test('malformed manifests and settings never echo private input or touch disposed diagnostics', async () => {
+    const Root = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'LuiTypePrivacy-'));
+    try {
+        const Folder = { uri: { scheme: 'file', fsPath: Root } }, Manifest = Path.join(Root, 'lui.json');
+        const Settings = new Map([['cliPath','cli.exe'],['checkerPath','checker.exe'],['definitionsPath','defs.luau']]);
+        for (const Name of Settings.values()) Fs.writeFileSync(Path.join(Root, Name), 'Synthetic');
+        let Disposed = false;
+        const Collection = { clear() { Assert.equal(Disposed,false); }, dispose() { Disposed=true; }, set() {} };
+        const Vscode = { workspace: { isTrusted:true,workspaceFolders:[Folder],textDocuments:[],getConfiguration:()=>({get:(Name,Default)=>Settings.get(Name)??Default}) },
+            languages:{createDiagnosticCollection:()=>Collection} };
+        const Session = new EventEmitter(); Session.Stop=()=>{}; let Started=0; Session.Start=()=>Started++;
+        const Messages=[]; const Controller=new TypeDiagnostics(Vscode,{appendLine:Message=>Messages.push(Message)},Session);
+        for (const Data of ['{"PRIVATE_MANIFEST_CANARY', Buffer.from([0xff]), '{"SchemaVersion":2}', '{}', '[]']) {
+            Fs.writeFileSync(Manifest, Data);
+            if (Data === '{"SchemaVersion":2}') Settings.set('checkerPath', {Private:'PRIVATE_SETTINGS_CANARY'});
+            else Settings.set('checkerPath','checker.exe');
+            await Controller.Check(Folder,true);
+        }
+        Assert.equal(Started,0); Assert(Messages.length>=5);
+        Assert(!Messages.some(Message=>/PRIVATE_|Unexpected token|position \d/.test(Message)));
+        Controller.Dispose();
+        await Assert.doesNotReject(Controller.Check(Folder,true));
+        Assert.doesNotThrow(()=>Controller.OnDocument({})); Assert.doesNotThrow(()=>Controller.OnChange({}));
+    } finally { Fs.rmSync(Root,{recursive:true,force:true}); }
+});
+
+Test('project readers accept byte boundaries and reject nonregular, oversized or invalid UTF-8 files', () => {
+    const Root = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'LuiProjectRead-'));
+    try {
+        const File = Path.join(Root, 'lui.json');
+        for (const Maximum of [64 * 1024, 256 * 1024]) {
+            Fs.writeFileSync(File, '{"SchemaVersion":1}' + ' '.repeat(Maximum - 19));
+            Assert.equal(Fs.statSync(File).size, Maximum);
+            Assert.equal(ReadManifest(File, Maximum).SchemaVersion, 1);
+            Fs.appendFileSync(File, ' ');
+            Assert.throws(() => ReadManifest(File, Maximum), /byte limit/);
+        }
+        Assert.throws(() => ReadText(Root, 1024, 'Source'), /regular UTF-8/);
+        Assert.throws(() => ReadManifest(Root), /UTF-8 JSON/);
+        Fs.writeFileSync(File, Buffer.from([0xff]));
+        Assert.throws(() => ReadText(File, 1024, 'Source'), /regular UTF-8/);
+        Fs.writeFileSync(File, ''); Assert.equal(ReadText(File, 1024, 'Source'), '');
+        if (process.platform !== 'win32') {
+            const Pipe = Path.join(Root, 'pipe');
+            const Created = require('node:child_process').spawnSync('mkfifo', [Pipe], { timeout: 2000 });
+            Assert.equal(Created.status, 0);
+            Assert.throws(() => ReadText(Pipe, 1024, 'Source'), /regular UTF-8/);
+            Assert.throws(() => ReadManifest(Pipe), /UTF-8 JSON/);
+        }
+    } finally { Fs.rmSync(Root, { recursive:true, force:true }); }
 });
 
 Test('real CLI/editor type checking rejects invalid LUI code, recovers, and never executes it', async Context => {

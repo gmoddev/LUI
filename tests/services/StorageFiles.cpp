@@ -1,6 +1,7 @@
 #include "../../runtime/services/StorageFiles.h"
 #include "../../runtime/project/Files.h"
 #include <chrono>
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -33,7 +34,55 @@ void Sparse(const Fs::path& Path) {
     Fs::resize_file(Path,4*1024*1024);
 #endif
 }
+void DirectoryLink(const Fs::path& Link,const Fs::path& Target,bool Empty=true) {
+#if defined(_WIN32)
+    Fs::create_directory(Link);
+    HANDLE Handle=CreateFileW(Link.c_str(),GENERIC_WRITE,FILE_SHARE_READ | FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+    Require(Handle!=INVALID_HANDLE_VALUE,"junction open");
+    struct Buffer { DWORD Tag; WORD Length,Reserved,SubstituteOffset,SubstituteLength,PrintOffset,PrintLength; wchar_t Names[4096]; } Data{};
+    const auto Name=std::wstring(L"\\??\\")+Fs::absolute(Target).wstring();
+    Require(Name.size()<2000,"junction path bound");
+    Data.Tag=IO_REPARSE_TAG_MOUNT_POINT; Data.SubstituteLength=static_cast<WORD>(Name.size()*2);
+    Data.PrintOffset=static_cast<WORD>((Name.size()+1)*2); Data.Length=static_cast<WORD>(8+Data.PrintOffset+2);
+    std::copy(Name.begin(),Name.end(),Data.Names); DWORD Returned=0;
+    const auto Success=DeviceIoControl(Handle,FSCTL_SET_REPARSE_POINT,&Data,8+Data.Length,nullptr,0,&Returned,nullptr);
+    const auto Error=GetLastError(); CloseHandle(Handle);
+    Require(Empty ? Success!=0 : (!Success && Error==ERROR_DIR_NOT_EMPTY),"junction empty-directory control");
+#else
+    Fs::create_directory_symlink(Target,Link);
+#endif
+}
 void Cases(const Fs::path& Root) {
+    const auto ScopeA=std::string(64,'a'), ScopeB=std::string(64,'b');
+    {
+        StorageFiles Store(Root,ScopeA);
+#if defined(_WIN32)
+        DirectoryLink(Root/"LUI"/"Applications"/ScopeA,Root,false);
+        std::error_code Locked;
+        Require(!Fs::remove(Root/"LUI"/"Applications"/ScopeA/".lui-lock",Locked) && bool(Locked),"live lock deletion accepted");
+#endif
+        Store.Write("value","persisted",[] { return false; });
+        Rejected([&] { StorageFiles Duplicate(Root,ScopeA); },"provisioned scope lock");
+        StorageFiles Other(Root,ScopeB); std::string Result;
+        Require(!Other.Read("value",Result),"provisioned scopes shared data");
+        Rejected([&] { StorageFiles Invalid(Root,"../escape"); },"provisioning path accepted");
+    }
+    { StorageFiles Store(Root,ScopeA); std::string Result; Require(Store.Read("value",Result) && Result=="persisted","provisioned restart"); }
+    const auto LinkedBase=Root/"LinkedBase"; Fs::create_directory(LinkedBase);
+#if defined(_WIN32)
+    const auto Link=LinkedBase/"LUI";
+#else
+    const auto Link=LinkedBase/".lui";
+#endif
+    DirectoryLink(Link,Root);
+    Rejected([&] { StorageFiles Store(LinkedBase,ScopeA); },"linked provisioning parent admitted");
+    Fs::remove(Link);
+#if !defined(_WIN32)
+    const auto Shared=Root/"Shared"; Fs::create_directory(Shared); Fs::create_directory(Shared/".lui");
+    Require(chmod((Shared/".lui").c_str(),0755)==0,"permissions fixture");
+    Rejected([&] { StorageFiles Store(Shared,ScopeA); },"nonprivate provisioning directory admitted");
+#endif
     Fs::create_directory(Root/"Data");
     const auto Scope = Root/"Data";
     {

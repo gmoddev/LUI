@@ -2,15 +2,15 @@
   "name": "lui-vscode",
   "displayName": "LUI",
   "description": "Instance Explorer and layout inspector for LUI applications",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "publisher": "gmoddev",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
   "private": true,
   "engines": { "vscode": "^1.90.0" },
   "main": "./Extension.js",
-  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview", "onCommand:lui.openNativePreview", "onLanguage:luau", "workspaceContains:lui.json"],
-  "scripts": { "test": "node --test ../tests/editor/EditorTests.js ../tests/editor/TypeTests.js ../tests/editor/ProjectTests.js ../tests/editor/SdkTests.js" },
+  "activationEvents": ["onView:lui.explorer", "onView:lui.inspector", "onCommand:lui.startPreview", "onCommand:lui.openNativePreview", "onCommand:lui.restartNativePreview", "onLanguage:luau", "workspaceContains:lui.json"],
+  "scripts": { "test": "node --test ../tests/editor/EditorTests.js ../tests/editor/TypeTests.js ../tests/editor/ProjectTests.js ../tests/editor/SdkTests.js ../tests/editor/NativeRestartTests.js ../tests/editor/ProjectFilesTests.js" },
   "contributes": {
     "walkthroughs": [{
       "id": "lui.start", "title": "Build your first LUI app", "description": "Choose an SDK, create a project and open a native window.",
@@ -32,22 +32,31 @@
     "commands": [
       { "command": "lui.chooseSdk", "title": "LUI: Choose SDK" },
       { "command": "lui.createProject", "title": "LUI: Create Project" },
+      { "command": "lui.addProjectFile", "title": "LUI: Add File to Project" },
       { "command": "lui.startPreview", "title": "LUI: Inspect Layout", "icon": "$(list-tree)" },
       { "command": "lui.reloadPreview", "title": "LUI: Reload Preview", "icon": "$(refresh)" },
       { "command": "lui.stopPreview", "title": "LUI: Stop Preview", "icon": "$(debug-stop)" },
       { "command": "lui.openNativePreview", "title": "LUI: Run App", "icon": "$(play)" },
+      { "command": "lui.restartNativePreview", "title": "LUI: Restart App", "icon": "$(debug-restart)" },
       { "command": "lui.stopNativePreview", "title": "LUI: Stop App", "icon": "$(debug-stop)" },
       { "command": "lui.checkTypes", "title": "LUI: Check Types", "icon": "$(check)" },
       { "command": "lui.activateNode", "title": "LUI: Activate Instance", "icon": "$(run)" },
       { "command": "lui.openSource", "title": "LUI: Open Instance Source", "icon": "$(go-to-file)" }
     ],
     "menus": {
-      "editor/title": [{ "command": "lui.openNativePreview", "when": "resourceExtname == .luau", "group": "navigation@1" }],
+      "editor/context": [{ "command": "lui.addProjectFile", "when": "resourceExtname == .luau", "group": "lui@1" }],
+      "editor/title": [
+        { "command": "lui.openNativePreview", "when": "resourceExtname == .luau && !lui.nativeRunning && !lui.nativeStarting", "group": "navigation@1" },
+        { "command": "lui.restartNativePreview", "when": "resourceExtname == .luau && lui.nativeRunning && !lui.nativeStarting", "group": "navigation@1" },
+        { "command": "lui.stopNativePreview", "when": "resourceExtname == .luau && (lui.nativeRunning || lui.nativeStarting)", "group": "navigation@2" }
+      ],
       "view/title": [
         { "command": "lui.startPreview", "when": "view == lui.explorer", "group": "navigation@1" },
         { "command": "lui.reloadPreview", "when": "view == lui.explorer", "group": "navigation@2" },
         { "command": "lui.stopPreview", "when": "view == lui.explorer", "group": "navigation@3" },
-        { "command": "lui.openNativePreview", "when": "view == lui.explorer", "group": "navigation@4" }
+        { "command": "lui.openNativePreview", "when": "view == lui.explorer && !lui.nativeRunning && !lui.nativeStarting", "group": "navigation@4" },
+        { "command": "lui.restartNativePreview", "when": "view == lui.explorer && lui.nativeRunning && !lui.nativeStarting", "group": "navigation@4" },
+        { "command": "lui.stopNativePreview", "when": "view == lui.explorer && (lui.nativeRunning || lui.nativeStarting)", "group": "navigation@5" }
       ],
       "view/item/context": [
         { "command": "lui.activateNode", "when": "view == lui.explorer && viewItem == lui.activatable", "group": "inline" },

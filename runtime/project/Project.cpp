@@ -56,9 +56,18 @@ bool ContainsRoot(const std::string& Root, const std::string& Path) {
     return Root == "." || Path == Root || Path.substr(0, Root.size() + 1) == Root + "/";
 }
 void CheckLegacyFields(Json& Manifest) {
-    auto Capabilities = Strings(Manifest["Capabilities"], 32);
+    const auto& Input = Manifest["Capabilities"];
+    if (!Input.is_array() || Input.size() > 32) Fail("InvalidManifest");
+    std::vector<std::string> Capabilities;
     const std::set<std::string> Allowed{"NativeExtensions","HostServices","Clipboard","Dialogs","network.client","network.server","network.raw","Storage","Notifications","Tray"};
-    for (const auto& Capability : Capabilities) if (!Allowed.count(Capability)) Fail("InvalidManifest");
+    std::set<std::string> Seen;
+    for (const auto& Value : Input) {
+        if (!Value.is_string() || !Allowed.count(Value.get<std::string>())) Fail("UnknownCapability");
+        auto Capability = Value.get<std::string>();
+        if (!Seen.insert(Capability).second) Fail("DuplicateCapability");
+        Capabilities.push_back(std::move(Capability));
+    }
+    std::sort(Capabilities.begin(), Capabilities.end());
     Manifest["Capabilities"] = Capabilities;
     auto Extensions = Strings(Manifest["Extensions"], 32, true);
     for(const auto& Extension:Extensions) if(!Alias(Extension) || Extension=="Host") Fail("InvalidManifest");
@@ -138,11 +147,19 @@ std::shared_ptr<const Snapshot> Internal::PrepareSources(const SourceReader& Fil
         Captured.emplace(ManifestName, Files.Read(ManifestName, Bounds.ManifestBytes, Settings.Canceled).Bytes);
         Json Manifest = Parse(Captured.at(ManifestName));
         Shape(Manifest, {"SchemaVersion","Script","Capabilities","Extensions","Assets","Modules","ExtensionDeclarations","Diagnostics"},
-            {"Sandbox","NetworkPolicy"});
+            {"Sandbox","NetworkPolicy","Storage"});
         if (Number(Manifest["SchemaVersion"]) != 2) Fail("InvalidSchema");
         auto Script = Text(Manifest["Script"]);
         if (!PathValid(Script)) Fail("InvalidPath");
         CheckLegacyFields(Manifest);
+        if (Manifest.contains("Storage")) {
+            Shape(Manifest["Storage"], {"ApplicationId"});
+            const auto Id = Text(Manifest["Storage"]["ApplicationId"], 64);
+            if (Id.empty() || Id.front() < 'a' || Id.front() > 'z' ||
+                !std::all_of(Id.begin(), Id.end(), [](char Byte) {
+                    return (Byte >= 'a' && Byte <= 'z') || (Byte >= '0' && Byte <= '9') || Byte == '.' || Byte == '_' || Byte == '-';
+                }) || std::find(Manifest["Capabilities"].begin(), Manifest["Capabilities"].end(), "Storage") == Manifest["Capabilities"].end()) Fail("InvalidManifest");
+        }
         auto& Modules = Manifest["Modules"];
         Shape(Modules, {"Root","Files","Requires","Dependencies"}, {"Lock"});
         if (!Modules["Dependencies"].is_array()) Fail("InvalidManifest");

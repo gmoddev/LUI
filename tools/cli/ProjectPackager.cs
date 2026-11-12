@@ -24,7 +24,7 @@ internal static class ProjectPackager
             if (Child.ExitCode != 0)
             {
                 string Message = Error.Result.Trim();
-                string[] Codes = ["InvalidInput", "InvalidOptions", "InvalidJson", "InvalidManifest", "InvalidDeclaration", "InvalidSchema", "InvalidPath", "InvalidLock",
+                string[] Codes = ["InvalidInput", "InvalidOptions", "InvalidJson", "InvalidManifest", "UnknownCapability", "DuplicateCapability", "InvalidDeclaration", "InvalidSchema", "InvalidPath", "InvalidLock",
                     "UnsupportedFeature", "LimitExceeded", "Canceled", "Cycle", "MissingModule", "MissingFile", "CaseMismatch", "LinkedPath",
                     "NotRegularFile", "FileChanged", "IoError", "DependencyMismatch", "DuplicateIdentity", "UnknownAlias", "ForbiddenImport",
                     "EntryImportDenied", "InvalidSource", "CompileFailed", "OutputExists", "PackageMismatch", "ProviderUnavailable", "BinaryMismatch", "CapabilityMismatch", "UnsupportedPlatform"];

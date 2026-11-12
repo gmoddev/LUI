@@ -21,7 +21,7 @@ int main() {
         try {
             App.RunSource("assert(not app:GetService('PlatformService'):Supports('HostServices'))\n"
                 "local Ok, Error = pcall(function() app:GetService('Secret') end)\n"
-                "assert(not Ok and string.find(Error, 'not granted'))", "SandboxDenied");
+                "assert(not Ok and string.find(Error, '[LUI:Capabilities] HostServicesRequired', 1, true))", "SandboxDenied");
         } catch (const std::exception& Error) {
             Failures += Check(false, Error.what());
         }

@@ -23,11 +23,12 @@ public partial class App : Application
         bool Modular=Arguments.Contains("--project");
         LuiDiagnostics.Initialize(Arguments.Skip(1).Any(Argument => Argument == "--diagnostics"),
             Modular?Arguments.Contains("--diagnostics-log"):Arguments.Skip(1).Any(Argument => Argument == "--native-qualification" || Argument == "--manifest"),Modular);
-        UnhandledException += (_, Args) =>
+        UnhandledException += async (_, Args) =>
         {
             LuiDiagnostics.Error("Xaml", Args.Exception.ToString());
             Args.Handled = true;
             Environment.ExitCode = 1;
+            await LuiDiagnostics.FlushAsync();
             ExitCleanly();
         };
         InitializeComponent();
@@ -41,6 +42,7 @@ public partial class App : Application
         string[] Arguments = Environment.GetCommandLineArgs();
         bool Qualification = Arguments.Skip(1).Any(Argument => Argument == "--native-qualification");
         bool ConversationQualification = Arguments.Contains("--conversation-qualification");
+        bool WorkbenchQualification=Arguments.Contains("--workbench-qualification");
         bool FrameQualification = Arguments.Contains("--frame-qualification");
         bool OwnerWakeQualification=Arguments.Contains("--owner-wake-qualification");
         bool WindowLifecycleQualification=Arguments.Contains("--window-lifecycle-qualification");
@@ -58,7 +60,7 @@ public partial class App : Application
             string? ScriptArgument = null;
             for (int Index = 1; Index < Arguments.Length; ++Index)
             {
-                if (Arguments[Index] is "--diagnostics" or "--native-qualification" or "--conversation-qualification" or "--frame-qualification" or "--frame-observation" or "--owner-wake-qualification" or "--window-lifecycle-qualification" or "--native-text-host-qualification" or "--code-editor-qualification" or "--code-editor-observation" or "--code-editor-performance" or "--native-text-visual-qualification" or "--allow-native" or "--diagnostics-log") continue;
+                if (Arguments[Index] is "--diagnostics" or "--native-qualification" or "--conversation-qualification" or "--workbench-qualification" or "--frame-qualification" or "--frame-observation" or "--owner-wake-qualification" or "--window-lifecycle-qualification" or "--native-text-host-qualification" or "--code-editor-qualification" or "--code-editor-observation" or "--code-editor-performance" or "--native-text-visual-qualification" or "--allow-native" or "--diagnostics-log") continue;
                 if(Arguments[Index]=="--native-provider"){
                     if(NativeProvider is not null||++Index>=Arguments.Length)throw new ArgumentException("Invalid native provider argument");
                     NativeProvider=Arguments[Index];continue;
@@ -80,6 +82,8 @@ public partial class App : Application
                 else if (ScriptArgument is null) ScriptArgument = Arguments[Index];
                 else throw new ArgumentException("Unexpected additional application argument");
             }
+            if(WorkbenchQualification && (ProjectArgument is null || QualificationReport is null || ManifestArgument is not null || ScriptArgument is not null || Qualification || ConversationQualification || FrameQualification || OwnerWakeQualification || WindowLifecycleQualification || NativeTextHostQualification || CodeEditorQualification || CodeEditorObservation || CodeEditorPerformance || NativeTextVisualQualification || NativeProvider is not null))
+                throw new ArgumentException("Workbench qualification requires only a project and report");
             if (ManifestArgument is not null && (ScriptArgument is not null || Qualification))
                 throw new ArgumentException("Manifest launch cannot combine with a script or native qualification");
             if(NativeTextVisualQualification){
@@ -136,12 +140,15 @@ public partial class App : Application
             }
             if(ProjectArgument is not null) {
                 if(ManifestArgument is not null || ScriptArgument is not null || Qualification) throw new ArgumentException("Invalid project launch");
+                long StartupAt=Stopwatch.GetTimestamp();
                 using PreparedProject Project=new(ProjectArgument,Path.Combine(AppContext.BaseDirectory,"LuiRuntime.dll"));
                 Backend=new WinUIBackend(Project); Backend.AllWindowsClosed+=ExitCleanly;
-                if(!Backend.RunProject(Project,Arguments.Contains("--allow-native"))) throw new InvalidOperationException("[LUI:App] StartupFailed");
+                if(!Backend.RunProject(Project,Arguments.Contains("--allow-native"))) throw new InvalidOperationException(Backend.LastError);
+                LuiDiagnostics.ApplicationRunning = true;
                 PumpTimer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(16)}; PumpTimer.Tick+=(_,_)=>Backend.Pump(); PumpTimer.Start();
-                if(QualificationReport is not null && !ConversationQualification) throw new ArgumentException("Report requires conversation qualification");
+                if(QualificationReport is not null && !ConversationQualification && !WorkbenchQualification) throw new ArgumentException("Report requires workload qualification");
                 if(ConversationQualification) {Environment.ExitCode=await Backend.RunConversationQualificationAsync(QualificationReport)?0:1; ExitCleanly();}
+                if(WorkbenchQualification) {Environment.ExitCode=await Backend.RunWorkbenchQualificationAsync(QualificationReport!,StartupAt)?0:1;ExitCleanly();}
                 return;
             }
             if(ConversationQualification) throw new ArgumentException("Conversation qualification requires a project");
@@ -157,6 +164,7 @@ public partial class App : Application
             if (!Backend.RunFile(ScriptPath))
             {
                 LuiDiagnostics.Error("App", "Script failed: " + Backend.LastError);
+                await LuiDiagnostics.FlushAsync();
                 Environment.ExitCode = 1;
                 ExitCleanly();
                 return;
@@ -173,11 +181,13 @@ public partial class App : Application
             PumpTimer.Tick += (_, _) => Backend.Pump();
             PumpTimer.Start();
             LuiDiagnostics.Log("App", "Ready");
+            LuiDiagnostics.ApplicationRunning = true;
         }
         catch (Exception Error)
         {
-            LuiDiagnostics.Error("App", "Startup failed: " + Error);
+            LuiDiagnostics.Error("App", Error.Message);
             Environment.ExitCode = 1;
+            await LuiDiagnostics.FlushAsync();
             ExitCleanly();
         }
     }

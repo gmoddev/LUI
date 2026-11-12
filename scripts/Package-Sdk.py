@@ -3,9 +3,9 @@
 
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
-import re
 import shutil
 import xml.etree.ElementTree as Xml
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -14,6 +14,30 @@ from zipfile import ZipFile, ZIP_DEFLATED
 def Hash(File):
     with File.open('rb') as Stream:
         return hashlib.file_digest(Stream, 'sha256').hexdigest()
+
+
+def StageOptionalLibraries(Root, Sdk, Version):
+    # A historical release rebuild must never acquire later development APIs.
+    if Version == '0.1.0-preview.1':
+        return
+    Catalog = json.loads((Root / 'libraries/LuiWorkbench/Library.json').read_text(encoding='utf-8'))
+    if Version != Catalog['TargetSdk']:
+        return
+    Spec = importlib.util.spec_from_file_location('LibraryExamples', Root / 'scripts/Stage-LibraryExample.py')
+    Examples = importlib.util.module_from_spec(Spec)
+    Spec.loader.exec_module(Examples)
+    for Name in ('commands', 'workbench', 'json-client', 'numeric-input'):
+        Examples.Stage(Root, Name, Sdk / 'Examples' / Name)
+    for Name in ('LuiWorkbench', 'Json', 'JsonClient', 'LuiUI'):
+        Source = Root / 'libraries' / Name
+        Catalog, ModuleFiles = Examples.GetFiles(Source)
+        if Catalog['TargetSdk'] != Version:
+            raise ValueError('Development library SDK mismatch')
+        Library = Sdk / 'Libraries' / Name
+        Library.mkdir(parents=True)
+        Files = ['Library.json', 'README.md'] + ModuleFiles
+        for File in Files:
+            shutil.copyfile(Source / File, Library / File)
 
 
 def PackageExtension(Root, Destination):
@@ -41,8 +65,8 @@ def PackageExtension(Root, Destination):
         Archive.writestr('extension.vsixmanifest', Xml.tostring(Manifest, encoding='utf-8', xml_declaration=True))
         Archive.writestr('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/><Default Extension="md" ContentType="text/markdown"/><Default Extension="html" ContentType="text/html"/><Default Extension="svg" ContentType="image/svg+xml"/><Default Extension="vsixmanifest" ContentType="text/xml"/><Default Extension="txt" ContentType="text/plain"/></Types>')
         # An exact payload avoids capturing local notes, settings or future unreviewed files.
-        Files = ('Extension.js', 'Inspector.html', 'InspectorProvider.js', 'NativePreview.js', 'Onboarding.js',
-                 'PreviewClient.js', 'PreviewModel.js', 'ProjectProtocol.js', 'SdkClient.js', 'TypeCheckClient.js',
+        Files = ('Extension.js', 'Inspector.html', 'InspectorProvider.js', 'NativePreview.js', 'NativeDiagnostics.js', 'Onboarding.js', 'ProjectFiles.js',
+                 'PreviewClient.js', 'PreviewModel.js', 'ProjectProtocol.js', 'ProjectSetup.js', 'SdkClient.js', 'TypeCheckClient.js',
                  'TypeDiagnostics.js', 'package.json', 'media/icon.svg', 'walkthrough/SDK.md',
                  'walkthrough/PROJECT.md', 'walkthrough/RUN.md')
         for Name in Files:
@@ -51,43 +75,27 @@ def PackageExtension(Root, Destination):
         Archive.write(Root / 'LICENSE', 'extension/LICENSE.txt')
 
 
-def Package(Root, Sdk, Version, NativeBuild):
+def Package(Root, Sdk, Version, NativeBuild, CppRuntime):
+    Spec = importlib.util.spec_from_file_location('WindowsCppRuntime', Root / 'scripts/Stage-WindowsCppRuntime.py')
+    Runtime = importlib.util.module_from_spec(Spec)
+    Spec.loader.exec_module(Runtime)
+    Metadata = Runtime.Stage(Root, CppRuntime, [Sdk / Name for Name in ('Cli', 'Tools', 'Preview', 'Native')])
+    (Sdk / 'CppRuntime.json').write_text(json.dumps(Metadata, indent=2) + '\n', encoding='utf-8')
+    StageOptionalLibraries(Root, Sdk, Version)
     Editor = Sdk / 'Editor'
     Editor.mkdir()
     PackageExtension(Root, Editor / 'LUI.vsix')
     shutil.copyfile(Root / 'LICENSE', Sdk / 'LICENSE.txt')
     shutil.copyfile(Root / 'docs/SDK.md', Sdk / 'README.md')
-    Notices = Sdk / 'ThirdPartyNotices'
-    shutil.copytree(Root / 'third_party/licenses', Notices)
-    Cache = (NativeBuild / 'CMakeCache.txt').read_text(encoding='utf-8')
-    def DependencyRoot(Key, Default):
-        Match = re.search(r'^' + re.escape(Key) + r':[^=\n]+=(.+)$', Cache, re.MULTILINE)
-        return Path(Match[1].strip()) if Match and Match[1].strip() else NativeBuild / Default
-    for Name, Paths in {
-        'Luau.txt': [DependencyRoot('LUAU_SOURCE_DIR', '_deps/luau-src') / 'LICENSE.txt'],
-        'Asio.txt': [DependencyRoot('FETCHCONTENT_SOURCE_DIR_ASIO', '_deps/asio-src') / 'asio/LICENSE_1_0.txt', DependencyRoot('FETCHCONTENT_SOURCE_DIR_ASIO', '_deps/asio-src') / 'LICENSE_1_0.txt'],
-    }.items():
-        Source = next((File for File in Paths if File.is_file()), None)
-        if Source is None:
-            raise ValueError('Missing dependency notice: ' + Name)
-        shutil.copyfile(Source, Notices / Name)
-    # Preserve license/notice material from the exact managed dependency versions.
-    Nuget = Path.home() / '.nuget/packages'
-    Managed = set()
-    for Dependencies in Sdk.rglob('*.deps.json'):
-        Data = json.loads(Dependencies.read_text(encoding='utf-8'))
-        for Value in Data.get('libraries', {}).values():
-            if Value.get('type') == 'package' and 'path' in Value:
-                Managed.add(Value['path'])
-    for Name in sorted(Managed):
-        Source = Nuget / Name
-        if not Source.is_dir():
-            raise ValueError('Missing managed dependency provenance: ' + Name)
-        for File in Source.rglob('*'):
-            if File.is_file() and File.name.lower().startswith(('license', 'notice', 'third-party', 'thirdparty', 'copyright')):
-                Destination = Notices / 'Managed' / Name / File.relative_to(Source)
-                Destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(File, Destination)
+    if Version == '0.1.0-preview.2':
+        Notes = (Root / 'docs/SDK-PREVIEW-2.md').read_text(encoding='utf-8')
+        (Sdk / 'ReleaseNotes.md').write_text(Notes.replace('](SDK.md)', '](README.md)'), encoding='utf-8')
+    Spec = importlib.util.spec_from_file_location('WindowsNotices', Root / 'scripts/Stage-WindowsNotices.py')
+    Notices = importlib.util.module_from_spec(Spec)
+    Spec.loader.exec_module(Notices)
+    Files, Managed = Notices.Collect(Root, NativeBuild, Sdk)
+    Files['VisualCppRuntime.json'] = (json.dumps(Metadata, indent=2) + '\n').encode('utf-8')
+    Notices.Stage(Files, [Sdk / 'ThirdPartyNotices', Sdk / 'Native/THIRD-PARTY-LICENSES'])
     shutil.copyfile(Root / 'cmake/Dependencies.json', Sdk / 'Dependencies.json')
     (Sdk / 'ManagedDependencies.json').write_text(json.dumps(sorted(Managed), indent=2) + '\n', encoding='utf-8')
     (Sdk / 'lui.cmd').write_text('@echo off\r\n"%~dp0Cli\\lui.exe" %*\r\n', encoding='utf-8')
@@ -116,5 +124,6 @@ if __name__ == '__main__':
     Parser.add_argument('--sdk', type=Path, required=True)
     Parser.add_argument('--version', required=True)
     Parser.add_argument('--native-build', type=Path, required=True)
+    Parser.add_argument('--cpp-runtime', type=Path, required=True)
     Arguments = Parser.parse_args()
-    Package(Arguments.root, Arguments.sdk, Arguments.version, Arguments.native_build)
+    Package(Arguments.root, Arguments.sdk, Arguments.version, Arguments.native_build, Arguments.cpp_runtime)

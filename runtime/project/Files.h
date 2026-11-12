@@ -27,6 +27,7 @@ public:
     void Validate(const std::string& Relative) const override;
     // Exclusive, anchored creation. Existing files/links are never overwritten.
     void Write(const std::string& Relative, std::string_view Bytes) const;
+    std::string GetIdentity() const;
 private:
     struct State;
     std::unique_ptr<State> Data;

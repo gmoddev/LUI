@@ -1048,8 +1048,11 @@ internal sealed partial class WinUIBackend : IDisposable
                         Target.Element.Visibility = Value == "true" ? Visibility.Visible : Visibility.Collapsed;
                         break;
                     case "Visible" when Target.ClassName == "CodeEditor":
-                        Target.Visible=Value=="true";
-                        RequireCodeEditor(CodeEditorHost.LuiWinUITextSetVisibleV1(Target.CodeHost,0)==1,"Hide until current Present");
+                        bool Visible=Value=="true";
+                        if(Target.Visible!=Visible) {
+                            Target.Visible=Visible;
+                            RequireCodeEditor(CodeEditorHost.LuiWinUITextSetVisibleV1(Target.CodeHost,0)==1,"Hide until current Present");
+                        }
                         break;
                 }
                 if (Name is "Enabled" or "Visible") ClearInvalidFocus();

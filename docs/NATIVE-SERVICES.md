@@ -126,7 +126,29 @@ the domain's four live plus retiring provider slots.
 
 A trusted embedder calls `Lui_InstallStorageV1(Runtime, Root)` with an existing,
 absolute, dedicated application directory and the Storage grant. Scripts never
-choose a native path. Supplied hosts do not automatically select a storage scope.
+choose a native path. For next SDK `0.1.0-preview.2`, supplied desktop project
+hosts also accept this explicit schema-2 manifest field alongside the Storage
+capability:
+
+```json
+"Storage": { "ApplicationId": "com.example.notes" }
+```
+
+IDs are 1–64 lowercase ASCII letters, digits, dots, underscores or hyphens,
+starting with a letter. This field does not grant a capability. Trusted owners
+call `Lui_InstallProjectStorageV1` after granting Storage and before execution.
+The provider uses `LocalAppData/LUI/Applications/<hash>` on Windows and
+`HOME/.lui/Applications/<hash>` on Linux. The hash binds the ID to the native
+identity of the project directory. Restart and directory rename preserve data;
+a copied/reinstalled project and a packaged copy have separate data. Changing
+ApplicationId starts a new scope. Migration is not provided in this preview.
+
+Provisioning rejects linked scope directories, requires owner-only Linux
+directories, and uses the existing exclusive lock and quotas. Permission,
+unexpected-directory or concurrent-copy failures stop startup with fixed
+`StorageUnavailable` diagnostics. There is no shared-scope fallback. Without
+the new field, provider installation remains an explicit embedder operation.
+Published preview.1 does not support the new field.
 The host owns directory permissions and privacy. This is not encrypted storage.
 
 All methods use the callback profile above:

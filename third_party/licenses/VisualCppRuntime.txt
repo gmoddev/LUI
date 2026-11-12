@@ -1,0 +1,18 @@
+Microsoft Visual C++ Runtime
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+The Microsoft runtime DLLs are distributed unmodified from the Visual Studio
+2022 release x64 redistributable directory. Their exact version, source identity
+and SHA-256 hashes are recorded in VisualCppRuntime.json beside this notice.
+They are governed by the applicable Microsoft Software License Terms and the
+Visual Studio Distributable Code provisions, not LUI's MIT license.
+
+License directory:
+https://visualstudio.microsoft.com/license-terms/
+Distributable Code list:
+https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution
+Deployment guidance:
+https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
+
+App-local runtime copies are serviced by updating the containing SDK or
+application package.

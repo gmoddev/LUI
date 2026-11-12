@@ -57,6 +57,7 @@ if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Application manifest validation fa
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Package staging tests failed' }
 & dotnet run --project (Join-Path $Root 'tests/diagnostics/DiagnosticsTests.csproj') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] Policy disk diagnostics tests failed' }
+$env:LUI_TEST_DIAGNOSTICS = Join-Path $Root "tests/diagnostics/bin/$Configuration/net10.0/DiagnosticsTests.dll"
 $Dll = Join-Path $Build "$Configuration/LuiRuntime.dll"
 $TypeChecker = Join-Path $Build "$Configuration/LuiTypeCheck.exe"
 & dotnet run --project (Join-Path $Root 'tests/cli/CliTests.csproj') --configuration $Configuration -- $Dll $TypeChecker
@@ -76,7 +77,7 @@ $env:LUI_TEST_PREVIEW_HOST = $PreviewHost
 $env:LUI_TEST_RUNTIME = $Dll
 $env:LUI_TEST_CLI = Join-Path $Root "tools/cli/bin/$Configuration/net10.0/lui.dll"
 $env:LUI_TEST_TYPECHECK = $TypeChecker
-& node --test (Join-Path $Root 'tests/editor/EditorTests.js') (Join-Path $Root 'tests/editor/TypeTests.js') (Join-Path $Root 'tests/editor/ProjectTests.js') (Join-Path $Root 'tests/editor/SdkTests.js')
+& node --test (Join-Path $Root 'tests/editor/EditorTests.js') (Join-Path $Root 'tests/editor/TypeTests.js') (Join-Path $Root 'tests/editor/ProjectTests.js') (Join-Path $Root 'tests/editor/SdkTests.js') (Join-Path $Root 'tests/editor/NativeRestartTests.js') (Join-Path $Root 'tests/editor/ProjectFilesTests.js')
 if ($LASTEXITCODE -ne 0) { throw '[LUI:Build] VS Code preview client tests failed' }
 
 & dotnet build (Join-Path $Root 'backends/winui3/Lui.WinUI.csproj') --configuration $Configuration -p:Platform=x64 "-p:LuiNativeDll=$Dll"

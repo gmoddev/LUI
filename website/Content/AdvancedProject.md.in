@@ -116,5 +116,6 @@ Replace the example SDK path with your actual installation. Choose a new output 
 - Explore [layout and lifetime](../../guides/layout/) before adding more dynamic screens.
 - Use the [API reference](../../api/) to find properties, methods, signals and exact type signatures.
 - Read [packaging and sharing](../../guides/packaging/) for distribution limits.
+- Try [complete practical recipes](../../guides/recipes/) for declared images, time, right-click input and local HTTP. Read [capabilities](../../guides/capabilities/) before adding a privileged service.
 
 The walkthrough builds on LUI's [existing modular workspace example](https://github.com/gmoddev/LUI/tree/sdk-v0.1.0-preview.1/examples/modular). Persistence, networking and application-authored automated test commands are separate topics, not hidden requirements of this project.

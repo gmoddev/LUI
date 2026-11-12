@@ -1,0 +1,60 @@
+---
+title: Practical SDK recipes
+description: Complete projects for bundled images and icons, time, right-click input and local HTTP, with common failure recovery.
+sidebar:
+  order: 8
+---
+
+These projects use **SDK 0.1.0-preview.1**. Download a project, extract it to a new directory, open the folder containing `lui.json`, select that exact SDK and run **Check Types**, then **Run App**. Save, Stop App and Run App after edits. Every download includes its full source, manifest, SDK pin and any required image bytes.
+
+## A bundled image or icon
+
+[Download the image project]({{Download:Recipe-Images}}). The project contains a one-pixel PNG named `Pixel.png`, displayed as a dark square. Replace it with your own declared PNG or JPEG to show an application image or icon inside the UI.
+
+{{Manifest:Recipe-Images}}
+
+{{Code:Recipe-Images:Main.luau}}
+
+`Assets` declares files beside the manifest. `ImageLabel.Source` names that declaration. `AssetService:Has` checks the registered name; it is not a loader and does not prove decoding has succeeded. Decoding is asynchronous. Inputs are limited to 1 MiB encoded and 1,048,576 decoded pixels per image.
+
+**Try a failure:** rename `Pixel.png` without changing the manifest, then check/run again. The declared input is missing. Restore the name. If you change `Source` instead, ensure it exactly matches a declared name. Keep assets in the whole project and packaged app folder; do not send only the executable.
+
+Arbitrary disk paths, `file://` paths and image URLs are not image sources. A file picker does not change that contract. This recipe uses a control image; it does not set a native window or tray icon. General disk loading and those icon properties require separate APIs.
+
+## Wall-clock and elapsed time
+
+[Download the time project]({{Download:Recipe-Time}}). The first label shows UTC date/time. Wait a moment, click **Update**, and the second label shows elapsed milliseconds since this app opened.
+
+{{Code:Recipe-Time:Main.luau}}
+
+The bundled Luau `os` library includes `os.time`, `os.date`, `os.clock` and `os.difftime`. `os.time()` returns wall-clock time in seconds; use `os.date` for formatting. The leading `!` requests UTC. `PerformanceService:GetTime()` uses a steady clock in milliseconds with an unspecified origin; subtract two readings to measure elapsed time. Do not turn it into a calendar date.
+
+**Try a failure:** change `os.time()` in your own code to `os.getenv("HOME")`. Environment-variable access is unavailable; restore the supported call. `os.path`, `io`, `package`, arbitrary filesystem access and process/shell execution are also absent. Pure string manipulation is different from permission to read a native path. App-private storage is described in [capabilities](../capabilities/) and the [native storage contract](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/NATIVE-SERVICES.md#storageservice).
+
+## Right-click input and a custom menu
+
+[Download the right-click project]({{Download:Recipe-RightClick}}). Right-click an empty part of the colored area, or activate **Open menu** using the keyboard. Choose the action to update the label. Press Escape while the menu choice is focused to dismiss it.
+
+{{Code:Recipe-RightClick:Main.luau}}
+
+The event is a union. Check `Device` before reading pointer-only fields such as `Button`, `Position` and `IsCanceled`. Mouse beginnings/endings can identify Left, Right, Middle and auxiliary buttons; movement has no Button. Position is local to the target in logical units. This menu is a child of the clicked surface, so the example can use those local coordinates directly. A menu parented elsewhere needs an explicit coordinate conversion.
+
+The example opens on a completed right-button release and ignores cancellation. A canceled press must not activate an action. Multi-contact gestures must track both pointer and button identity; touch/pen events do not automatically mean “right click.” Native capture/focus mappings have platform-specific qualification limits.
+
+**Try a recovery:** open the menu, press Escape, then reopen it with the keyboard button. This is custom LUI application UI, not an OS context menu or global hotkey API. Its keyboard route and focus return are part of the example; broader accessibility/usability still needs real user testing.
+
+## Local HTTP client and server
+
+[Download the HTTP project]({{Download:Recipe-Http}}). It starts a loopback-only server on a selected free port. Click **Send request**. The label should become **Hello from your local server**. No external endpoint, account, raw socket grant or TLS credential is needed.
+
+{{Manifest:Recipe-Http}}
+
+{{Code:Recipe-Http:Main.luau}}
+
+HttpService needs `network.client`; HttpServerService needs `network.server`. The manifest's explicit loopback policy keeps both directions local. The server binds before `Start`, and `Port` exposes the selected port. HTTP client calls yield, so this example runs them inside `task.spawn`. A normal HTTP error status is a response; transport, timeout, cancellation and policy failures can raise an error. Use `StatusCode` or `Success` when your application needs to distinguish response statuses.
+
+The app closes its server when its window closes; runtime destruction also retires owned work. A five-second request timeout and a 1 KiB response limit bound the example. An already-running request can fail if its server is closed; that is an expected application failure, not permission to retry forever.
+
+**Try a failure:** remove `network.server` from `Capabilities`, leaving the Luau unchanged. Check Types can still pass because it does not exercise the host grant. Run App should fail when it requests HttpServerService. Restore the token and rerun. The released editor may show only the generic exit described in [capability troubleshooting](../capabilities/#when-the-app-will-not-start); development SDKs provide the more specific reason.
+
+Inspect Layout refuses this privileged project. Use Run App. For HTTPS clients, the host verifies the peer; there is no verification bypass. Hosted TLS needs trusted host-supplied credentials, which the released stock CLI manifest does not load. See the released [networking contract](https://github.com/gmoddev/LUI/blob/sdk-v0.1.0-preview.1/docs/NETWORKING-FOUNDATION-B.md).

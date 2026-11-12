@@ -241,7 +241,12 @@ static bool AllowReplacement(NativeTextHostV1* Host,const std::wstring& Replacem
     CHARRANGE Selection{};
     SendMessageW(Host->Editor,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&Selection));
     if(Selection.cpMin<0 || Selection.cpMax<Selection.cpMin ||
-        Selection.cpMax>static_cast<long>(Candidate.size())) return false;
+        Selection.cpMax>static_cast<long>(Candidate.size())+1) return false;
+    // Rich Edit's whole-document selection includes its implicit final
+    // paragraph mark. It is not part of canonical text (or its length budget).
+    // ScalarAt already clamps this native endpoint when reporting selection.
+    Selection.cpMin=(std::min)(Selection.cpMin,static_cast<long>(Candidate.size()));
+    Selection.cpMax=(std::min)(Selection.cpMax,static_cast<long>(Candidate.size()));
     const size_t Selected=static_cast<size_t>(Selection.cpMax-Selection.cpMin);
     if(Replacement.size()>CodeEditorMaxUnits ||
         Candidate.size()-Selected>CodeEditorMaxUnits-Replacement.size()) return false;

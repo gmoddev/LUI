@@ -13,9 +13,17 @@ std::string Bounded(std::string Value) {
 }
 std::string ProjectError(const LuiRuntime* Runtime,const std::string& Message) {
     if(!Runtime || !Runtime->DiagnosticMode || Message.empty()) return Message;
+    // Luau adds a source prefix to errors. Return only an exact fixed suffix,
+    // never the prefix, source name or application-controlled capability text.
+    for (const char* Code : {"NetworkClientRequired", "NetworkServerRequired", "NetworkRawRequired",
+            "HostServicesRequired", "ClipboardUnavailable", "DialogsUnavailable", "ProviderUnavailable"}) {
+        const std::string Safe = std::string("[LUI:Capabilities] ") + Code;
+        if (Message == Safe || (Message.size() > Safe.size() &&
+                Message.compare(Message.size() - Safe.size(), Safe.size(), Safe) == 0)) return Safe;
+    }
     static const std::set<std::string> Codes{"InvalidInput","InvalidOptions","InvalidJson","InvalidManifest","InvalidDeclaration","InvalidPath","InvalidLock",
         "InvalidSchema","UnsupportedFeature","PolicyNotSupported","CapabilityDenied","RegistrationMismatch","BinaryMismatch","IdentityMismatch",
-        "CapabilityMismatch","UnsupportedPlatform","Canceled","LimitExceeded","CompileFailed","MissingFile","MissingModule","ForbiddenImport",
+        "CapabilityMismatch","UnknownCapability","DuplicateCapability","UnsupportedPlatform","Canceled","LimitExceeded","CompileFailed","MissingFile","MissingModule","ForbiddenImport",
         "EntryImportDenied","Cycle","InvalidResult","LoadFailed","InitializationEffect","YieldNotAllowed","ProjectNotConfigured","AssetNotRegistered",
         "PolicyNotConfigured","OutputExists","PackageMismatch","FileChanged","DuplicateIdentity","LinkedPath","CaseMismatch","NotRegularFile","IoError"};
     for(const auto* System:{"Modules","Project","Sandbox","Network","Tls","Platform","Scheduler","Backend","Preview","Extension"})

@@ -35,6 +35,9 @@ internal static class SdkTests
         string Manifest = Path.Combine(Project, "lui.json");
         Require(File.Exists(Path.Combine(Project, "Src/Main.luau")) && File.Exists(Path.Combine(Project, "LuiToolchain.json")), "scaffold omitted pin/entry");
         Require(Invoke("new", Project, "--sdk", Root).Code == 1, "existing project overwritten");
+        string Unavailable=Path.Combine(TempRoot,"UnavailableTemplate");
+        Require(Invoke("new",Unavailable,"--template","workbench","--sdk",Root).Code==1 && !Directory.Exists(Unavailable),"unavailable template left a partial project");
+        Require(Invoke("new",Unavailable,"--template","../escape","--sdk",Root).Code==1 && !Directory.Exists(Unavailable),"unknown template accepted");
         Require(Invoke("check", Manifest, "--sdk", Root).Code == 0, "modular starter failed inferred project checking");
         Require(Invoke("run", Manifest, "--sdk", Root, "--host", "unrelated.exe").Code == 1, "mixed host accepted");
         File.WriteAllText(Path.Combine(Project, "Src/Main.luau"), "error('CHECK_MUST_NOT_EXECUTE')");
@@ -45,6 +48,29 @@ internal static class SdkTests
         string Pin = Path.Combine(Project, "LuiToolchain.json");
         File.WriteAllText(Pin, File.ReadAllText(Pin).Replace("0.1.0-preview.1", "0.1.0-preview.2"));
         Require(Invoke("doctor", Manifest, "--sdk", Root).Code == 1, "different pinned SDK accepted");
+        // A complete synthetic template proves the SDK-only copy and exact pin.
+        Dictionary<string,string> Example=new()
+        {
+            ["lui.json"]="{\"SchemaVersion\":2,\"Script\":\"Src/Main.luau\",\"Capabilities\":[],\"Extensions\":[],\"Assets\":[],\"ExtensionDeclarations\":[],\"Diagnostics\":{\"Mode\":\"Development\"},\"Modules\":{\"Root\":\"Src\",\"Files\":[\"Main.luau\"],\"Requires\":[],\"Dependencies\":[]}}",
+            ["Src/Main.luau"]="local Value = 1\n", ["Modules.lock.json"]="{\"SchemaVersion\":1,\"Packages\":[]}\n",
+        };
+        JsonNode Next=JsonNode.Parse(Inventory)!; Next["SdkVersion"]="0.1.0-preview.2";
+        foreach(var Item in Example)
+        {
+            string Relative="Examples/workbench/"+Item.Key, FilePath=Path.Combine(Root,Relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!); File.WriteAllText(FilePath,Item.Value);
+            Next["Files"]![Relative]=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(FilePath))).ToLowerInvariant();
+        }
+        File.WriteAllText(Path.Combine(Root,"Examples/workbench/Unlisted.txt"),"must not copy");
+        string NextInventory=Next.ToJsonString(); File.WriteAllText(Metadata,NextInventory);
+        string TemplateProject=Path.Combine(TempRoot,"TemplateProject");
+        Require(Invoke("new",TemplateProject,"--template","workbench","--sdk",Root).Code==0,"verified template scaffold failed");
+        foreach(var Item in Example) Require(File.ReadAllText(Path.Combine(TemplateProject,Item.Key))==Item.Value,"template/lock bytes changed");
+        Require(!File.Exists(Path.Combine(TemplateProject,"Unlisted.txt")),"unlisted SDK file copied");
+        JsonNode TemplatePin=JsonNode.Parse(File.ReadAllText(Path.Combine(TemplateProject,"LuiToolchain.json")))!;
+        Require(TemplatePin["SdkVersion"]!.GetValue<string>()=="0.1.0-preview.2" && TemplatePin["SdkManifestSha256"]!.GetValue<string>()==Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Metadata))).ToLowerInvariant(),"template pin not exact");
+        Require(Invoke("new",TemplateProject,"--template","workbench","--sdk",Root).Code==1,"existing template project overwritten");
+        Require(Invoke("check",Path.Combine(TemplateProject,"lui.json"),"--sdk",Root).Code==0,"template failed type check");
         File.WriteAllText(Metadata, Inventory.Replace("\"SchemaVersion\":1", "\"SchemaVersion\":1,\"Extra\":true"));
         Require(Invoke("doctor", "--sdk", Root).Code == 1, "unknown metadata field accepted");
         File.WriteAllText(Metadata, Inventory.Replace("\"SchemaVersion\":1", "\"SchemaVersion\":1,\"SchemaVersion\":1"));

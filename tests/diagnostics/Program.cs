@@ -1,5 +1,29 @@
 using Lui.WinUI;
 using System.Diagnostics;
+if (args.Length == 1 && args[0] == "--transport-noise") {
+    Console.Error.WriteLine("PRIVATE_RAW_STDERR_CANARY");
+    Console.Error.WriteLine(new string('x', 4096));
+    Console.Error.WriteLine("[LUI:Diagnostic] {\"Version\":2,\"Code\":\"UnknownCapability\",\"Phase\":\"Startup\"}");
+    Console.Error.WriteLine("[LUI:Diagnostic] {\"Version\":1,\"Code\":\"UnknownCapability\",\"Phase\":\"Startup\",\"Message\":\"PRIVATE_CANARY\"}");
+    Console.Error.Write("[LUI:Diagnostic] " + ApplicationDiagnostic.Record("UnknownCapability", "Startup"));
+    Environment.ExitCode = 1;
+    return;
+}
+if (args.Length == 1 && args[0] == "--transport-flood") {
+    LuiDiagnostics.ApplicationRunning = true;
+    for (int Index = 0; Index < 10000; ++Index) LuiDiagnostics.Report("PRIVATE_FLOOD_CANARY");
+    await LuiDiagnostics.FlushAsync();
+    return;
+}
+if (args.Length == 1 && args[0] == "--transport") {
+    LuiDiagnostics.Report("[LUI:Project] UnknownCapability");
+    LuiDiagnostics.Report("PRIVATE_STARTUP_CANARY");
+    LuiDiagnostics.ApplicationRunning = true;
+    LuiDiagnostics.Report("PRIVATE_SOURCE_CANARY: [LUI:Capabilities] NetworkServerRequired");
+    LuiDiagnostics.Report("PRIVATE_RUNTIME_CANARY");
+    await LuiDiagnostics.FlushAsync();
+    return;
+}
 if(!OperatingSystem.IsWindows()) return;
 if(args.Length==2 && args[0]=="--writer") {
     Console.SetOut(TextWriter.Null); LuiDiagnostics.Initialize(false,true,true,args[1]);

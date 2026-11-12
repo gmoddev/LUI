@@ -25,9 +25,12 @@ The native runtime DLL is copied into the host output by its project. A schema v
 For a self-contained modular application folder:
 
 ```powershell
-./scripts/Publish-Windows.ps1 -ManifestPath examples/modular/lui.json -Mode project -OutputDirectory build/package/modular
+./scripts/Publish-Windows.ps1 -ManifestPath examples/modular/lui.json -Mode project -OutputDirectory build/package/modular -CppRuntimeDirectory '<VisualStudio>/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT'
 ```
 
+Supply the release x64 CRT directory from the licensed Visual Studio installation;
+its bytes must match cmake/WindowsCppRuntime.json. The package includes those
+runtime DLLs and their Microsoft notices beside the executable.
 Run `Start-LUI.cmd` in the resulting folder. Select a fresh output path for each staging operation.
 
 ## Linux headless

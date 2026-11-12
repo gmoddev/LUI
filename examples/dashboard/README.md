@@ -7,7 +7,7 @@ The demo exercises native buttons, text input, filters, pagination, dynamic Inst
 Build a self-contained folder with:
 
 ```powershell
-.\scripts\Publish-Windows.ps1 -ManifestPath .\examples\dashboard\dashboard.manifest.json -OutputDirectory .\build\package\my-dashboard
+.\scripts\Publish-Windows.ps1 -ManifestPath .\examples\dashboard\dashboard.manifest.json -OutputDirectory .\build\package\my-dashboard -CppRuntimeDirectory '<VisualStudio>/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT'
 ```
 
-Then run `Lui.WinUI.exe --manifest dashboard.manifest.json` from the new package folder. Choose a new output directory for each build. The current LUI API does not expose custom colors, typography, or a scrolling container, so this is a native-control interpretation of the layout rather than a pixel match.
+Then run `Lui.WinUI.exe --manifest dashboard.manifest.json` from the new package folder. Choose a new output directory for each build. The sample uses native control styles and a fixed layout.

@@ -14,7 +14,7 @@ For VS Code set `lui.manifestPath` to this manifest. Use **LUI: Choose SDK** for
 
 Compose a runnable folder using a published WinUI host:
 
-`scripts/Publish-Windows.ps1 -ManifestPath examples/modular/lui.json -Mode project -OutputDirectory <new-directory>` builds and publishes a self-contained Windows host, then stages the modular application. The underlying CLI composition command is:
+`scripts/Publish-Windows.ps1 -ManifestPath examples/modular/lui.json -Mode project -OutputDirectory <new-directory> -CppRuntimeDirectory '<VisualStudio>/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT'` builds and publishes a self-contained Windows host, then stages the modular application. The underlying CLI composition command is:
 
 ```powershell
 dotnet tools/cli/bin/Debug/net10.0/lui.dll build examples/modular/lui.json --mode project --host <published-host-directory> --project-tool build/windows-x64/Debug/LuiProjectTool.exe --output <new-output-directory>

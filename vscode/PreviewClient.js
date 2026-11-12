@@ -4,6 +4,7 @@ const { EventEmitter } = require('node:events');
 const { spawn } = require('node:child_process');
 const { ValidateSchema, ValidateTree } = require('./PreviewModel');
 const {SourceMap}=require('./ProjectProtocol');
+const { ReadManifest } = require('./ProjectSetup');
 
 const MaxLineBytes = 4 * 1024 * 1024 + 64 * 1024;
 
@@ -20,8 +21,7 @@ class PreviewClient extends EventEmitter {
         this.Closed = false;
         this.Buffer = '';
         this.Root=require('node:path').dirname(ManifestPath);
-        if(require('node:fs').statSync(ManifestPath).size>256*1024) throw new Error('[LUI:Project] LimitExceeded');
-        this.Version=JSON.parse(require('node:fs').readFileSync(ManifestPath,'utf8')).SchemaVersion===2?2:1;
+        this.Version=ReadManifest(ManifestPath).SchemaVersion;
         this.Sources=new Map();
         const IsDll = HostPath.toLowerCase().endsWith('.dll');
         this.Process = spawn(IsDll ? 'dotnet' : HostPath,

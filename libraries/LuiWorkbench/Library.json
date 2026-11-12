@@ -1,0 +1,13 @@
+{
+  "SchemaVersion": 1,
+  "Name": "LuiWorkbench",
+  "TargetSdk": "0.1.0-preview.2",
+  "Status": "Development",
+  "Modules": [
+    {"Name": "Commands", "Summary": "Register commands, search a palette, and share guarded actions with shortcuts.", "Types": ["Shortcut", "Command", "Row", "Registry"]},
+    {"Name": "Documents", "Summary": "Own text buffers and guard asynchronous load/save completion against later edits.", "Types": ["Document", "Receipt", "LoadReceipt", "Store"]},
+    {"Name": "Workspace", "Summary": "Arrange known document tabs in two panes and validate saved presentation state.", "Types": ["Snapshot", "Model"]},
+    {"Name": "Split", "Summary": "Track a primary mouse divider gesture in logical units with cancellation rollback.", "Types": ["Gesture"]},
+    {"Name": "Preferences", "Summary": "Read and write bounded ordinary preferences through an existing scoped storage service.", "Types": ["Completion", "Operation", "Store"]}
+  ]
+}

@@ -28,7 +28,7 @@ internal static class ProjectTypeChecker
                 string Message = Error.Result.Trim();
                 // A failed/mismatched child must not disclose arbitrary stderr.
                 Match Code = Regex.Match(Message, @"^\[LUI:(Project|TypeCheck)\] ([A-Za-z]{1,64})$", RegexOptions.CultureInvariant);
-                string[] Known = ["InvalidInput", "InvalidOptions", "InvalidJson", "InvalidManifest", "InvalidDeclaration", "InvalidPath", "InvalidLock", "UnsupportedFeature",
+                string[] Known = ["InvalidInput", "InvalidOptions", "InvalidJson", "InvalidManifest", "UnknownCapability", "DuplicateCapability", "InvalidDeclaration", "InvalidPath", "InvalidLock", "UnsupportedFeature",
                     "UnsupportedSchema", "PolicyNotSupported", "DefinitionsInvalid", "AnalysisFailed", "LimitExceeded", "Canceled", "Cycle", "MissingModule",
                     "MissingFile", "WrongCase", "LinkNotAllowed", "DependencyMismatch", "ForbiddenImport", "EntryImportDenied", "FileChanged", "BinaryMismatch", "CapabilityMismatch", "UnsupportedPlatform"];
                 string Safe = Code.Success && Known.Contains(Code.Groups[2].Value, StringComparer.Ordinal) ? Message : "[LUI:TypeCheck] CheckerFailed";

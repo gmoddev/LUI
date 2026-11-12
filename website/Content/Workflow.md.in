@@ -21,6 +21,8 @@ There is no native restart-on-save supervisor or application-authored `lui test`
 
 **LUI: Inspect Layout** starts another app generation to inspect its tree and resolved geometry. It does not inspect the live native window. Its state and lifetime are independent of Run App.
 
+The inspector refuses privileged capabilities and native extensions. Use Run App for network/storage behavior. See [capabilities and execution modes](../capabilities/), then try the [complete practical projects](../recipes/) for images, time, right click and local HTTP.
+
 ## Return to a project later
 
 Open the same project folder. Choose the exact pinned SDK if it is missing. The project records the SDK identity without committing a machine-specific SDK path. Opening a project does not automatically update its SDK or download dependencies.

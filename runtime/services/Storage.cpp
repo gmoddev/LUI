@@ -3,6 +3,11 @@
 #include "../internal/NativeServices.h"
 #include "../internal/Dispatch.h"
 #include "../project/Files.h"
+#if !defined(LUI_CAPTURED_ONLY)
+#include "../project/Host.h"
+#include "LuiProject.h"
+#include <nlohmann/json.hpp>
+#endif
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -30,6 +35,7 @@ struct Storage {
     std::promise<void> Exit;
     std::future<void> Exited;
     explicit Storage(const std::filesystem::path& Root) : Files(Root), Exited(Exit.get_future()) {}
+    Storage(const std::filesystem::path& Root, const std::string& Scope) : Files(Root, Scope), Exited(Exit.get_future()) {}
     void Release(const Job& Value) {
         if (Value.Handle.Value) Host.ReleaseHandle(Host.Session,Value.Handle);
         Host.ReleaseBytes(Host.Session,Value.Input); Host.ReleaseSession(Host.Session);
@@ -142,7 +148,7 @@ const LuiNativeServiceV2 Service{sizeof(LuiNativeServiceV2),2,"StorageService",M
 const LuiNativeProviderV2 Provider{sizeof(LuiNativeProviderV2),2,Start,Cancel,Close,Shutdown,Poll,Destroy};
 }
 
-extern "C" LUI_API uint32_t LUI_CALL Lui_InstallStorageV1(LuiRuntime* Runtime, const char* Root) {
+static uint32_t InstallStorage(LuiRuntime* Runtime, const char* Root, const std::string& Scope = {}) {
     if (!CheckOwner(Runtime) || !Root || Runtime->ApplicationStarted || Runtime->ProjectNativeVerified || Runtime->VmDepth || Runtime->BackendDepth || Runtime->ShuttingDown)
         return LUI_NATIVE_INVALID_ARGUMENT;
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_STORAGE)) return LUI_NATIVE_CAPABILITY_DENIED;
@@ -150,7 +156,8 @@ extern "C" LUI_API uint32_t LUI_CALL Lui_InstallStorageV1(LuiRuntime* Runtime, c
     try {
         size_t Length = 0; while (Length < 4097 && Root[Length]) ++Length;
         if (!Length || Length == 4097) return LUI_NATIVE_INVALID_ARGUMENT;
-        auto Value = std::make_unique<Storage>(std::filesystem::u8path(Root,Root+Length));
+        const auto Path = std::filesystem::u8path(Root,Root+Length);
+        auto Value = Scope.empty() ? std::make_unique<Storage>(Path) : std::make_unique<Storage>(Path, Scope);
         const auto Status = RegisterPlatformNativeService(Runtime,&Service,&Provider,Value.get(),&Value->Host);
         if (Status) return Status;
         auto* Context = Value.release();
@@ -164,3 +171,28 @@ extern "C" LUI_API uint32_t LUI_CALL Lui_InstallStorageV1(LuiRuntime* Runtime, c
         return std::string_view(Error.what()) == "LimitExceeded" ? LUI_NATIVE_LIMIT_EXCEEDED : LUI_NATIVE_PROVIDER_FAILURE;
     } catch (...) { return LUI_NATIVE_PROVIDER_FAILURE; }
 }
+extern "C" LUI_API uint32_t LUI_CALL Lui_InstallStorageV1(LuiRuntime* Runtime, const char* Root) {
+    return InstallStorage(Runtime, Root);
+}
+#if !defined(LUI_CAPTURED_ONLY)
+extern "C" LUI_API uint32_t LUI_CALL Lui_InstallProjectStorageV1(LuiRuntime* Runtime, const LuiProject* Project,
+    const char* DataRoot, const char* ApplicationRoot) {
+    if (!CheckOwner(Runtime) || !Project || !DataRoot || !ApplicationRoot || Runtime->ApplicationStarted ||
+        Runtime->ProjectNativeVerified || Runtime->VmDepth || Runtime->BackendDepth || Runtime->ShuttingDown)
+        return LUI_NATIVE_INVALID_ARGUMENT;
+    if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_STORAGE)) return LUI_NATIVE_CAPABILITY_DENIED;
+    try {
+        const auto Snapshot = GetProjectSnapshot(Project);
+        if (!Snapshot) return LUI_NATIVE_INVALID_ARGUMENT;
+        const auto Manifest = nlohmann::json::parse(Snapshot->GetSources().GetDescriptor()).at("Manifest");
+        if (!Manifest.contains("Storage")) return LUI_NATIVE_INVALID_ARGUMENT;
+        size_t Length = 0; while (Length < 4097 && ApplicationRoot[Length]) ++Length;
+        if (!Length || Length == 4097) return LUI_NATIVE_INVALID_ARGUMENT;
+        const auto Root = std::filesystem::u8path(ApplicationRoot, ApplicationRoot + Length);
+        if (!Root.is_absolute()) return LUI_NATIVE_INVALID_ARGUMENT;
+        Lui::Project::Internal::Anchor Owner(Root);
+        const auto Scope = Lui::Project::Hash("LUI-STORAGE-1\n" + Manifest.at("Storage").at("ApplicationId").get<std::string>() + "\n" + Owner.GetIdentity());
+        return InstallStorage(Runtime, DataRoot, Scope);
+    } catch (...) { return LUI_NATIVE_PROVIDER_FAILURE; }
+}
+#endif

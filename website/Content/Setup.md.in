@@ -48,7 +48,7 @@ Doctor checks the SDK identity and component inventory. The exact project pin al
 | Create or Run is refused | Review VS Code's workspace trust state. Trust only projects whose code you trust. |
 | Checking fails after adding a module | Declare the exact-case filename in `Modules.Files` in `lui.json`. |
 | The native app shows old code | Save, Stop App, then Run App. Saving alone does not restart it yet. |
-| Setup or launch fails | Read the LUI Preview output and record your LUI version, Windows version and reproduction steps. |
+| Setup or launch fails | Follow [capability and startup troubleshooting](../capabilities/#when-the-app-will-not-start). Read LUI Preview output; preview.1 can omit the underlying native reason. |
 
 Fresh-PC prerequisites and the ordinary downloaded-file launch path are still being qualified. A successful check on an existing development machine does not establish general clean-machine support.
 

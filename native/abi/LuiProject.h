@@ -11,6 +11,17 @@ extern "C" {
    callers must not publish it as a redacted diagnostic/preview projection. */
 #define LUI_PROJECT_ABI_VERSION 1u
 typedef struct LuiProject LuiProject;
+
+/* Desktop owner only. Zero on success; LUI_NATIVE_* status otherwise. Call on
+   the runtime owner thread after explicit Storage grant, before native binding
+   or execution. Project must declare Storage.ApplicationId. DataRoot is an
+   existing trusted per-user directory (LocalAppData on Windows, home on Linux);
+   ApplicationRoot is the trusted source/package directory used for preparation.
+   Both are absolute NUL-terminated UTF-8, max 4096 bytes. No application path is
+   accepted. Binds the scope to ApplicationId and native directory identity.
+   Neither path nor the resulting scope is exposed to Luau. Desktop exports only. */
+LUI_API uint32_t LUI_CALL Lui_InstallProjectStorageV1(LuiRuntime* Runtime, const LuiProject* Project,
+    const char* DataRoot, const char* ApplicationRoot);
 typedef int (LUI_CALL* LuiProjectCanceledCallback)(void* Context);
 
 typedef struct LuiProjectOptionsV1 {

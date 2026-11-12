@@ -13,6 +13,7 @@ internal sealed class SdkInstallation
     internal string Target { get; }
     internal string Digest { get; }
     internal Dictionary<string, string> Components { get; } = new(StringComparer.Ordinal);
+    private readonly Dictionary<string,string> ExampleInventory = new(StringComparer.Ordinal);
     private static readonly string[] Names = ["Cli", "Checker", "Definitions", "Runtime", "PreviewHost", "NativeHost", "ProjectTool"];
 
     private SdkInstallation(string DirectoryPath)
@@ -40,6 +41,7 @@ internal sealed class SdkInstallation
             string FilePath = GetPath(File.Name);
             using FileStream Stream = System.IO.File.OpenRead(FilePath);
             if (Stream.Length > 1024L * 1024 * 1024 || Hash(Stream) != Expected) throw Invalid("ComponentMismatch");
+            if(File.Name.StartsWith("Examples/",StringComparison.Ordinal)) ExampleInventory.Add(File.Name,Expected);
         }
         JsonElement Parts = Data.GetProperty("Components");
         Fields(Parts, Names);
@@ -101,6 +103,28 @@ internal sealed class SdkInstallation
 
     internal void WritePin(string DirectoryPath) => File.WriteAllText(Path.Combine(DirectoryPath, "LuiToolchain.json"),
         JsonSerializer.Serialize(new { SchemaVersion = 1, SdkVersion = Version, SdkManifestSha256 = Digest }, new JsonSerializerOptions { WriteIndented = true }) + "\n");
+
+    internal void CopyExample(string Name,string Destination)
+    {
+        if(Name is not ("commands" or "workbench")) throw Invalid("UnknownTemplate: choose basic, commands or workbench");
+        string Prefix="Examples/"+Name+"/";
+        Dictionary<string,byte[]> Captured=new(StringComparer.Ordinal);
+        foreach(var Item in ExampleInventory.Where(Item=>Item.Key.StartsWith(Prefix,StringComparison.Ordinal)))
+        {
+            byte[] Bytes=Read(GetPath(Item.Key));
+            if(Hash(Bytes)!=Item.Value) throw Invalid("ComponentMismatch");
+            Captured.Add(Item.Key[Prefix.Length..],Bytes);
+        }
+        if(!Captured.ContainsKey("lui.json") || !Captured.ContainsKey("Src/Main.luau"))
+            throw Invalid("TemplateUnavailable: select an SDK containing this example (preview.2 or later)");
+        Directory.CreateDirectory(Destination);
+        foreach(var Item in Captured)
+        {
+            string Target=Path.Combine(Destination,Item.Key.Replace('/',Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(Target)!); File.WriteAllBytes(Target,Item.Value);
+        }
+        WritePin(Destination);
+    }
 
     private string GetPath(string Relative)
     {

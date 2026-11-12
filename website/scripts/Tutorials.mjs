@@ -107,10 +107,12 @@ export function Checkpoints() {
   ];
 }
 export function ProjectFiles(Checkpoint, Release) {
-  const Manifest = { SchemaVersion: 2, Script: 'Src/Main.luau', Capabilities: [], Extensions: [], Assets: [], ExtensionDeclarations: [], Diagnostics: { Mode: 'Development' }, Modules: { Root: 'Src', Files: Object.keys(Checkpoint.Files).sort(), Requires: [], Dependencies: [] } };
+  const Manifest = { SchemaVersion: 2, Script: 'Src/Main.luau', Capabilities: Checkpoint.Capabilities ?? [], Extensions: [], Assets: Object.keys(Checkpoint.Assets ?? {}).sort(), ExtensionDeclarations: [], Diagnostics: { Mode: 'Development' }, Modules: { Root: 'Src', Files: Object.keys(Checkpoint.Files).sort(), Requires: [], Dependencies: [] } };
+  if (Checkpoint.NetworkPolicy) Manifest.NetworkPolicy = Checkpoint.NetworkPolicy;
   const Files = new Map(Object.entries(Checkpoint.Files).map(([Name, Text]) => ['Src/' + Name, Text]));
+  for (const [Name, Bytes] of Object.entries(Checkpoint.Assets ?? {})) Files.set(Name, Bytes);
   Files.set('lui.json', JSON.stringify(Manifest, null, 2) + '\n');
   Files.set('LuiToolchain.json', JSON.stringify({ SchemaVersion: 1, SdkVersion: Release.SdkVersion, SdkManifestSha256: Release.SdkManifestSha256 }, null, 2) + '\n');
-  Files.set('README.md', '# ' + Checkpoint.Title + '\n\nOpen this folder in VS Code and choose the LUI SDK ' + Release.SdkVersion + '. Use LUI: Check Types, then LUI: Run App. Stop and rerun after edits.\n\nGuide: https://gmoddev.github.io/LUI/docs/sdk-' + Release.SdkVersion + '/learn/' + (Checkpoint.Name.startsWith('First') ? 'first-project/' : 'advanced-project/') + '\n\nThis is a local example. State is session-only. Keep the whole project together.\n');
+  Files.set('README.md', '# ' + Checkpoint.Title + '\n\nOpen this folder in VS Code and choose the LUI SDK ' + Release.SdkVersion + '. Use LUI: Check Types, then LUI: Run App. Stop and rerun after edits.\n\nGuide: https://gmoddev.github.io/LUI/docs/sdk-' + Release.SdkVersion + '/' + (Checkpoint.Name.startsWith('Recipe-') ? 'guides/recipes/' : 'learn/' + (Checkpoint.Name.startsWith('First') ? 'first-project/' : 'advanced-project/')) + '\n\nThis is a local example. State is session-only. Keep the whole project together.' + (Checkpoint.Capabilities?.length ? ' Inspect Layout refuses this privileged project; use Run App.' : '') + '\n');
   return Files;
 }

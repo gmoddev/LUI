@@ -27,6 +27,13 @@ export default defineConfig({
         { label: 'Value and resource types', items: [{ autogenerate: { directory: `${Version}/api/types` } }], collapsed: true },
         { label: 'Globals and constructors', items: [{ autogenerate: { directory: `${Version}/api/globals` } }], collapsed: true },
       ] },
+      { label: 'Next SDK · Development', items: [
+        { label: 'Editor workflow', link: 'next/guides/workflow/' },
+        { label: 'Workbench libraries', link: 'next/libraries/luiworkbench/' },
+        { label: 'JSON codec', link: 'next/libraries/json/' },
+        { label: 'JSON HTTP client', link: 'next/libraries/jsonclient/' },
+        { label: 'Numeric input', link: 'next/libraries/luiui/' },
+      ] },
     ],
   })],
 });

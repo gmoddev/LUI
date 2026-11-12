@@ -293,6 +293,26 @@ static void Cases(const Fs::path& Suite) {
             "manifest granted its own capabilities"); Lui_ProjectRelease(Prepared);
     }
 }
+static void CapabilityDiagnostics(const Fs::path& Root) {
+    for (uint32_t Mode : {LUI_DIAGNOSTICS_DEVELOPMENT, LUI_DIAGNOSTICS_RESTRICTED}) {
+        Fixture Input(Root / std::to_string(Mode), {{"Main.luau", "app:GetService('HttpServerService')"}});
+        Input.Manifest["Capabilities"] = Json::array();
+        Input.Manifest["Diagnostics"]["Mode"] = Mode == LUI_DIAGNOSTICS_RESTRICTED ? "Restricted" : "Development";
+        LuiProject* Project = Input.Prepare();
+        LuiDiagnosticPolicyV1 Policy{sizeof(Policy), 1, Mode, 0};
+        RuntimePtr App(Lui_CreateWithPolicy(&Policy), Lui_Destroy);
+        Check(bool(App), "capability policy runtime unavailable");
+        LuiCapabilityDeclarationV1 Grants{sizeof(Grants), 1, 0};
+        Check(Lui_DeclareCapabilities(App.get(), &Grants) != 0, "empty owner grant rejected");
+        LuiProjectRunOptionsV1 Options{sizeof(Options), 1, 0, 0, 0};
+        const bool Ran = Lui_RunProject(App.get(), Project, &Options) != 0;
+        Lui_ProjectRelease(Project);
+        Check(!Ran && std::string(Lui_GetLastError(App.get())) == "[LUI:Capabilities] NetworkServerRequired",
+            "modular bootstrap erased missing capability reason");
+        Check(std::string(Lui_GetPreviewTreeJson(App.get())) == "[]", "denied project retained its attempted tree");
+    }
+}
+
 int main() {
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
@@ -300,7 +320,7 @@ int main() {
     const auto Suite=Fs::temp_directory_path()/("LuiModuleTests-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Fs::create_directory(Suite);
     try {
-        Cases(Suite); Fs::remove_all(Suite); // Fresh fixture tree, no links or external targets.
+        Cases(Suite); CapabilityDiagnostics(Suite / "CapabilityDiagnostics"); Fs::remove_all(Suite); // Fresh fixture tree, no links or external targets.
         std::puts("[LUI:ModuleTest] Cache, source binding, guards, cycles, quotas and generation cleanup passed"); return 0;
     } catch (const std::exception& Error) { std::fprintf(stderr,"[LUI:ModuleTest] %s\n",Error.what()); return 1; }
 }

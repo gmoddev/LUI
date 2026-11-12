@@ -107,6 +107,14 @@ static void Cases(const Fs::path& Suite) {
     Require(Changed && Changed->GetDigest()!=First->GetDigest() && State->Bytes=="return {Count=0}\n", "snapshot not immutable");
     Files(Root);
     Value=Manifest(); Value["Unknown"]=true; Bad(Root,Value,"InvalidManifest");
+    Value=Manifest(); Value["Storage"]={{"ApplicationId","lui.workbench"}}; Bad(Root,Value,"InvalidManifest");
+    Value["Capabilities"]={"Storage"}; Write(Root/"lui.json",Value.dump());
+    auto Stored=Prepare(Root/"lui.json",{},Error); Require(bool(Stored),"explicit storage identity refused");
+    Require(Stored->GetDigest()!=First->GetDigest(),"storage identity absent from fingerprint");
+    for (const auto& Id : {"", "../escape", "UPPER", "0start", "x/y", "x\\y"}) {
+        Value["Storage"]["ApplicationId"]=Id; Bad(Root,Value,"InvalidManifest");
+    }
+    Value["Storage"]={{"ApplicationId","lui.workbench"},{"Root","/tmp/shared"}}; Bad(Root,Value,"InvalidManifest");
     Value=Manifest(); Value["SchemaVersion"]=1; Bad(Root,Value,"InvalidSchema");
     Value=Manifest(); Value["Modules"]["Files"].push_back("state.luau"); Bad(Root,Value,"DuplicateIdentity");
     Value=Manifest(); Value["Modules"]["Root"]="src"; Value["Script"]="src/Main.luau"; Bad(Root,Value,"CaseMismatch");
@@ -115,7 +123,8 @@ static void Cases(const Fs::path& Suite) {
     Value=Manifest(); Value["Modules"]["Dependencies"][0]["Root"]="Src/Vendor"; Bad(Root,Value,"DuplicateIdentity");
     Value=Manifest(); Value["Modules"]["Requires"]={"Missing"}; Bad(Root,Value,"UnknownAlias");
     Value=Manifest(); Value["Modules"]["Dependencies"][0]["Requires"]={"UiKit"}; Bad(Root,Value,"Cycle");
-    Value=Manifest(); Value["Capabilities"]={"Shell"}; Bad(Root,Value,"InvalidManifest");
+    Value=Manifest(); Value["Capabilities"]={"PRIVATE_CAPABILITY_CANARY"}; Bad(Root,Value,"UnknownCapability");
+    Value=Manifest(); Value["Capabilities"]={"network.server","network.server"}; Bad(Root,Value,"DuplicateCapability");
     Value=Manifest(); Value["ExtensionDeclarations"]={"Unsafe.json"}; Bad(Root,Value,"InvalidManifest");
     Value=Manifest(); Value["Diagnostics"]["Mode"]="Bypass"; Bad(Root,Value,"InvalidManifest");
     Value=Manifest(); Value["Modules"].erase("Lock"); Bad(Root,Value,"InvalidLock");

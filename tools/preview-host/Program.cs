@@ -24,7 +24,10 @@ internal static class Program
             UnauthorizedAccessException or JsonException or DllNotFoundException or EntryPointNotFoundException or
             BadImageFormatException)
         {
-            Console.Error.WriteLine(Arguments.FirstOrDefault()=="--project" ? "[LUI:Preview] StartupFailed" : "[LUI:Preview] " + Error.Message);
+            string Code = ApplicationDiagnostic.GetCode(Error.Message) ?? "StartupFailed";
+            Console.Error.WriteLine(Arguments.FirstOrDefault()=="--project" ?
+                "[LUI:Preview] " + ApplicationDiagnostic.Describe("[LUI:Preview] " + Code) :
+                "[LUI:Preview] " + ApplicationDiagnostic.Describe(Error.Message));
             return 1;
         }
     }
@@ -56,10 +59,10 @@ internal sealed class PreviewSession : IDisposable
     {
         this.ManifestPath=Path.GetFullPath(ManifestPath); this.RuntimePath=Path.GetFullPath(RuntimePath);
         ProtocolVersion=Modular?2:1;
-        if(Modular) {Project=new PreparedProject(ManifestPath,RuntimePath); if(Project.HasPrivileges) throw new InvalidDataException("Preview requires no privileged capabilities");}
+        if(Modular) {Project=new PreparedProject(ManifestPath,RuntimePath); if(Project.HasPrivileges) {Project.Dispose(); Project=null; throw new InvalidDataException("[LUI:Preview] InspectorUnsupported");}}
         else Manifest = AppManifest.Load(ManifestPath);
         if (Manifest is not null && (Manifest.Capabilities.Count != 0 || Manifest.Extensions.Count != 0))
-            throw new InvalidDataException("Preview requires a manifest without privileged capabilities or extensions");
+            throw new InvalidDataException("[LUI:Preview] InspectorUnsupported");
         Native = new NativeRuntime(RuntimePath);
         LogHandler = OnLog;
     }

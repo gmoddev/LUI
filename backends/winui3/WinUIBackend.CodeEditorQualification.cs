@@ -1,6 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Diagnostics;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Input;
 
 namespace Lui.WinUI;
 
@@ -49,6 +52,41 @@ internal sealed partial class WinUIBackend
     [DllImport("user32.dll",EntryPoint="IsWindowVisible")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsCodeWindowVisible(IntPtr Window);
+    [DllImport("user32.dll",EntryPoint="GetFocus")]
+    private static extern IntPtr GetCodeFocus();
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CodeMouseInput {internal int X,Y;internal uint Data,Flags,Time;internal UIntPtr Extra;}
+    [StructLayout(LayoutKind.Explicit,Size=32)]
+    private struct CodeInputData {[FieldOffset(0)] internal CodeMouseInput Mouse;}
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CodeNativeInput {internal uint Type;internal CodeInputData Data;}
+    [DllImport("user32.dll",EntryPoint="SendInput",SetLastError=true)]
+    private static extern uint SendCodeInput(uint Count,CodeNativeInput[] Inputs,int Size);
+    [DllImport("user32.dll",EntryPoint="SetCursorPos")]
+    [return:MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCodeCursor(int X,int Y);
+    [DllImport("user32.dll",EntryPoint="GetCursorPos")]
+    [return:MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCodeCursor(out CodePoint Point);
+    [DllImport("user32.dll",EntryPoint="SetForegroundWindow")]
+    [return:MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCodeForeground(IntPtr Window);
+    [DllImport("user32.dll",EntryPoint="GetSystemMetrics")]
+    private static extern int CodeSystemMetric(int Index);
+    private static void CodeMouseButton(bool Up) {
+        CodeNativeInput Input=new() {Data=new() {Mouse=new() {Flags=Up?4u:2u}}};
+        FrameRequire(SendCodeInput(1,[Input],Marshal.SizeOf<CodeNativeInput>())==1,"CodePointerNativeAdmission");
+    }
+    private static void CodeMouseMove(int X,int Y) {
+        int Width=CodeSystemMetric(78),Height=CodeSystemMetric(79);
+        FrameRequire(Width>1 && Height>1,"CodePointerVirtualDesktop");
+        // Absolute virtual-desktop motion avoids pointer acceleration; the
+        // caller converts logical fixture positions to physical screen pixels.
+        CodeNativeInput Input=new() {Data=new() {Mouse=new() {
+            X=(int)Math.Round((X-CodeSystemMetric(76))*65535.0/(Width-1)),
+            Y=(int)Math.Round((Y-CodeSystemMetric(77))*65535.0/(Height-1)),Flags=0xC001}}};
+        FrameRequire(SendCodeInput(1,[Input],Marshal.SizeOf<CodeNativeInput>())==1,"CodePointerNativeMoveAdmission");
+    }
     [DllImport("user32.dll",EntryPoint="IsWindowEnabled")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsCodeWindowEnabled(IntPtr Window);
@@ -433,6 +471,7 @@ internal sealed partial class WinUIBackend
     public async Task<bool> RunCodeEditorQualificationAsync(string ReportPath)
     {
         List<string> Groups=new();
+        List<object> PointerTrace=new();
         int OwnerThread=Environment.CurrentManagedThreadId;
         string? Failure=null;
         bool ImeContextAvailable=false,ImeSetStringAccepted=false,ImeCompleteAccepted=false;
@@ -452,6 +491,7 @@ internal sealed partial class WinUIBackend
                 W=Instance.new('Window',{Title='LUI CodeEditor runtime',Visible=true,Size=UDim2.fromOffset(480,320)})
                 Editor=Instance.new('CodeEditor',{Parent=W,Text='A\u{1F600}\nreturn',Position=UDim2.fromOffset(20,30),Size=UDim2.fromOffset(400,220)})
                 Changes=0
+                Editor.Focused:Connect(function() Editor.Visible=true end)
                 Editor.TextChanged:Connect(function()
                     Changes+=1
                     assert(not Editor:SetStyles(Editor.TextRevision,{{Start=0,End=1,Color=0xD12A44}}))
@@ -469,7 +509,14 @@ internal sealed partial class WinUIBackend
 
             FrameRun("assert(Editor:Focus());Editor.SelectionStart=0;Editor.SelectionLength=0");
             await Settle();
+            FrameRequire(GetCodeFocus()==Editor,"CodeEditorFocusCallbackPreservesNativeFocus");
             FrameRequire(CodeEditorHost.LuiWinUITextFocusV1(Host)==1,"CodeEditorNativeFocus");
+            await Settle();
+            FrameRequire(GetCodeFocus()==Editor,"CodeEditorFocusCallbackVisibility");
+            FrameRun("Editor.Visible=true");
+            await Settle();
+            FrameRequire(GetCodeFocus()==Editor && IsCodeWindowVisible(Host),"CodeEditorRedundantVisibilityRetainsFocus");
+            Groups.Add("Redundant visible updates preserve the focused native editor, including from Focused callbacks");
             CodeSendMessage(Editor,CodeWmChar,new IntPtr('x'),IntPtr.Zero);
             await Settle();
             FrameRun("""assert(Editor.Text=='xA\u{1F600}\nreturn' and Editor.TextRevision==3 and Changes==1)""");
@@ -679,10 +726,93 @@ internal sealed partial class WinUIBackend
             FrameRun("assert(Editor.Text==string.rep('a',262144) and Editor.MaxLength==262144)");
             Groups.Add("Full 256 KiB native source, tail style, rejected append, accepted replacement and native Undo preserve runtime text");
 
+            FrameRun("Editor:Destroy();Editor=Instance.new('CodeEditor',{Parent=Second,Text='a\\nb\\n',MaxLength=4,Size=UDim2.fromOffset(300,200)})");
+            await Settle();
+            Target=Views.Single(Pair=>Pair.Value.ClassName=="CodeEditor").Value;
+            Host=Target.CodeHost;Editor=CodeEditorHost.LuiWinUITextEditorV1(Host);
+            // The native Select All endpoint includes Rich Edit's implicit
+            // paragraph mark. Do not substitute the canonical bounded setter.
+            CodeSendMessage(Editor,0x00B1,IntPtr.Zero,new IntPtr(-1));
+            CodeSelection WholeDocument=new();
+            CodeSendMessageSelection(Editor,CodeEmExGetSel,IntPtr.Zero,ref WholeDocument);
+            FrameRequire(WholeDocument.Start==0 && WholeDocument.End==5,"CodeEditorNativeSelectAllIncludesParagraph");
+            await Settle();
+            FrameRun("assert(Editor.SelectionStart==0 and Editor.SelectionLength==4)");
+            CodeSendMessage(Editor,CodeWmChar,new IntPtr('x'),IntPtr.Zero);
+            await Settle();
+            FrameRun("assert(Editor.Text=='x' and Editor.SelectionStart==1 and Editor.SelectionLength==0)");
+            FrameRequire(CodeSendMessage(Editor,CodeEmUndo,IntPtr.Zero,IntPtr.Zero)!=IntPtr.Zero,"CodeEditorSelectAllReplacementUndo");
+            await Settle();
+            FrameRun("assert(Editor.Text=='a\\nb\\n')");
+            CodeSendMessage(Editor,0x00B1,IntPtr.Zero,new IntPtr(-1));
+            CodeSendMessage(Editor,CodeWmChar,new IntPtr('z'),IntPtr.Zero);
+            await Settle();
+            FrameRun("assert(Editor.Text=='z')");
+            Groups.Add("Native whole-document selection replaces LF-terminated text within MaxLength, reports canonical selection and preserves Undo");
+
             FrameRun("Editor:Destroy();assert(not pcall(function() Editor:SetStyles(5,{}) end))");
             await Settle();
             FrameRequire(!IsCodeWindow(Host),"CodeEditorHostRetirement");
             Groups.Add("Destroy retires popup HWND and rejects stale style calls");
+
+            FrameRun("""
+                Second:Destroy()
+                PointerWindow=Instance.new('Window',{Title='LUI nested pointer qualification',Visible=true,Size=UDim2.fromOffset(640,420)})
+                PointerRoot=Instance.new('Frame',{Parent=PointerWindow,Size=UDim2.fromScale(1,1)})
+                PointerPanel=Instance.new('Frame',{Parent=PointerRoot,Position=UDim2.fromOffset(20,40),Size=UDim2.fromOffset(600,300)})
+                PointerGrip=Instance.new('Frame',{Parent=PointerPanel,AccessibilityLabel='Pointer divider',Position=UDim2.fromOffset(280,0),Size=UDim2.fromOffset(8,300),BackgroundColor3=Color3.fromRGB(93,129,199)})
+                PointerEditor=Instance.new('CodeEditor',{Parent=PointerPanel,Position=UDim2.fromOffset(288,0),Size=UDim2.fromOffset(312,300),Text='Pointer capture target'})
+                PointerBegins,PointerMoves,PointerEnds,PointerCanceled,PointerLast=0,0,0,0,0
+                PointerActive=false
+                PointerGrip.InputBegan:Connect(function(Input)
+                    if Input.Device=='Mouse' and Input.Button=='Left' then PointerBegins+=1;PointerActive=true end
+                end)
+                PointerGrip.InputChanged:Connect(function(Input)
+                    if PointerActive then PointerMoves+=1;PointerLast=Input.Position.X end
+                end)
+                PointerGrip.InputEnded:Connect(function(Input)
+                    if Input.Button=='Left' then PointerEnds+=1;if Input.IsCanceled then PointerCanceled+=1 end;PointerActive=false end
+                end)
+                """);
+            await Settle();
+            View PointerGrip=Views.Values.Single(Value=>Value.Element is not null && AutomationProperties.GetName(Value.Element)=="Pointer divider");
+            View PointerWindow=Views.Values.Single(Value=>!Value.NativeClosed && Value.Window?.Title=="LUI nested pointer qualification");
+            foreach(var Pair in Views.Where(Pair=>Pair.Value.Element is not null).ToArray()) {
+                int PointerTarget=Pair.Key;View PointerView=Pair.Value;
+                void Observe(string Phase,PointerRoutedEventArgs Args) {
+                    if(!PointerView.IsAlive || PointerView.Element is null || PointerTrace.Count>=64) return;
+                    var Point=Args.GetCurrentPoint(PointerView.Element);
+                    PointerTrace.Add(new {Phase,Target=PointerTarget,Source=GetViewId(Args.OriginalSource as DependencyObject),
+                        X=Point.Position.X,Y=Point.Position.Y,UpdateKind=Point.Properties.PointerUpdateKind.ToString(),
+                        NativeCaptures=PointerView.Element!.PointerCaptures?.Count ?? 0,ActivePointers=PointerView.ActivePointerButtons.Count,Args.Handled});
+                }
+                PointerView.Element!.AddHandler(UIElement.PointerPressedEvent,new PointerEventHandler((_,Args)=>Observe("Down",Args)),true);
+                PointerView.Element.AddHandler(UIElement.PointerMovedEvent,new PointerEventHandler((_,Args)=>Observe("Move",Args)),true);
+                PointerView.Element.AddHandler(UIElement.PointerReleasedEvent,new PointerEventHandler((_,Args)=>Observe("Up",Args)),true);
+                PointerView.Element.AddHandler(UIElement.PointerCanceledEvent,new PointerEventHandler((_,Args)=>Observe("Cancel",Args)),true);
+                PointerView.Element.AddHandler(UIElement.PointerCaptureLostEvent,new PointerEventHandler((_,Args)=>Observe("CaptureLost",Args)),true);
+            }
+            IntPtr PointerOwner=WinRT.Interop.WindowNative.GetWindowHandle(PointerWindow.Window!);
+            var Origin=PointerGrip.Element!.TransformToVisual(PointerWindow.Container).TransformPoint(new Windows.Foundation.Point(4,30));
+            double PointerScale=PointerGrip.Element.XamlRoot.RasterizationScale;
+            CodePoint PointerPosition=new() {X=(int)Math.Round(Origin.X*PointerScale),Y=(int)Math.Round(Origin.Y*PointerScale)};
+            FrameRequire(ClientToScreen(PointerOwner,ref PointerPosition),"CodePointerScreenPosition");
+            bool SavedCursor=GetCodeCursor(out CodePoint PreviousCursor),PointerDown=false;
+            try {
+                SetCodeForeground(PointerOwner);await Settle();
+                FrameRequire(SetCodeCursor(PointerPosition.X,PointerPosition.Y),"CodePointerPlaceCursor");await Settle();
+                CodeMouseButton(false);PointerDown=true;await Settle();
+                for(int Step=1;Step<=6;++Step) {
+                    CodeMouseMove(PointerPosition.X+(int)Math.Round(Step*16*PointerScale),PointerPosition.Y);await Settle();
+                }
+                CodeMouseButton(true);PointerDown=false;await Settle();
+            } finally {
+                if(PointerDown) CodeMouseButton(true);
+                if(SavedCursor) SetCodeCursor(PreviousCursor.X,PreviousCursor.Y);
+            }
+            FrameRun("assert(PointerBegins==1 and PointerMoves>=3 and PointerEnds==1 and PointerCanceled==0 and PointerLast>=80)");
+            Groups.Add("A nested Frame receives one native mouse gesture and retains capture across the adjacent Rich Edit popup");
+            FrameRun("PointerWindow:Destroy()");await Settle();
         }
         catch(Exception Error)
         {
@@ -691,12 +821,12 @@ internal sealed partial class WinUIBackend
         }
         finally
         {
-            try {Native.Lui_RunScript(Runtime,"if Second then Second:Destroy() end;if W then W:Destroy() end","CodeEditorCleanup");Pump();}
+            try {Native.Lui_RunScript(Runtime,"if PointerWindow then PointerWindow:Destroy() end;if Second then Second:Destroy() end;if W then W:Destroy() end","CodeEditorCleanup");Pump();}
             catch(Exception Error) {LuiDiagnostics.Error("CodeEditor","Cleanup: " + Error.GetType().Name);}
         }
         bool Passed=Failure is null;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(ReportPath))!);
-        await File.WriteAllTextAsync(ReportPath,JsonSerializer.Serialize(new {Passed,Groups,OwnerThread,Failure,ImeContextAvailable,ImeSetStringAccepted,ImeSetStringError,ImeCompositionBytes,ImeCompleteAccepted,ImeTextAfter,ImeRuntimeTextAfter,ImeSignalSummary},
+        await File.WriteAllTextAsync(ReportPath,JsonSerializer.Serialize(new {Passed,Groups,PointerTrace,OwnerThread,Failure,ImeContextAvailable,ImeSetStringAccepted,ImeSetStringError,ImeCompositionBytes,ImeCompleteAccepted,ImeTextAfter,ImeRuntimeTextAfter,ImeSignalSummary},
             new JsonSerializerOptions {WriteIndented=true}));
         return Passed;
     }
