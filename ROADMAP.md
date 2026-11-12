@@ -39,21 +39,26 @@ is implied. Completed advanced UI/native-service exits retain their original sco
 
 ## Developer usability
 
-The initial SDK tooling prepares a portable Windows preview, an offline VSIX,
-matched component discovery, exact project pins and modular starters. Native
-Run is the first application testing loop; the independent inspector visualizes
-shared layout and refuses privileged project execution. The immediate work is
-better capability/startup diagnostics and practical guides for declared images,
-time, right-click input and local HTTP. Next come fuller member/service reference
-contracts, retained versioned docs and the everyday development loop. Native
-restart supervision and application-authored tests remain separate slices.
+Preview.2 provides a portable Windows SDK, offline VSIX, exact project pins,
+workbench and command starters, eight optional modules and four examples.
+Native Run, explicit Restart App, source enrollment and actionable diagnostics
+support the development loop. The independent inspector visualizes shared layout
+and refuses privileged project execution. Versioned docs retain both preview.1
+and preview.2 tutorials, practical guides and generated API/library references.
 
-Unreleased SDK08 passed the selected clean Windows 10 LTSC SDK journey and an
-independent app-only recipient. Windows 11, real Windows IME, signing, ordinary
-downloaded-file trust and human first-session usability retain independent gates.
+The packaged SDK passes a native app launch, callback and exit, plus a real
+VS Code journey on the selected Windows 10 LTSC virtual recipient without a
+global .NET SDK or system C++ runtime. Earlier test installations remain in that
+OS. Windows and Linux each pass 43 native suites and 59 editor tests. These
+automated Linux checks do not qualify a fresh Linux SDK or real Linux editor
+recipient. The binary download is an unsigned experimental Windows x64 preview.
+Windows 11, physical Windows IME, signing, ordinary downloaded-file trust and
+human first-session usability retain independent gates. Application-authored
+tests and stronger saved-generation identity remain further development work.
 New user-selected document IO, native menus and window customization need explicit
 API design before implementation. See [the SDK guide](docs/SDK.md). Published
-preview.1 artifacts remain unchanged.
+preview.1 assets, tag and project pins remain unchanged. GTK performance work is
+separate from this SDK release.
 
 ## Android and iOS
 
