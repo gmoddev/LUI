@@ -17,7 +17,7 @@
   <ItemGroup>
     <Compile Include="../../tools/project/AppManifest.cs" Link="AppManifest.cs" />
     <Compile Include="../../tools/project/PreparedProject.cs" Link="PreparedProject.cs" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
   </ItemGroup>
   <ItemGroup>
     <None Include="../../examples/hello.luau" Link="examples/hello.luau" CopyToOutputDirectory="PreserveNewest" Condition="'$(LuiProductionPackage)' != 'true'" />

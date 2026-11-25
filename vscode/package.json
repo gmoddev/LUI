@@ -2,7 +2,7 @@
   "name": "lui-vscode",
   "displayName": "LUI",
   "description": "Instance Explorer and layout inspector for LUI applications",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "gmoddev",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/gmoddev/LUI.git" },
