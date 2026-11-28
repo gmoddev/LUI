@@ -39,12 +39,23 @@ def Bind(Library):
         Function.restype, Function.argtypes = Output, Inputs
 
 
-def Stage(Root, Destination, Main, MaxInterrupts=1000000):
+def Stage(Root, Destination, Main, MaxInterrupts=1000000, Include=None):
     (Destination / 'Src').mkdir()
     (Destination / 'Src/Main.luau').write_text(Main, encoding='utf-8', newline='\n')
     Dependencies, Packages = [], []
-    for Package in sorted((Root / 'libraries').iterdir()):
-        if not Package.is_dir():
+    Catalogs = {Package: json.loads((Package / 'Library.json').read_text(encoding='utf-8'))
+                for Package in (Root / 'libraries').iterdir() if Package.is_dir() and any(Package.glob('*.luau'))}
+    Hosted = {Package.name for Package in Catalogs
+              if (Package / 'Host.json').is_file() or (Package / 'Service.json').is_file()}
+    # A pure wrapper over a hosted dependency also needs that host's declaration.
+    while True:
+        Dependents = {Package.name for Package, Catalog in Catalogs.items()
+                      if Hosted.intersection(Catalog.get('Requires', []))}
+        if Dependents <= Hosted:
+            break
+        Hosted.update(Dependents)
+    for Package, Catalog in sorted(Catalogs.items()):
+        if Package.name in Hosted or (Include is not None and Package.name not in Include):
             continue
         Files, Pins = [], []
         for Source in sorted(Package.glob('*.luau')):
@@ -54,9 +65,8 @@ def Stage(Root, Destination, Main, MaxInterrupts=1000000):
             Files.append(Source.name)
             Pins.append({'Path': Source.name, 'Sha256': hashlib.sha256(Source.read_bytes()).hexdigest()})
         if Files:
-            Catalog = json.loads((Package / 'Library.json').read_text(encoding='utf-8'))
             Dependencies.append({'Alias': Package.name, 'Root': 'Vendor/' + Package.name, 'Files': Files, 'Requires': Catalog.get('Requires', [])})
-            Packages.append({'Alias': Package.name, 'Provenance': {'Kind': 'LocalVendor', 'Id': Package.name + '-0.1.0-preview.2'}, 'Files': Pins})
+            Packages.append({'Alias': Package.name, 'Provenance': {'Kind': 'LocalVendor', 'Id': Package.name + '-' + Catalog['TargetSdk']}, 'Files': Pins})
     Manifest = {'SchemaVersion': 2, 'Script': 'Src/Main.luau', 'Capabilities': [], 'Extensions': [],
         'Assets': [], 'ExtensionDeclarations': [], 'Diagnostics': {'Mode': 'Development'},
         'Sandbox': {'MaxMemoryBytes': 67108864, 'MaxInterrupts': MaxInterrupts},

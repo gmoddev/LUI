@@ -80,4 +80,36 @@ async function ResolveSdk(Folder, Vscode) {
     finally { if (Pending.get(Key) === Request) Pending.delete(Key); }
 }
 
-module.exports = { GetRoot, GetManifest, UsesSdk, GetBinding, ResolveSdk, Validate };
+async function RestoreLockedPackages(Folder, Vscode, Invoke = ExecFile) {
+    if (!Folder || !Vscode.workspace.isTrusted) throw new Error('Open a trusted LUI project to restore its locked packages.');
+    const Root = Path.resolve(Folder.uri.fsPath);
+    const Settings = Vscode.workspace.getConfiguration('lui', Folder.uri);
+    const Authored = Path.resolve(Root, Settings.get('packageManifestPath', 'lui.json'));
+    const Active = GetManifest(Folder, Vscode);
+    const Relative = Path.relative(Root, Authored);
+    if (!Relative || Path.isAbsolute(Relative) || Relative === '..' || Relative.startsWith('..' + Path.sep) ||
+        Path.dirname(Active) !== Path.dirname(Authored))
+        throw new Error('The package manifest and active manifest must be siblings inside the workspace.');
+    const Sdk = await ResolveSdk(Folder, Vscode);
+    if (!Sdk) throw new Error('Choose an installed SDK with LUI: Choose SDK.');
+    const Result = Active === Authored ? 'lui.resolved.json' : Path.basename(Active);
+    const Args = ['package', 'restore', Authored, '--locked', 'true', '--sdk', Sdk.SdkRoot, '--output', Result];
+    return new Promise((Resolve, Reject) => {
+        Invoke(Sdk.Components.Cli, Args, { cwd: Path.dirname(Authored), windowsHide: true, shell: false, timeout: 30000, maxBuffer: 65536 },
+            (Failure, _Output, ErrorOutput) => {
+                if (!Failure) { Resolve(Result); return; }
+                const Code = String(ErrorOutput || '').match(/^\[LUI:CLI\] \[LUI:Packages\] ([A-Za-z]+)(?:\s|$)/m)?.[1];
+                const Advice = {
+                    PackageLockMissing: 'Create a lock first using lui package restore with your catalog.',
+                    PackageCacheMissing: 'Restore with the verified catalog using the SDK CLI to fill the cache.',
+                    PackageLockChanged: 'Review the dependency changes and update the lock explicitly with the SDK CLI.',
+                    PackageRestoreBusy: 'Wait for the other package operation to finish, then retry.',
+                    TrustedNativeRequired: 'Restore the native package in the SDK CLI with explicit consent.',
+                    PackageOutputExists: 'Choose a fresh resolved manifest or replace it explicitly using the SDK CLI.',
+                };
+                Reject(new Error(Advice[Code] || 'Package restore failed. Run lui package restore in the terminal for details.'));
+            });
+    });
+}
+
+module.exports = { GetRoot, GetManifest, UsesSdk, GetBinding, ResolveSdk, Validate, RestoreLockedPackages };

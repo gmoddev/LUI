@@ -24,7 +24,10 @@ public:
     void Pump();
     bool HasWindows() const;
     void SetAsset(const std::string& Name,std::string Bytes);
+    void StartFiles();
+    void StartWindowMetrics();
     void Stop();
+    std::string ImageMetrics() const;
 private:
     friend struct Qualification;
     struct View {
@@ -37,6 +40,7 @@ private:
         std::string Text,Placeholder,StyleJson,AccessibilityDescription;
         uint64_t ImageToken=0;
         std::string ImageKey;
+        int ImageX=0,ImageY=0,ImageWidth=0,ImageHeight=0;
         std::vector<GObject*> TextSources;
         std::vector<GtkTextTag*> CodeTags;
         uint64_t Epoch=0;
@@ -68,6 +72,7 @@ private:
     LuiRuntime* Runtime=nullptr;
     std::thread::id OwnerThread;
     std::map<int,std::unique_ptr<View>> Views;
+    std::unique_ptr<std::map<int,std::string>> MetricsNames;
     std::map<std::string,std::shared_ptr<const std::string>> Assets;
     std::deque<Event> Events;
     uint64_t NextEpoch=1,Dropped=0,AssetBytes=0,EventBytes=0;
@@ -78,19 +83,29 @@ private:
     struct ImageSession;
     std::shared_ptr<ImageSession> ImageWork;
     void StartImages();
+    void StartFrames();
+    GtkPicture* FindFrame(int Id) const;
+    static int SubmitFrame(void*,int,LuiFrame*,uint32_t);
+    static int PublishFrame(void*,int,LuiFrame*,uint32_t);
+    static void ClearFrame(void*,int,uint64_t);
     void StopImages();
     void PumpImages();
     void ReleaseImage(View& Target);
+    void PresentImage(View& Target);
     size_t ImageCacheUsage() const;
     size_t ImageRequestCount() const;
     size_t ImageStagingUsage() const;
     static int LoadImage(void*,int,uint64_t,const char*);
+    static int LoadImageSource(void*,int,uint64_t,LuiImageSource*);
+    int AcceptImage(int Id,uint64_t Token,const std::string& Key,std::shared_ptr<const std::string> Encoded,LuiImageSource* Source);
     static void CancelImage(void*,uint64_t);
     void StartPlatform();
     void StopPlatform();
     static int WriteClipboard(void*,const char*);
     static int ReadClipboard(void*,uint64_t);
     static int OpenFile(void*,uint64_t);
+    static uint32_t StartFilePicker(void*,uint64_t,uint32_t,const char*);
+    static void CancelFilePicker(void*,uint64_t);
     bool Owner() const;
     void Queue(View* Target,Event Value) noexcept;
     void Drain();

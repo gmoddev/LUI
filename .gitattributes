@@ -1,0 +1,3 @@
+# This shipped module is verified byte-for-byte by the captured project lock.
+examples/headless-websocket/Vendor/Json/Json.luau text eol=lf
+tests/images/*.sh text eol=lf

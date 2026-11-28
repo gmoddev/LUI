@@ -1,0 +1,10 @@
+# Invoked after all selected optional providers have finished linking.
+set(Text "#pragma once\n")
+foreach(Name Compression Crypto SQLite Regex Toml Ffi)
+    if(DEFINED ${Name} AND NOT "${${Name}}" STREQUAL "")
+        file(SHA256 "${${Name}}" Digest)
+        string(APPEND Text "#define LUI_PIN_${Name} \"${Digest}\"\n")
+    endif()
+endforeach()
+file(WRITE "${Output}.tmp" "${Text}")
+configure_file("${Output}.tmp" "${Output}" COPYONLY)

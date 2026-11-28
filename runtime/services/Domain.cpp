@@ -497,6 +497,23 @@ void WakePending(const std::shared_ptr<Domain>& Value,LuiNativeSessionV2* const*
     }
     Wake.Send();
 }
+void NotifyOwner(const std::shared_ptr<Domain>& Value) noexcept {
+    if (!Value) return;
+    WakeDispatch Wake;
+    { std::lock_guard<std::mutex> Lock(Value->Mutex); Wake = WakeLocked(Value); }
+    Wake.Send();
+}
+bool HasPending(const std::shared_ptr<Domain>& Value, LuiNativeSessionV2* const* Sessions, uint32_t Count) noexcept {
+    if (!Value || !Count) return false;
+    try {
+        std::lock_guard<std::mutex> Lock(Value->Mutex);
+        for (uint32_t Index = 0; Index < Count; ++Index) {
+            auto* Session = Sessions[Index];
+            if (Session && Session->Domain == Value && (!Session->Requests.empty() || !Session->Events.empty())) return true;
+        }
+        return false;
+    } catch (...) { return true; }
+}
 }
 
 extern "C" {

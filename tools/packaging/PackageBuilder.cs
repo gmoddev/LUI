@@ -1,4 +1,5 @@
 using Lui.WinUI;
+using System.Text.Json;
 
 namespace Lui.Packaging;
 
@@ -6,15 +7,15 @@ internal static class PackageBuilder
 {
     // Project content stays beneath Application to reserve the platform host
     // namespace. The native index governs every declared application input.
-    public static void StageProject(string Manifest,string HostDirectory,string Output,string Tool)
+    public static void StageProject(string Manifest,string HostDirectory,string Output,string Tool,bool Headless=false)
     {
         Output=Path.GetFullPath(Output); HostDirectory=Path.GetFullPath(HostDirectory);
         if(Directory.Exists(Output) || File.Exists(Output)) throw new InvalidDataException("[LUI:Package] OutputExists");
         bool Linux=OperatingSystem.IsLinux();
         if((System.IO.File.GetAttributes(HostDirectory)&FileAttributes.ReparsePoint)!=0 ||
-            !System.IO.File.Exists(Path.Combine(HostDirectory,Linux?"bin/lui-gtk":"Lui.WinUI.exe")) ||
+            !System.IO.File.Exists(Path.Combine(HostDirectory,Headless?(Linux?"bin/LuiHeadlessHost":"LuiHeadlessHost.exe"):(Linux?"bin/lui-gtk":"Lui.WinUI.exe"))) ||
             !System.IO.File.Exists(Path.Combine(HostDirectory,Linux?"lib/libLuiRuntime.so":"LuiRuntime.dll"))) throw new InvalidDataException("[LUI:Package] InvalidHost");
-        var Files=GetHostFiles(HostDirectory)
+        var Files=SelectHostFiles(HostDirectory,Headless)
             .Where(File=>!File.EndsWith(".pdb",StringComparison.OrdinalIgnoreCase)).OrderBy(File=>File,StringComparer.Ordinal).ToArray();
         HashSet<string> Names=new(StringComparer.OrdinalIgnoreCase);
         foreach(string File in Files) {
@@ -24,7 +25,10 @@ internal static class PackageBuilder
             string Current=Path.GetDirectoryName(File)!;
             while(Current!=HostDirectory) {if((System.IO.File.GetAttributes(Current)&FileAttributes.ReparsePoint)!=0) throw new InvalidDataException("[LUI:Package] LinkedPath"); Current=Path.GetDirectoryName(Current)!;}
         }
+        string Final=Output;
+        Output=Final+".incoming-"+Guid.NewGuid().ToString("N");
         Directory.CreateDirectory(Output);
+        try {
         // A native staging child performs captured-content creation/validation.
         System.Diagnostics.ProcessStartInfo Start=new(Tool){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
         foreach(string Arg in new[]{"--stage",Path.GetFullPath(Manifest),Path.Combine(Output,"Application")}) Start.ArgumentList.Add(Arg);
@@ -40,11 +44,41 @@ internal static class PackageBuilder
         } catch(TimeoutException) {throw new InvalidDataException("[LUI:Package] LimitExceeded");}
         finally {if(!Child.HasExited) Child.Kill(true); Child.WaitForExit();}
         foreach(string File in Files) {string Target=Path.Combine(Output,Path.GetRelativePath(HostDirectory,File)); Directory.CreateDirectory(Path.GetDirectoryName(Target)!); System.IO.File.Copy(File,Target,false);}
-        if(Linux) {
+        if(Headless && !Linux) {
+            File.Move(Path.Combine(Output,"LuiHeadlessHost.exe"),Path.Combine(Output,"Start-LUI.exe"));
+        } else if(Linux) {
             string Launcher=Path.Combine(Output,"Start-LUI.sh");
-            System.IO.File.WriteAllText(Launcher,"#!/bin/sh\nset -eu\nRoot=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$Root/bin/lui-gtk\" --project \"$Root/Application/lui.json\" \"$@\"\n");
+            System.IO.File.WriteAllText(Launcher,"#!/bin/sh\nset -eu\nRoot=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$Root/bin/"+(Headless?"LuiHeadlessHost":"lui-gtk")+"\" --project \"$Root/Application/lui.json\" \"$@\"\n");
             System.IO.File.SetUnixFileMode(Launcher,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute|UnixFileMode.GroupRead|UnixFileMode.GroupExecute|UnixFileMode.OtherRead|UnixFileMode.OtherExecute);
-        } else System.IO.File.WriteAllText(Path.Combine(Output,"Start-LUI.cmd"),"@echo off\r\n\"%~dp0Lui.WinUI.exe\" --project \"%~dp0Application\\lui.json\"\r\n");
+        } else System.IO.File.WriteAllText(Path.Combine(Output,"Start-LUI.cmd"),"@echo off\r\n\"%~dp0Lui.WinUI.exe\" --project \"%~dp0Application\\lui.json\" %*\r\n");
+        Directory.Move(Output,Final);
+        } finally { if(Directory.Exists(Output)) Directory.Delete(Output,true); }
+    }
+    private static IEnumerable<string> SelectHostFiles(string Root,bool Headless=false)
+    {
+        string Index=Path.Combine(Root,"HostFiles.json");
+        if (!File.Exists(Index)) {
+            if (Headless) throw new InvalidDataException("[LUI:Package] MissingHeadlessInventory");
+            return GetHostFiles(Root);
+        }
+        if ((File.GetAttributes(Index)&FileAttributes.ReparsePoint)!=0 || new FileInfo(Index).Length>4*1024*1024)
+            throw new InvalidDataException("[LUI:Package] InvalidHostInventory");
+        using JsonDocument Document=JsonDocument.Parse(File.ReadAllBytes(Index));
+        var Entries=Document.RootElement.GetProperty(Headless?"Headless":"Desktop");
+        if (Entries.ValueKind!=JsonValueKind.Array || Entries.GetArrayLength()>20000)
+            throw new InvalidDataException("[LUI:Package] InvalidHostInventory");
+        var Available=GetHostFiles(Root).ToDictionary(F=>Path.GetRelativePath(Root,F).Replace(Path.DirectorySeparatorChar,'/'),StringComparer.Ordinal);
+        var Selected=new HashSet<string>(StringComparer.Ordinal);
+        foreach(var Member in Entries.EnumerateArray()) {
+            string Name=Member.GetString()??"";
+            if(Name=="HostFiles.json" || !Available.ContainsKey(Name) || !Selected.Add(Name))
+                throw new InvalidDataException("[LUI:Package] InvalidHostInventory");
+        }
+        bool Linux=OperatingSystem.IsLinux();
+        string Entry=Headless?(Linux?"bin/LuiHeadlessHost":"LuiHeadlessHost.exe"):(Linux?"bin/lui-gtk":"Lui.WinUI.exe");
+        if (!Selected.Contains(Entry) || !Selected.Contains(Linux?"lib/libLuiRuntime.so":"LuiRuntime.dll"))
+            throw new InvalidDataException("[LUI:Package] IncompleteHostInventory");
+        return Selected.OrderBy(N=>N,StringComparer.Ordinal).Select(N=>Available[N]).ToArray();
     }
     private static IEnumerable<string> GetHostFiles(string Root)
     {
@@ -76,7 +110,7 @@ internal static class PackageBuilder
             throw new InvalidDataException("Package output directory must be empty");
 
         List<(string Source, string Relative)> Files = new();
-        foreach (string HostFile in Directory.EnumerateFiles(HostDirectory, "*", SearchOption.AllDirectories))
+        foreach (string HostFile in SelectHostFiles(HostDirectory))
         {
             if (Path.GetExtension(HostFile).Equals(".pdb", StringComparison.OrdinalIgnoreCase)) continue;
             Files.Add((HostFile, Path.GetRelativePath(HostDirectory, HostFile)));

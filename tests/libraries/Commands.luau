@@ -70,3 +70,43 @@ local Ran, Why = Interleaved:Execute('Safe'); assert(not Ran and Why == 'Busy')
 assert(coroutine.resume(Listing)); assert(Interleaved:Execute('Safe'))
 Interleaved:Dispose()
 print('[LUI:LibraryTest] Commands: isolation, conflicts, precedence, retirement, reentry and bounds passed')
+
+local Editing = Commands.New()
+local EditedCalls = 0
+local Editable: any = {Id = 'Save', Label = 'Save', Shortcut = {Key = 'S', Control = true},
+    AllowWhileEditing = true, Execute = function() EditedCalls += 1 end}
+Editing:Register(Editable)
+Editable.AllowWhileEditing = false; Editable.Shortcut.Key = 'X'
+assert(Editing:List()[1].AllowWhileEditing == true)
+local EditingInput: any = {Device = 'Keyboard', Key = 'S', Control = true, Shift = false, Alt = false,
+    IsRepeat = false, TextEditing = true}
+assert(Editing:Dispatch(EditingInput) and EditedCalls == 1)
+EditingInput.IsRepeat = true; assert(not Editing:Dispatch(EditingInput) and EditedCalls == 1)
+EditingInput.IsRepeat = false; EditingInput.Alt = true
+assert(not Editing:Dispatch(EditingInput) and EditedCalls == 1)
+EditingInput.Alt = false; EditingInput.Control = false
+assert(not Editing:Dispatch(EditingInput) and EditedCalls == 1)
+local UnsafeBindings: {Commands.Shortcut} = {{Key = 'S'}, {Key = 'S', Alt = true}, {Key = 'S', Control = true, Alt = true}}
+for _, Binding in UnsafeBindings do
+    assert(not pcall(function() Editing:Register({Id = 'Unsafe', Label = 'Unsafe', Shortcut = Binding,
+        AllowWhileEditing = true, Execute = function() error('Must not run') end}) end))
+end
+assert(not pcall(function() Editing:Register({Id = 'NoBinding', Label = 'NoBinding', AllowWhileEditing = true, Execute = function() end}) end))
+for _, Key in {'A', 'C', 'V', 'X', 'Y', 'Z', 'Insert', 'Delete', 'Backspace', 'Home', 'End',
+    'Left', 'Right', 'Up', 'Down', 'PageUp', 'PageDown', 'Enter', 'Return', 'Tab'} do
+    for _, Shift in {false, true} do
+        assert(not pcall(function() Editing:Register({Id = 'NativeEditing', Label = 'NativeEditing',
+            Shortcut = {Key = Key, Control = true, Shift = Shift}, AllowWhileEditing = true, Execute = function() end}) end))
+    end
+end
+Editing:Register({Id = 'NativeUndo', Label = 'Application undo outside editing', Shortcut = {Key = 'Z', Control = true}, Execute = function() EditedCalls += 100 end})
+EditingInput.Control = true; EditingInput.Key = 'Z'
+assert(not Editing:Dispatch(EditingInput) and EditedCalls == 1)
+EditingInput.TextEditing = false
+assert(Editing:Dispatch(EditingInput) and EditedCalls == 101)
+EditingInput.TextEditing = true; EditingInput.Key = 'S'
+assert(not pcall(function() Editing:Register({Id = 'WrongType', Label = 'WrongType', AllowWhileEditing = 'yes', Execute = function() end} :: any) end))
+Editing:Dispose()
+EditingInput.Control = true
+assert(not Editing:Dispatch(EditingInput) and EditedCalls == 101)
+print('[LUI:LibraryTest] Commands: explicit editing opt-in, input protection and captured policy passed')

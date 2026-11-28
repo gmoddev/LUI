@@ -1,0 +1,26 @@
+{
+  "SchemaVersion": 1,
+  "Name": "FfiBroker",
+  "TargetSdk": "0.1.0-preview.4-ffi.1",
+  "Status": "Development",
+  "Requires": [
+    "Json",
+    "Process"
+  ],
+  "Modules": [
+    {
+      "Name": "FfiBroker",
+      "Summary": "Run a native function or a batch with one signature in an operator-selected child process.",
+      "Types": [
+        "Selection",
+        "Request",
+        "BatchRequest",
+        "Reply"
+      ],
+      "Functions": [
+        "Call",
+        "CallBatch"
+      ]
+    }
+  ]
+}

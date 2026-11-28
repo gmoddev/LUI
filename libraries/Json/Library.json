@@ -1,7 +1,7 @@
 {
   "SchemaVersion": 1,
   "Name": "Json",
-  "TargetSdk": "0.1.0-preview.2",
+  "TargetSdk": "0.1.0-preview.3",
   "Status": "Development",
   "Requires": [],
   "Modules": [

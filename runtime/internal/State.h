@@ -3,9 +3,11 @@
 #include "LuiRuntime.h"
 #include "LuiNativeServices.h"
 #include "LuiApplicationServices.h"
+#include "../../native/ffi/Scoped.h"
 #include "Diagnostics.h"
 
 #include <chrono>
+#include <array>
 #include <atomic>
 #include <deque>
 #include <map>
@@ -25,6 +27,10 @@ struct NativeServiceBinding;
 struct DesktopServiceState;
 struct FrameDomain;
 struct FrameSurfaceSlot;
+struct HttpRuntimeState;
+struct WebSocketRuntimeState;
+struct WebSocketConnection;
+struct WebSocketPayload;
 
 struct Dimension {
     double Scale = 0;
@@ -90,6 +96,8 @@ struct StyleGeometryValue {
 static_assert(sizeof(StyleGeometryValue) == 1, "Style geometry facts must stay compact");
 
 struct NodeHandle;
+struct ImageResourceHandle;
+struct ImageSourceDomain;
 struct Node {
     NodeHandle* Handle = nullptr;
     bool Sensitive=false, EffectiveSensitive=false;
@@ -125,8 +133,11 @@ struct Node {
     int CodeEditorUndoMaxLength = 0;
     std::string PlaceholderText, CompositionText;
     std::string Source;
+    std::shared_ptr<ImageResourceHandle> ImageHandle;
+    std::shared_ptr<LuiImageSource> RuntimeImage;
     uint64_t ImageToken = 0;
     std::string LoadState = "Idle";
+    VectorValue SourceRectOffset, SourceRectSize;
     bool ImageStatePending = false;
     std::string ScaleMode = "Fit", FrameState = "Empty";
     uint64_t FrameEpoch = 1, FrameSequence = 0;
@@ -182,6 +193,7 @@ struct ScheduledCall {
     int Reference = 0;
     std::chrono::steady_clock::time_point Due;
     int ArgumentCount = 0;
+    bool TimedWake = false;
 };
 
 struct NetworkContext;
@@ -190,15 +202,19 @@ struct HostedSession;
 namespace Lui::Http { struct Message; }
 
 struct NetworkCompletion {
-    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse, HostedRequest, Datagram } Type = Kind::None;
+    enum class Kind { None, Bytes, EndOfStream, Connection, ClosedSignal, HttpResponse, HostedRequest, Datagram, WebSocket, WebSocketMessage, HostedWebSocket } Type = Kind::None;
     int Reference = 0;
     std::string Bytes;
     std::string Error;
     std::shared_ptr<NetworkConnection> Connection;
+    // Payload storage retires before its final conservative reservation root.
+    std::shared_ptr<void> HttpReservation;
     std::shared_ptr<Lui::Http::Message> HttpResponse;
     std::shared_ptr<HostedSession> Session;
     std::string RemoteAddress;
     unsigned short RemotePort = 0;
+    std::shared_ptr<WebSocketConnection> WebSocket;
+    std::shared_ptr<WebSocketPayload> WebSocketData;
 };
 
 struct BackendChange {
@@ -231,6 +247,7 @@ struct ExtensionMethod {
     std::string Name;
     std::string Type;
     LuiExtensionMethodV1 Callback = nullptr;
+    LuiFfiScopedDispatchV1 ScopedFfi = nullptr;
     void* Context = nullptr;
 };
 
@@ -259,6 +276,12 @@ struct LoadedExtension {
     std::shared_ptr<void> ImagePin;
 };
 
+struct WorkerFfiBinding {
+    std::shared_ptr<void> Image;
+    LuiExtensionInitV1 Init = nullptr;
+    LuiExtensionShutdownV1 Shutdown = nullptr;
+};
+
 struct PendingUiCompletion {
     LuiUiCompletionV1 Callback = nullptr;
     void* Context = nullptr;
@@ -279,8 +302,15 @@ struct LuiRuntime {
     LuiWindowCallbacksV1 Windows{};
     LuiPresentationCallbacksV1 Presentation{};
     LuiImageCallbacksV1 Images{};
+    LuiImageSourceCallbacksV1 ImageSources{};
+    std::shared_ptr<ImageSourceDomain> ImageAssets;
+    uint64_t NextImageIdentity = 1;
     LuiFrameCallbacksV1 Frames{};
     std::shared_ptr<FrameDomain> FrameResources;
+    // Owner-only index in ascending Instance ID order. The domain may also
+    // retain retired slots, but they cannot participate in dispatch.
+    std::array<Node*,4> FrameSurfaces{};
+    size_t FrameSurfaceCount = 0;
     // Internal pixel allocation seam; null selects malloc. Returned storage must
     // be free-compatible. Tests inject failure without changing host protocols.
     void* (*FrameAllocator)(size_t) = nullptr;
@@ -288,6 +318,7 @@ struct LuiRuntime {
     uint64_t FramesConsumed = 0, FramesStale = 0;
     uint64_t NextImageToken = 1;
     size_t PendingImages = 0;
+    bool ImageSignalsPending = false, RetirementPending = false;
     std::vector<int> CanvasSignals;
     uint64_t LayoutPasses = 0, PresentationCalls = 0;
     size_t RetiredUserdata = 0;
@@ -305,6 +336,8 @@ struct LuiRuntime {
     uint32_t ServerPortMin = 0;
     uint32_t ServerPortMax = 0;
     bool NetworkPolicyDeclared = false;
+    std::shared_ptr<HttpRuntimeState> HttpState;
+    std::shared_ptr<WebSocketRuntimeState> WebSocketState;
     uint64_t VmBytes = 0;
     uint64_t VmLimitBytes = 0;
     uint64_t MaxInterrupts = 0;
@@ -331,11 +364,13 @@ struct LuiRuntime {
     std::vector<LoadedExtension> Extensions;
     std::shared_ptr<Lui::Native::Domain> NativeDomain;
     std::vector<std::shared_ptr<NativeServiceBinding>> NativeServices;
+    void* FileServiceContext = nullptr; // Owned by its retiring native session.
     size_t PendingNativeRequests = 0;
     std::shared_ptr<DesktopServiceState> DesktopServices;
     std::shared_ptr<void> DesktopBridgeOwner;
     bool ProjectNativeVerified=false;
     std::string VerifiedProjectDigest;
+    WorkerFfiBinding TrustedWorkerFfi;
     std::unordered_map<std::string, int> ServiceRefs;
     std::unordered_set<std::string> Assets;
     std::unordered_map<uint64_t, int> PlatformRequests;

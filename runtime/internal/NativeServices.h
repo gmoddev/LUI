@@ -16,6 +16,8 @@ struct NativeServiceBinding {
     std::map<uint64_t, NativeServiceWaiter> Waiters;
     bool IsExtension = false;
     bool IsPlatform = false;
+    uint32_t (LUI_CALL* GrantDatabase)(void*,const char*) = nullptr;
+    void* DatabaseContext = nullptr;
 };
 void RegisterNativeTypes(lua_State* State);
 bool HasNativeService(const LuiRuntime* Runtime, const std::string& Name);
@@ -23,9 +25,11 @@ bool NativeServiceNeedsHostGrant(const LuiRuntime* Runtime, const std::string& N
 uint32_t RegisterPlatformNativeService(LuiRuntime* Runtime, const LuiNativeServiceV2* Service,
     const LuiNativeProviderV2* Provider, void* Context, LuiNativeHostV2* Host);
 int PushNativeService(lua_State* State, LuiRuntime* Runtime, const std::string& Name);
+uint32_t RegisterWorkerService(LuiRuntime*,const LuiNativeServiceV2*,const LuiNativeProviderV2*,void*,LuiNativeHostV2*);
 int DrainNativeServices(LuiRuntime* Runtime, size_t Maximum = 64,
     std::chrono::steady_clock::time_point Deadline = std::chrono::steady_clock::time_point::max());
 void CloseNativeServices(LuiRuntime* Runtime);
+bool NativeHasPendingWork(LuiRuntime* Runtime);
 std::string NativeServiceSchema(const LuiRuntime* Runtime, const std::string& Base);
 Lui::Project::ServiceDeclaration DescribeNativeService(LuiNativeSessionV2* Session);
 void ObserveNativeServices(const LuiRuntime* Runtime, Lui::Project::DeclarationSet& Observed, bool HostOnly);

@@ -1,0 +1,24 @@
+{
+  "Name": "Compression",
+  "ResourceKindCount": 0,
+  "Methods": [
+    {
+      "Name": "Encode",
+      "Profile": "OwnedAsync",
+      "MaxInputBytes": 1048581,
+      "MaxResultBytes": 1048576,
+      "InputKind": 0,
+      "ResultKind": 0,
+      "DeadlineMilliseconds": 30000
+    },
+    {
+      "Name": "Decode",
+      "Profile": "OwnedAsync",
+      "MaxInputBytes": 1048581,
+      "MaxResultBytes": 1048576,
+      "InputKind": 0,
+      "ResultKind": 0,
+      "DeadlineMilliseconds": 30000
+    }
+  ]
+}

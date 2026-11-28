@@ -1,6 +1,7 @@
 #include "../internal/Frames.h"
 #include "../internal/Dispatch.h"
 #include "../../ui/layout/Layout.h"
+#include "LuiOwnerWake.h"
 
 #include <algorithm>
 #include <atomic>
@@ -73,6 +74,16 @@ bool RegisterFrameSurface(LuiRuntime* Runtime, Node* Value) {
         return true;
     } catch (const std::bad_alloc&) { return false; }
 }
+void TrackFrameSurface(LuiRuntime* Runtime, Node* Value) {
+    Runtime->FrameSurfaces[Runtime->FrameSurfaceCount++]=Value;
+}
+bool FrameWorkPending(const LuiRuntime* Runtime) {
+    for (size_t Index=0; Index<Runtime->FrameSurfaceCount; ++Index) {
+        const auto* Value=Runtime->FrameSurfaces[Index];
+        if (Value->PendingFrame || Value->InFlightFrame) return true;
+    }
+    return false;
+}
 
 extern "C" LUI_API int LUI_CALL Lui_FrameRetain(LuiFrame* Frame) {
     if (!Frame) return 0;
@@ -121,9 +132,10 @@ extern "C" LUI_API int LUI_CALL Lui_GetFrameStats(LuiRuntime* Runtime, LuiFrameS
         Stats->Surfaces = Domain.Surfaces; Stats->Frames = Domain.Frames;
         Stats->PixelBytes = Domain.PixelBytes; Stats->StagingBytes = Domain.StagingBytes; Stats->PeakBytes = Domain.PeakBytes;
     }
-    for (const auto& Pair : Runtime->Nodes) {
-        Stats->Pending += Pair.second->PendingFrame ? 1 : 0;
-        Stats->InFlight += Pair.second->InFlightFrame ? 1 : 0;
+    for (size_t Index=0; Index<Runtime->FrameSurfaceCount; ++Index) {
+        const auto* Value=Runtime->FrameSurfaces[Index];
+        Stats->Pending += Value->PendingFrame ? 1 : 0;
+        Stats->InFlight += Value->InFlightFrame ? 1 : 0;
     }
     Stats->Accepted = Runtime->FramesAccepted; Stats->Replaced = Runtime->FramesReplaced;
     Stats->Rejected = Runtime->FramesRejected; Stats->Consumed = Runtime->FramesConsumed; Stats->Stale = Runtime->FramesStale;
@@ -144,6 +156,11 @@ void ClearFrameSurface(LuiRuntime* Runtime, Node* Value, bool Destroy) {
     // Keep a canceled upload in its slot until it settles. Destroy may release
     // the owner reference: an async adapter holds its own independent lease.
     if (Destroy) {
+        auto End=Runtime->FrameSurfaces.begin()+Runtime->FrameSurfaceCount;
+        if (auto Found=std::find(Runtime->FrameSurfaces.begin(),End,Value); Found!=End) {
+            std::move(Found+1,End,Found);
+            Runtime->FrameSurfaces[--Runtime->FrameSurfaceCount]=nullptr;
+        }
         Lui_FrameRelease(Value->InFlightFrame); Value->InFlightFrame = nullptr;
         Value->FrameSlot.reset();
     }
@@ -197,6 +214,25 @@ const char* SubmitFrameSurface(LuiRuntime* Runtime, Node* Value, const void* Pix
     return nullptr;
 }
 
+extern "C" LUI_API int LUI_CALL Lui_WriteFrameSurfaceV1(LuiRuntime* Runtime, int Id, const LuiFrameViewV1* Pixels) {
+    if (!CheckOwner(Runtime) || Runtime->VmDepth || Runtime->BackendDepth || Runtime->ShuttingDown || Runtime->BackendFailed)
+        return 0;
+    const auto Found = Runtime->Nodes.find(Id);
+    if (Found == Runtime->Nodes.end()) return 0;
+    auto* Value = Found->second.get();
+    if (Value->ClassName != "FrameSurface" || !Value->FrameSlot || Value->Destroyed || Value->DestroyingInProgress) return 0;
+    if (!Pixels) {
+        ClearFrameSurface(Runtime, Value);
+        return 1;
+    }
+    if (Pixels->StructSize != sizeof(*Pixels) || Pixels->AbiVersion != 1 || Pixels->Epoch || Pixels->Sequence ||
+        Pixels->Format != 1 || Pixels->ByteCount > MaxFrameBytes) return 0;
+    const char* Problem=SubmitFrameSurface(Runtime, Value, Pixels->Pixels, static_cast<size_t>(Pixels->ByteCount),
+        Pixels->Width, Pixels->Height, Pixels->RowStride, "BGRA8Premultiplied", 18);
+    if (!Problem) return 1;
+    return std::strcmp(Problem,"WouldBlock")==0 ? -1 : 0;
+}
+
 namespace {
 bool CanUpload(const LuiRuntime* Runtime, const Node* Value) {
     if (!Runtime->Frames.Submit) return true; // headless semantic consumption
@@ -243,15 +279,31 @@ void Settle(LuiRuntime* Runtime, Node* Value) {
 }
 }
 
+bool HasVisibleFrameWork(const LuiRuntime* Runtime) {
+    if (!Runtime->Frames.Submit) return false;
+    for (size_t Index = 0; Index < Runtime->FrameSurfaceCount; ++Index) {
+        const Node* Value = Runtime->FrameSurfaces[Index];
+        if ((Value->PendingFrame || Value->InFlightFrame || Value->DisplayedFrame) && CanUpload(Runtime, Value)) return true;
+    }
+    return false;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_SettleFrameUploadsV1(LuiRuntime* Runtime) {
+    if (Lui_IsOwnerPumpReadyV1(Runtime) != 1 || Runtime->TaskLimit || Runtime->LayoutDirty || Runtime->LayoutDepth ||
+        Runtime->ProjectBootstrap || Runtime->ModuleDepth || Runtime->PendingWindowClosures ||
+        !Runtime->PendingChanges.empty() || !Runtime->PendingBackendEvents.empty() ||
+        !Runtime->PendingTheme.empty() || !Runtime->CanvasSignals.empty() || Runtime->ImageSignalsPending) return 0;
+    for (size_t Index = 0; Index < Runtime->FrameSurfaceCount; ++Index)
+        Settle(Runtime, Runtime->FrameSurfaces[Index]);
+    return 1;
+}
+
 int PumpFrameSurfaces(LuiRuntime* Runtime) {
     if (Runtime->BackendFailed || Runtime->ShuttingDown || Runtime->ProjectBootstrap || Runtime->ModuleDepth) return 0;
     // No historical frame queue, no callbacks into Luau, <=4 entries per pump.
-    int Ids[4]; size_t Count = 0;
-    for (const auto& Pair : Runtime->Nodes) if (Pair.second->FrameSlot && !Pair.second->Destroyed) Ids[Count++] = Pair.first;
-    std::sort(Ids, Ids + Count);
     int Submitted = 0;
-    for (size_t Index = 0; Index < Count; ++Index) {
-        Node* Value = Runtime->Nodes.at(Ids[Index]).get(); Settle(Runtime, Value);
+    for (size_t Index = 0; Index < Runtime->FrameSurfaceCount; ++Index) {
+        Node* Value = Runtime->FrameSurfaces[Index]; Settle(Runtime, Value);
         if (Value->InFlightFrame || !Value->PendingFrame || !CanUpload(Runtime, Value)) continue;
         Value->InFlightFrame = Value->PendingFrame; Value->PendingFrame = nullptr;
         LuiFrame* Frame = Value->InFlightFrame;

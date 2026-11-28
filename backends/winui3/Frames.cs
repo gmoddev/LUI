@@ -11,7 +11,9 @@ internal sealed partial class WinUIBackend
     private const ulong MaxFrameStaging = 8 * 1024 * 1024;
     private sealed class FrameDeviceTicket {
         internal required Task<IntPtr> Creation;
-        internal bool Retired;
+        internal readonly TaskCompletionSource FramesRetired=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int Frames;
+        internal bool Retired, Removed;
         internal Task? Retirement;
     }
     private sealed class FrameUpload {
@@ -30,6 +32,8 @@ internal sealed partial class WinUIBackend
         internal TaskCompletionSource ResourcePrepared = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
     private FrameDeviceTicket? FrameDevice;
+    private long FrameActivityAt;
+    private Task? RemovedFrameDeviceRetirement;
     private readonly HashSet<FrameUpload> FrameResources = new();
     private readonly Queue<double> FrameUploadSamples = new(), FrameSubmissionSamples = new();
     private Native.FrameSubmitCallback? FrameSubmitCallback, FramePublishCallback;
@@ -57,17 +61,39 @@ internal sealed partial class WinUIBackend
         // Allocate bookkeeping before starting native work, so failure cannot
         // orphan a successfully created native device in an unowned Task.
         var Ticket=new FrameDeviceTicket{Creation=Task.FromResult(IntPtr.Zero)};
-        Ticket.Creation=Task.Run(()=>{
-            Marshal.ThrowExceptionForHR(Native.LuiWinUI_FrameDeviceCreateV1(0,out IntPtr Value));return Value;
-        });
+        Task? Previous=RemovedFrameDeviceRetirement;
+        Ticket.Creation=Task.Run(()=>CreateFrameDeviceAsync(Previous));
         FrameDevice=Ticket;return Ticket;
+    }
+    private static async Task<IntPtr> CreateFrameDeviceAsync(Task? Previous) {
+        // This wait is off the XAML owner. Active removal may still need owner
+        // turns to detach old surfaces before the device singleton can retire.
+        if(Previous is not null)await Previous.ConfigureAwait(false);
+        long Started=Stopwatch.GetTimestamp();
+        const int Removed=unchecked((int)0x887A0005), Reset=unchecked((int)0x887A0007);
+        while(true) {
+            int Result=Native.LuiWinUI_FrameDeviceCreateV1(0,out IntPtr Value);
+            if(Result>=0)return Value;
+            // XAML and the driver can hold the per-adapter D3D12 singleton
+            // after LUI has released its last native reference.
+            if((Result!=Removed&&Result!=Reset)||Stopwatch.GetElapsedTime(Started).TotalMilliseconds>=250)
+                Marshal.ThrowExceptionForHR(Result);
+            await Task.Delay(8).ConfigureAwait(false);
+        }
     }
     private void RetireFrameDevice(FrameDeviceTicket Ticket) {
         Ticket.Retired=true;
+        if(IsDisposing&&ReferenceEquals(FrameDevice,Ticket))return;
+        if(Ticket.Frames==0)Ticket.FramesRetired.TrySetResult();
         if(Ticket.Retirement is null) {
-            try{Ticket.Retirement=Task.Run(async()=>{try{IntPtr Value=await Ticket.Creation;Native.LuiWinUI_FrameDeviceReleaseV1(Value);}catch{/* Creation failure owns no native handle. */}});}
+            try{Ticket.Retirement=Task.Run(async()=>{
+                await Ticket.FramesRetired.Task.ConfigureAwait(false);
+                try{IntPtr Value=await Ticket.Creation.ConfigureAwait(false);Native.LuiWinUI_FrameDeviceReleaseV1(Value);}
+                catch{/* Creation failure owns no native handle. */}
+            });}
             catch{++FrameUploadFailures;return;} // Keep the ticket reachable and retry on owner delivery.
         }
+        if(Ticket.Removed)RemovedFrameDeviceRetirement=Ticket.Retirement;
         if(ReferenceEquals(FrameDevice,Ticket))FrameDevice=null;
     }
     private void SampleFrameResources() {
@@ -100,7 +126,7 @@ internal sealed partial class WinUIBackend
             Retained=true;Upload.Lease=Frame;
             if(FrameQualificationFault==2){FrameQualificationFault=0;throw new OutOfMemoryException();}
             if(Native.Lui_FrameReserveStaging(Frame,MaxFrameStaging)!=1){++FrameStagingRefusals;FinishFrameRelease(Upload);return 0;}
-            Target.PreparedFrame=Upload;SampleFrameResources();
+            Target.PreparedFrame=Upload;FrameActivityAt=Upload.Started;SampleFrameResources();
             _=PrepareFrameAsync(Upload,false,FrameUploadBarrier);return 1;
         } catch {
             ++FrameUploadFailures;
@@ -119,7 +145,7 @@ internal sealed partial class WinUIBackend
             Upload.Working=true;++FrameUploadsInProgress;Counted=true;
             await Task.Yield();await Gate.WaitAsync();EnteredGate=true;
             if(Upload.Canceled||IsDisposed||IsDisposing||!Target.IsAlive)return;
-            var Ticket=FrameDeviceTicketValue();Upload.Device=Ticket;
+            var Ticket=FrameDeviceTicketValue();Upload.Device=Ticket;++Ticket.Frames;
             IntPtr Device=await Ticket.Creation;
             if(Upload.Canceled||Ticket.Retired||IsDisposed||IsDisposing)return;
             Marshal.ThrowExceptionForHR(Native.LuiWinUI_FrameDeviceBindOwnerV1(Device));
@@ -134,7 +160,7 @@ internal sealed partial class WinUIBackend
             if(FrameGpuPauseForTest)Marshal.ThrowExceptionForHR(Native.LuiWinUI_FrameGpuGateForTestV1(Upload.Gpu,1));
             Marshal.ThrowExceptionForHR(Native.LuiWinUI_FrameSubmitCopyV1(Upload.Gpu));
             Upload.GpuSubmitted.TrySetResult();
-            int Status;while((Status=Native.LuiWinUI_FramePollV1(Upload.Gpu))==0)await Task.Delay(1);
+            int Status=await WaitForUploadFenceAsync(Upload.Gpu);
             if(Status!=1){LoseFrameDevice(Ticket);return;}
             if(Upload.Canceled||Ticket.Retired||IsDisposed||IsDisposing)return;
             Upload.SurfaceInvalidated=false;
@@ -159,10 +185,40 @@ internal sealed partial class WinUIBackend
             if(!Upload.Canceled&&Upload.Device?.Retired!=true)++FrameUploadFailures;
         } finally {
             Upload.Working=false;if(Counted)--FrameUploadsInProgress;if(EnteredGate)Gate!.Release();
-            if(!Recovery){Upload.Completed=true;Native.Lui_FrameComplete(Upload.Lease,Success?1:0);
+            bool Settled=false;
+            if(!Recovery){Upload.Completed=true;Settled=Native.Lui_FrameComplete(Upload.Lease,Success?1:0)==1;
                 if(!Success){if(ReferenceEquals(Target.PreparedFrame,Upload))Target.PreparedFrame=null;ReleaseFrame(Upload);}}
             else if(!Success){if(Upload.Canceled||!ReferenceEquals(Target.DisplayedFrame,Upload))ReleaseFrame(Upload);else RetireFrameGpu(Upload,true);}
             Upload.Entered.TrySetResult();Upload.Finished.TrySetResult();Upload.WorkFinished.TrySetResult();
+            if(Settled&&!PauseFrameQualificationPump)OwnerWake?.RequestFrameDelivery(this);
+        }
+    }
+    private static async Task<int> WaitForUploadFenceAsync(IntPtr Gpu) {
+        int Status=Native.LuiWinUI_FramePollV1(Gpu);
+        if(Status!=0)return Status;
+        await WaitForFenceNotificationAsync(Gpu).ConfigureAwait(false);
+        // A removed device also signals the event. Only a normal fence can
+        // release the staging allocation and make the texture publishable.
+        while((Status=Native.LuiWinUI_FramePollV1(Gpu))==0)await Task.Delay(1).ConfigureAwait(false);
+        return Status;
+    }
+    private static async Task WaitForFenceNotificationAsync(IntPtr Gpu) {
+        try {
+            using var Event=new EventWaitHandle(false,EventResetMode.ManualReset);
+            var Signaled=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Register the managed wait first so a failed registration can
+            // fall back without leaving Direct3D with a pending event handle.
+            var Wait=ThreadPool.UnsafeRegisterWaitForSingleObject(Event,
+                static (State,_)=>((TaskCompletionSource)State!).TrySetResult(),Signaled,Timeout.Infinite,true);
+            try {
+                if(Native.LuiWinUI_FrameNotifyFenceV1(Gpu,Event.SafeWaitHandle)>=0)
+                    await Signaled.Task.ConfigureAwait(false);
+            } finally {Wait.Unregister(null);}
+        } catch(EntryPointNotFoundException) {
+            // Older private bridge binaries only support polling.
+        } catch(Exception Error) when(Error is OutOfMemoryException or System.ComponentModel.Win32Exception) {
+            // Resource pressure can prevent creating a wait. Keep polling the
+            // original fence; the frame and its charges still belong to it.
         }
     }
     private int OnPublishFrame(IntPtr Context,int Id,IntPtr Frame,uint Mode) {
@@ -221,11 +277,15 @@ internal sealed partial class WinUIBackend
         Upload.RetiredGpu=IntPtr.Zero;
         Upload.RetirementRequested=false;
         Upload.Retiring=false;
+        if(Upload.Device is {} Ticket) {
+            Upload.Device=null;
+            if(--Ticket.Frames==0&&Ticket.Retired)Ticket.FramesRetired.TrySetResult();
+            if(Ticket.Retired&&Ticket.Retirement is null)RetireFrameDevice(Ticket);
+        }
         if(KeepPixels&&!Upload.Canceled&&!IsDisposed&&!IsDisposing&&Upload.Target.IsAlive&&ReferenceEquals(Upload.Target.DisplayedFrame,Upload))Upload.NeedsRecovery=true;
         else FinishFrameRelease(Upload);
     }
     private void FinishFrameRelease(FrameUpload Upload) {
-        if(Upload.Device is {Retired:true,Retirement:null} Ticket){RetireFrameDevice(Ticket);if(Ticket.Retirement is null)return;}
         if(Upload.Released)return;Upload.Released=true;FrameResources.Remove(Upload);
         Native.Lui_FrameRelease(Upload.Lease);Upload.Lease=IntPtr.Zero;
         Upload.ReleaseFinished.TrySetResult();
@@ -236,7 +296,7 @@ internal sealed partial class WinUIBackend
         return Target.InputVisible;
     }
     private void LoseFrameDevice(FrameDeviceTicket Ticket) {
-        if(Ticket.Retired)return;++FrameDeviceLosses;RetireFrameDevice(Ticket);
+        if(Ticket.Retired)return;++FrameDeviceLosses;Ticket.Removed=true;RetireFrameDevice(Ticket);
         foreach(var Upload in FrameResources.ToArray()) {
             if(!ReferenceEquals(Upload.Device,Ticket))continue;
             if(Upload.Gpu!=IntPtr.Zero)Native.LuiWinUI_FrameCancelV1(Upload.Gpu);
@@ -290,6 +350,8 @@ internal sealed partial class WinUIBackend
     }
     private void RecordFrameRendering() {
         if(IsDisposed||IsDisposing)return;
-        foreach(var Target in Views.Values)if(Target.DisplayedFrame is {Submitted:false} Upload){Upload.Submitted=true;FrameSample(FrameSubmissionSamples,Stopwatch.GetElapsedTime(Upload.Started).TotalMilliseconds);}
+        foreach(var Upload in FrameResources)if(!Upload.Submitted&&ReferenceEquals(Upload.Target.DisplayedFrame,Upload)){
+            Upload.Submitted=true;FrameSample(FrameSubmissionSamples,Stopwatch.GetElapsedTime(Upload.Started).TotalMilliseconds);
+        }
     }
 }

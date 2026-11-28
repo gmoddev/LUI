@@ -1,0 +1,18 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Utc",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Utc",
+      "Summary": "Parse explicit UTC offsets and format whole Unix seconds.",
+      "Types": [],
+      "Functions": [
+        "Parse",
+        "Format"
+      ]
+    }
+  ]
+}

@@ -5,9 +5,10 @@ local Commands = {}
 export type Shortcut = {read Key: string, read Control: boolean?, read Shift: boolean?, read Alt: boolean?}
 export type Command = {
     read Id: string, read Label: string, read Category: string?, read Shortcut: Shortcut?,
+    read AllowWhileEditing: boolean?,
     read Enabled: (() -> boolean)?, read Execute: () -> (),
 }
-export type Row = {read Id: string, read Label: string, read Category: string, read Enabled: boolean, read Shortcut: Shortcut?}
+export type Row = {read Id: string, read Label: string, read Category: string, read Enabled: boolean, read Shortcut: Shortcut?, read AllowWhileEditing: boolean}
 export type Registry = {
     Register: (Self: Registry, Definition: Command) -> (() -> ()),
     List: (Self: Registry, Query: string?, Limit: number?) -> {Row},
@@ -24,6 +25,10 @@ local function Same(Left: Shortcut, Right: Shortcut): boolean
     return Left.Key == Right.Key and (Left.Control == true) == (Right.Control == true)
         and (Left.Shift == true) == (Right.Shift == true) and (Left.Alt == true) == (Right.Alt == true)
 end
+local EditingKeys: {[string]: boolean} = {A = true, C = true, V = true, X = true, Y = true, Z = true,
+    Insert = true, Delete = true, Backspace = true, Home = true, End = true,
+    Left = true, Right = true, Up = true, Down = true, PageUp = true, PageDown = true,
+    Enter = true, Return = true, Tab = true}
 
 function Commands.New(): Registry
     local Entries: {[string]: Command} = {}
@@ -43,6 +48,7 @@ function Commands.New(): Registry
         assert(Text(Definition.Id, 128) and Text(Definition.Label, 256)
             and (Definition.Category == nil or Text(Definition.Category, 128))
             and type(Definition.Execute) == 'function'
+            and (Definition.AllowWhileEditing == nil or type(Definition.AllowWhileEditing) == 'boolean')
             and (Definition.Enabled == nil or type(Definition.Enabled) == 'function'), '[LUI:Commands] InvalidCommand')
         assert(not Entries[Definition.Id] and Count < 128, '[LUI:Commands] DuplicateOrLimit')
         local Binding = Definition.Shortcut
@@ -56,8 +62,14 @@ function Commands.New(): Registry
             end
             Binding = table.freeze({Key = Binding.Key, Control = Binding.Control, Shift = Binding.Shift, Alt = Binding.Alt})
         end
+        -- Editing opt-in is for explicit Control commands, never plain typing or AltGr.
+        assert(not Definition.AllowWhileEditing or (Binding and Binding.Control == true and Binding.Alt ~= true),
+            '[LUI:Commands] EditingShortcutRequiresControl')
+        assert(not Definition.AllowWhileEditing or (Binding and not EditingKeys[Binding.Key]),
+            '[LUI:Commands] EditingShortcutConflict')
         local Entry: Command = table.freeze({Id = Definition.Id, Label = Definition.Label,
-            Category = Definition.Category, Shortcut = Binding, Enabled = Definition.Enabled, Execute = Definition.Execute})
+            Category = Definition.Category, Shortcut = Binding, AllowWhileEditing = Definition.AllowWhileEditing == true,
+            Enabled = Definition.Enabled, Execute = Definition.Execute})
         Entries[Entry.Id] = Entry; Count += 1
         local Id = Entry.Id
         local Identity = {}
@@ -89,7 +101,8 @@ function Commands.New(): Registry
                 local Available = Enabled(Entry)
                 if Alive and Entries[Entry.Id] == Entry then
                     table.insert(Rows, table.freeze({Id = Entry.Id, Label = Entry.Label,
-                        Category = Entry.Category or '', Enabled = Available, Shortcut = Entry.Shortcut}))
+                        Category = Entry.Category or '', Enabled = Available, Shortcut = Entry.Shortcut,
+                        AllowWhileEditing = Entry.AllowWhileEditing == true}))
                 end
             end
         end
@@ -111,11 +124,14 @@ function Commands.New(): Registry
     end
     function Value.Dispatch(Self: any, Input: KeyboardShortcut): (boolean, string?)
         if not Alive then return false, 'Retired' end
-        if Input.Device ~= 'Keyboard' or Input.IsRepeat or Input.TextEditing then return false, 'Ignored' end
+        if Input.Device ~= 'Keyboard' or Input.IsRepeat then return false, 'Ignored' end
         for Id, Entry in Entries do
-            if Entry.Shortcut and Same(Entry.Shortcut, Input) then return Self:Execute(Id) end
+            if Entry.Shortcut and Same(Entry.Shortcut, Input) then
+                if Input.TextEditing and not Entry.AllowWhileEditing then return false, 'Ignored' end
+                return Self:Execute(Id)
+            end
         end
-        return false, 'Missing'
+        return false, if Input.TextEditing then 'Ignored' else 'Missing'
     end
     function Value.Dispose(_Self: any)
         if not Alive then return end

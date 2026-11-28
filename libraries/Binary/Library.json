@@ -1,0 +1,21 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Binary",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Binary",
+      "Summary": "Read and write bounded little-endian binary records.",
+      "Types": [
+        "Writer",
+        "Reader"
+      ],
+      "Functions": [
+        "Writer",
+        "Reader"
+      ]
+    }
+  ]
+}

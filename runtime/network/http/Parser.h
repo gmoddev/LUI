@@ -32,6 +32,7 @@ struct Message {
     std::vector<Field> Trailers; // Kept separate from headers.
     std::string Body; // Binary bytes, including NUL.
     bool KeepAlive = true;
+    bool WebSocketUpgrade = false; // Private opt-in server routing marker, never an ordinary HTTP reply.
 };
 
 struct FeedResult { ParseStatus Status; size_t Consumed; ErrorCode Error; };
@@ -41,7 +42,7 @@ struct FeedResult { ParseStatus Status; size_t Consumed; ErrorCode Error; };
 // On failure the connection MUST be closed; no recovery/resynchronization is supported.
 class Parser {
 public:
-    explicit Parser(MessageKind Kind, Limits Bounds = {}, std::string_view ResponseMethod = "GET");
+    explicit Parser(MessageKind Kind, Limits Bounds = {}, std::string_view ResponseMethod = "GET", bool AllowWebSocketUpgrade = false);
     FeedResult Feed(std::string_view Bytes, bool EndOfStream = false);
     const Message* GetResult() const;
 
@@ -65,6 +66,7 @@ private:
     bool HasLength = false;
     bool HasTransfer = false;
     bool HasHost = false;
+    bool AllowWebSocketUpgrade = false, UpgradeIntent = false, HasTrailer = false;
     std::vector<std::string> ConnectionOptions;
 
     void Fail(ErrorCode Code);

@@ -1,0 +1,45 @@
+{
+  "SchemaVersion": 1,
+  "AbiVersion": 1,
+  "Provider": "Host",
+  "Services": [
+    {
+      "Name": "Process",
+      "Methods": [
+        {
+          "Name": "Start",
+          "Arguments": [
+            "string",
+            "string"
+          ],
+          "Returns": "number"
+        },
+        {
+          "Name": "Stop",
+          "Arguments": [
+            "number"
+          ],
+          "Returns": "boolean"
+        }
+      ],
+      "Signals": [
+        {
+          "Name": "Output",
+          "Arguments": [
+            "number",
+            "number",
+            "string"
+          ]
+        },
+        {
+          "Name": "Finished",
+          "Arguments": [
+            "number",
+            "string",
+            "number"
+          ]
+        }
+      ]
+    }
+  ]
+}

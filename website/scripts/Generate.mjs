@@ -6,7 +6,7 @@ import { Summaries, Notes, Examples, GlobalSummaries } from './Editorial.mjs';
 import { Checkpoints, ProjectFiles } from './Tutorials.mjs';
 import { Recipes } from './Recipes.mjs';
 import { GenerateLibraryReference } from './LibraryReference.mjs';
-import { LoadReleases } from './Releases.mjs';
+import { LoadReleases, ReleaseInput, ReadText } from './Releases.mjs';
 
 const Root = Path.resolve(FileUrlToPath(new URL('..', import.meta.url)));
 const Repository = Path.dirname(Root);
@@ -14,8 +14,8 @@ const Catalog = await LoadReleases(Repository);
 const Reports = [];
 for (const ReleaseEntry of Catalog.Releases) {
 const Release = ReleaseEntry.Metadata;
-const SchemaText = (await ReadFile(Path.join(Repository, 'types/schema.json'), 'utf8')).replaceAll('\r\n', '\n');
-const Definitions = (await ReadFile(Path.join(Repository, 'types/LUI.d.luau'), 'utf8')).replaceAll('\r\n', '\n');
+const SchemaText = (await ReadFile(ReleaseInput(Repository, ReleaseEntry, 'types/schema.json'), 'utf8')).replaceAll('\r\n', '\n');
+const Definitions = (await ReadFile(ReleaseInput(Repository, ReleaseEntry, 'types/LUI.d.luau'), 'utf8')).replaceAll('\r\n', '\n');
 if (Hash(SchemaText) !== Release.SchemaSha256) throw new Error('[LUI:Docs] Reflection differs from the documented SDK');
 const Schema = JSON.parse(SchemaText);
 const Parsed = Validate(Schema, Definitions, Release, Summaries);
@@ -135,13 +135,13 @@ function Expand(Text) {
 }
 const Authored = { 'FirstProject.md.in':'learn/first-project.md', 'AdvancedProject.md.in':'learn/advanced-project.md', 'Setup.md.in':'guides/setup.md', 'Workflow.md.in':'guides/workflow.md', 'Modules.md.in':'guides/modules.md', 'Layout.md.in':'guides/layout.md', 'Packaging.md.in':'guides/packaging.md', 'Platforms.md.in':'guides/platforms.md', 'Capabilities.md.in':'guides/capabilities.md', 'Recipes.md.in':'guides/recipes.md' };
 for (const [Source, Destination] of Object.entries(Authored)) {
-  const Text = Expand(await ReadFile(Path.join(Repository, ReleaseEntry.Templates[Source]), 'utf8'));
+  const Text = Expand(await ReadText(Path.join(Repository, ReleaseEntry.Templates[Source])));
   if (/\{\{/.test(Text)) throw new Error('[LUI:Docs] Unexpanded tutorial placeholder');
   await Page(Destination, Text);
 }
 const HeroSource = Tutorials.find(Item => Item.Name === 'First-03-Event').Files['Main.luau'];
 const HeroHtml = '<div class="LuiHeroCode"><div>Src/Main.luau <span>Luau</span></div><pre><code>' + HeroSource.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;') + '</code></pre></div>';
-const Home = Expand(await ReadFile(Path.join(Repository, ReleaseEntry.Templates['Index.mdx.in']), 'utf8')).replace('{{HeroCode}}', JSON.stringify(HeroHtml));
+const Home = Expand(await ReadText(Path.join(Repository, ReleaseEntry.Templates['Index.mdx.in']))).replace('{{HeroCode}}', JSON.stringify(HeroHtml));
 if (/\{\{/.test(Home)) throw new Error('[LUI:Docs] Unexpanded home content');
 await WriteFile(Path.join(Root, 'src/content/docs/index.mdx'), Home);
 await Remove(Path.join(Root, 'src/content/docs/404.md'), { force: true });
@@ -163,7 +163,7 @@ for(const Directory of PackageRoots.sort()) {
 }
 await WriteFile(Path.join(Root,'public/ThirdPartyNotices.txt'),Notices);
 const Libraries = ReleaseEntry.VersionedLibraries ? await GenerateLibraryReference(Repository, Root, {
-  Version: Release.SdkVersion, Base: Version, Workflow: ReleaseEntry.Templates['Workflow.md.in'],
+  Version: Release.SdkVersion, Base: Version, Workflow: ReleaseEntry.Templates['Workflow.md.in'], SourceRepository: ReleaseEntry.SourceRepository,
 }) : null;
 Reports.push({ SdkVersion: Release.SdkVersion, PublicCommit: Release.PublicCommit, SchemaSha256: Hash(SchemaText), DefinitionsSha256: Hash(Definitions), Classes: Schema.classes.length, Services: Schema.services.length, Objects: Schema.objects.length, PublicTypes: Parsed.Exports.size, Globals: Parsed.Globals.size, Pages: Pages.length + (Libraries ? Libraries.Pages - 1 : 0), Libraries,
   TutorialCheckpoints: ProjectReport.filter(Project => !Project.Name.startsWith('Recipe-')),
@@ -171,7 +171,7 @@ Reports.push({ SdkVersion: Release.SdkVersion, PublicCommit: Release.PublicCommi
 });
 }
 const Development = await GenerateLibraryReference(Repository, Root, { Version: Catalog.Current,
-  Workflow: Catalog.Releases.at(-1).Templates['Workflow.md.in'] });
+  Workflow: Catalog.Releases.at(-1).Templates['Workflow.md.in'], SourceRepository: Catalog.Releases.at(-1).SourceRepository });
 const Pages = Reports.reduce((Total, Report) => Total + Report.Pages, 0) + Development.Pages + 2;
 await WriteFile(Path.join(Root, 'BuildReport.json'), JSON.stringify({ ...Reports.at(-1), Pages, Releases: Reports, Development }, null, 2) + '\n');
 console.log('[LUI:Docs] Generated ' + Pages + ' pages for ' + Reports.length + ' SDK versions; previous version paths and downloads are retained.');

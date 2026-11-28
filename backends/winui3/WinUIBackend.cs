@@ -45,7 +45,9 @@ internal sealed partial class WinUIBackend : IDisposable
         public int SelectionStart, SelectionLength, MaxLength = 65534;
         public string Text = string.Empty, Placeholder = string.Empty, StyleJson = string.Empty;
         public ulong ImageToken;
-        public string ImageKey = string.Empty;
+        public ImageEntry? ImageResource;
+        public Canvas? ImageViewport;
+        public ImageRegion ImageRegion;
         public string ClassName = string.Empty;
         public bool PendingResize;
         public double ViewportWidth, ViewportHeight;
@@ -61,6 +63,7 @@ internal sealed partial class WinUIBackend : IDisposable
     }
 
     private readonly Dictionary<int, View> Views = new();
+    private bool WindowResizePending;
     internal bool PauseFrameQualificationPump;
     private readonly Dictionary<string, string> AssetPaths = new(StringComparer.Ordinal);
     private readonly Native.CreateCallback CreateCallback;
@@ -102,6 +105,8 @@ internal sealed partial class WinUIBackend : IDisposable
         WriteClipboardCallback = OnWriteClipboardText;
         ReadClipboardCallback = OnReadClipboardText;
         OpenFileCallback = OnOpenFile;
+        StartFilePickerCallback = OnStartFilePicker;
+        CancelFilePickerCallback = OnCancelFilePicker;
         RequestFocusCallback = OnRequestFocus;
         CodeEditorEventCallback = OnCodeEditorEvent;
         Runtime = Project?.CreateRuntime() ?? Native.Lui_Create();
@@ -150,21 +155,27 @@ internal sealed partial class WinUIBackend : IDisposable
     {
         if (IsDisposed || IsDisposing) return;
         IsDisposing = true;
+        StopFilePickers();
         StopOwnerWake();
         CompositionTarget.Rendering -= OnRendering;
         try { StopFrames(); }
         finally {
             try { StopImages(); }
             finally {
+                WindowMetrics?.ReleaseOwners();
                 Native.Lui_Destroy(Runtime);
                 IsDisposed = true;
                 IsDisposing = false;
+                // Destroy synchronously closes the XAML windows. Start final
+                // graphics-device retirement after that owner-thread teardown.
+                if (FrameDevice is {} Ticket) RetireFrameDevice(Ticket);
             }
         }
     }
 
-    public void ConfigureManifest(AppManifest Manifest)
+    public void ConfigureManifest(AppManifest Manifest, bool AllowNative=false)
     {
+        if (Manifest.AllowNativeExtensions && !AllowNative) throw new InvalidOperationException("[LUI:Project] CapabilityDenied");
         Native.CapabilityDeclaration Declaration = new()
         {
             StructSize = (uint)Marshal.SizeOf<Native.CapabilityDeclaration>(),
@@ -226,7 +237,12 @@ internal sealed partial class WinUIBackend : IDisposable
     }
     public bool RunProject(PreparedProject Project,bool AllowNative=false)
     {
-        Project.Configure(Runtime,true,AllowNative,StartDesktopServices);
+        Project.Configure(Runtime,true,AllowNative,() => {
+            StartDesktopServices();
+            if (Project.Manifest.TryGetProperty("ExtensionDeclarations", out var Declarations) &&
+                Declarations.EnumerateArray().Any(PathName => Path.GetFileName(PathName.GetString()) == "DesktopWindowMetrics.json"))
+                StartWindowMetrics();
+        });
         foreach(var Asset in Project.Manifest.GetProperty("Assets").EnumerateArray()) {
             string Name=Asset.GetString()!;
             AssetPaths[Name]=Path.Combine(Path.GetDirectoryName(Project.ManifestPath)!,Name);
@@ -236,6 +252,7 @@ internal sealed partial class WinUIBackend : IDisposable
     }
     private void StartDesktopServices()
     {
+        StartFiles();
         if (Native.Lui_InstallWindowsDesktopV1(Runtime) != 0)
             throw new InvalidOperationException("[LUI:Desktop] InstallationFailed");
     }
@@ -346,11 +363,14 @@ internal sealed partial class WinUIBackend : IDisposable
         }
         Pumping=true;
         try{
-        foreach (var Entry in Views.ToArray()) {
-            var View = Entry.Value;
-            if (View.IsAlive && View.Window is not null && View.PendingResize) {
-                View.PendingResize = false;
-                Native.Lui_WindowResized(Runtime, Entry.Key, View.ViewportWidth, View.ViewportHeight);
+        if (WindowResizePending) {
+            WindowResizePending = false;
+            foreach (var Entry in Views.ToArray()) {
+                var View = Entry.Value;
+                if (View.IsAlive && View.Window is not null && View.PendingResize) {
+                    View.PendingResize = false;
+                    Native.Lui_WindowResized(Runtime, Entry.Key, View.ViewportWidth, View.ViewportHeight);
+                }
             }
         }
         CheckTheme();
@@ -364,7 +384,7 @@ internal sealed partial class WinUIBackend : IDisposable
             LastReportedError = Error;
             LuiDiagnostics.Error("Runtime", Error);
         }
-        }finally{Pumping=false;}
+        }finally{Pumping=false;OwnerWake?.RefreshFrameDeadline();}
     }
 
     private void CheckTheme()
@@ -422,8 +442,10 @@ internal sealed partial class WinUIBackend : IDisposable
 
     private int OnOpenFile(IntPtr Context, ulong RequestId)
     {
+        if (FilePickers.Count != 0 || LegacyFilePickerPending) return 0;
         Microsoft.UI.Xaml.Window? Window = GetDialogWindow();
         if (Window is null) return 0;
+        LegacyFilePickerPending = true;
         _ = OpenFileAsync(Window, RequestId);
         return 1;
     }
@@ -444,6 +466,7 @@ internal sealed partial class WinUIBackend : IDisposable
             LuiDiagnostics.Error("Dialog", "File picker failed: " + Error);
             CompletePlatformRequest(RequestId, null, "File picker failed");
         }
+        finally { LegacyFilePickerPending = false; }
     }
 
     private void CompletePlatformRequest(ulong RequestId, string? Result, string? Error)
@@ -640,6 +663,7 @@ internal sealed partial class WinUIBackend : IDisposable
                     Diagnostic($"WindowResized {Id} {Args.NewSize.Width} {Args.NewSize.Height}");
                     NewView.ViewportWidth = Args.NewSize.Width; NewView.ViewportHeight = Args.NewSize.Height;
                     NewView.PendingResize = true;
+                    WindowResizePending = true;
                 };
             }
             Diagnostic($"Create end {Id} {ClassName}");
@@ -885,14 +909,14 @@ internal sealed partial class WinUIBackend : IDisposable
     private bool CanReceiveFocus(int Id)
     {
         if (!Views.TryGetValue(Id, out View? Target) || !Target.InputVisible) return false;
-        HashSet<int> Visited = new();
-        while (Id != 0)
+        // The owner-thread registry bounds every acyclic path, including a leaf at maximum depth.
+        for (int Remaining = Views.Count; Id != 0 && Remaining > 0; --Remaining)
         {
-            if (!Visited.Add(Id) || !Views.TryGetValue(Id, out View? Current) || !Current.Visible || !Current.Enabled)
+            if (!Views.TryGetValue(Id, out View? Current) || !Current.Visible || !Current.Enabled)
                 return false;
             Id = Current.ParentId;
         }
-        return true;
+        return Id == 0;
     }
 
     private bool IsInWindow(int Id, int WindowId)
@@ -984,14 +1008,22 @@ internal sealed partial class WinUIBackend : IDisposable
                     case "__Style":
                         ApplyStyle(Target, Value);
                         break;
+                    case "Name" when Target.Window is not null:
+                        WindowMetrics?.Name(Id, Target, Value);
+                        break;
                     case "Title" when Target.Window is not null:
                         Target.Window.Title = Value;
                         break;
                     case "Text" when (Target.Content ?? Target.Element) is TextBlock Label:
                         Label.Text = Value;
                         break;
-                    case "Source" when (Target.Content ?? Target.Element) is Image Picture:
-                        if (string.IsNullOrEmpty(Value)) ReleaseImage(Target);
+                    case "Source" when Target.ClassName == "ImageLabel":
+                        ReleaseImage(Target);
+                        break;
+                    case "__ImageRegion" when Target.ClassName == "ImageLabel":
+                        Target.ImageRegion = ImageRegion.Parse(Value);
+                        ApplyImageRegion(Target);
+                        MarkPresentation();
                         break;
                     case "ScaleMode" when Target.ClassName == "FrameSurface" && Target.Content is Image SurfaceImage:
                         SurfaceImage.Stretch = Value switch {"Fill" => Stretch.UniformToFill, "Stretch" => Stretch.Fill, _ => Stretch.Uniform};
@@ -1274,7 +1306,7 @@ internal sealed partial class WinUIBackend : IDisposable
 
     private int OnArrange(IntPtr Context, int Id, double X, double Y, double Width, double Height, int ResizeWindow)
     {
-        Diagnostic($"Arrange {Id} {X} {Y} {Width} {Height}");
+        if (LuiDiagnostics.IsEnabled) Diagnostic($"Arrange {Id} {X} {Y} {Width} {Height}");
         try
         {
             if (!Views.TryGetValue(Id, out View? Target))
@@ -1292,16 +1324,23 @@ internal sealed partial class WinUIBackend : IDisposable
             }
             else if (Target.Element is FrameworkElement Element)
             {
-                if (Element.Width != Width || Element.Height != Height) MarkPresentation();
-                Element.Width = Width;
-                Element.Height = Height;
+                if (Element.Width != Width || Element.Height != Height)
+                {
+                    MarkPresentation();
+                    Element.Width = Width;
+                    Element.Height = Height;
+                    if (Target.ImageViewport is not null) ApplyImageRegion(Target);
+                }
                 View? ParentView = Target.ParentId != 0 && Views.TryGetValue(Target.ParentId, out View? FoundParent)
                     ? FoundParent : null;
-                double ParentX = ParentView?.BoundsX ?? 0;
-                double ParentY = ParentView?.BoundsY ?? 0;
-                if (Canvas.GetLeft(Element) != X - ParentX || Canvas.GetTop(Element) != Y - ParentY) MarkPresentation();
-                Canvas.SetLeft(Element, X - ParentX);
-                Canvas.SetTop(Element, Y - ParentY);
+                double Left = X - (ParentView?.BoundsX ?? 0);
+                double Top = Y - (ParentView?.BoundsY ?? 0);
+                if (Canvas.GetLeft(Element) != Left || Canvas.GetTop(Element) != Top)
+                {
+                    MarkPresentation();
+                    Canvas.SetLeft(Element, Left);
+                    Canvas.SetTop(Element, Top);
+                }
             }
             return 1;
         }
@@ -1350,6 +1389,7 @@ internal sealed partial class WinUIBackend : IDisposable
         {
             if (Views.TryGetValue(Id, out View? Existing)) CancelCapturedPointers(Existing);
             if (!Views.Remove(Id, out View? Target)) return 1;
+            if (Target.Window is not null) WindowMetrics?.Remove(Id);
             Target.IsAlive = false;
             if(Target.Window is not null) DetachCodeEditors(Id);
             if(Target.CodeHost!=IntPtr.Zero) {
@@ -1421,6 +1461,8 @@ internal sealed partial class WinUIBackend : IDisposable
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void CancelImageCallback(IntPtr Context, ulong Token);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate int LoadImageSourceCallback(IntPtr Context, int Id, ulong Token, IntPtr Source);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate int DestroyCallback(IntPtr Context, int Id);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void LogCallback(IntPtr Context, [MarshalAs(UnmanagedType.LPUTF8Str)] string Level, [MarshalAs(UnmanagedType.LPUTF8Str)] string Message);
@@ -1475,6 +1517,18 @@ internal sealed partial class WinUIBackend : IDisposable
             internal LoadImageCallback Load;
             internal CancelImageCallback Cancel;
         }
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct ImageSourceCallbacks {
+            internal uint StructSize, AbiVersion;
+            internal IntPtr Context;
+            internal LoadImageSourceCallback Load;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct ImageSourceView {
+            internal uint StructSize, AbiVersion, Kind, Width, Height, RowStride;
+            internal ulong Identity, ByteCount;
+            internal IntPtr Data;
+        }
 
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr Lui_Create();
@@ -1501,6 +1555,14 @@ internal sealed partial class WinUIBackend : IDisposable
         internal static extern int Lui_SetPresentationCallbacks(IntPtr Runtime, ref PresentationCallbacks Callbacks);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_SetImageCallbacks(IntPtr Runtime, ref ImageCallbacks Callbacks);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_SetImageSourceCallbacksV1(IntPtr Runtime, ref ImageSourceCallbacks Callbacks);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int Lui_ImageSourceViewV1(IntPtr Source, ref ImageSourceView View);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void Lui_RetainImageSourceV1(IntPtr Source);
+        [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void Lui_ReleaseImageSourceV1(IntPtr Source);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Lui_ImageCompleted(IntPtr Runtime, int Id, ulong Token, int Success);
         [DllImport("LuiRuntime.dll", CallingConvention = CallingConvention.Cdecl)]

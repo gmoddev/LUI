@@ -44,8 +44,9 @@ internal sealed class SdkInstallation
             if(File.Name.StartsWith("Examples/",StringComparison.Ordinal)) ExampleInventory.Add(File.Name,Expected);
         }
         JsonElement Parts = Data.GetProperty("Components");
-        Fields(Parts, Names);
-        foreach (string Name in Names)
+        string[] ComponentNames = Version is "0.1.0-preview.1" or "0.1.0-preview.2" or "0.1.0-preview.2b" ? Names : [..Names, "HeadlessHost"];
+        Fields(Parts, ComponentNames);
+        foreach (string Name in ComponentNames)
         {
             string Relative = Parts.GetProperty(Name).GetString() ?? "";
             if (!Inventory.ContainsKey(Relative)) throw Invalid("UnlistedComponent");
@@ -93,9 +94,17 @@ internal sealed class SdkInstallation
             if (Options.GetValueOrDefault("--mode") == "syntax") Component("--runtime", "Runtime");
             else { Component("--checker", "Checker"); Component("--definitions", "Definitions"); }
         }
-        if (Command is "run" or "build") Component("--host", "NativeHost");
+        if (Command is "run" or "build")
+        {
+            if (Options.GetValueOrDefault("--mode") == "headless")
+            {
+                if (!Components.ContainsKey("HeadlessHost")) throw Invalid("HeadlessUnavailable: select a candidate SDK with a headless host");
+                Component("--host", "HeadlessHost");
+            }
+            else Component("--host", "NativeHost");
+        }
         if (Command == "preview") { Component("--host", "PreviewHost"); Component("--runtime", "Runtime"); }
-        if (Command is "stage" or "verify" || (Command == "build" && Options.GetValueOrDefault("--mode") == "project")) Component("--project-tool", "ProjectTool");
+        if (Command is "stage" or "verify" || (Command == "build" && Options.GetValueOrDefault("--mode") is ("project" or "headless"))) Component("--project-tool", "ProjectTool");
     }
 
     internal object Describe() => new { SchemaVersion = 1, Status = "Ready", SdkVersion = Version, Target, SdkManifestSha256 = Digest, SdkRoot = Root, Components,
@@ -106,7 +115,8 @@ internal sealed class SdkInstallation
 
     internal void CopyExample(string Name,string Destination)
     {
-        if(Name is not ("commands" or "workbench")) throw Invalid("UnknownTemplate: choose basic, commands or workbench");
+        if (Name is not ("commands" or "workbench" or "spec-cli" or "parallel-data" or "ffi-platform" or "ffi-sqlite" or "ffi-callback" or "ffi-workbench" or "ffi-isolated"))
+            throw Invalid("UnknownTemplate: choose basic, commands, workbench, spec-cli, parallel-data, ffi-platform, ffi-sqlite, ffi-callback, ffi-workbench or ffi-isolated");
         string Prefix="Examples/"+Name+"/";
         Dictionary<string,byte[]> Captured=new(StringComparer.Ordinal);
         foreach(var Item in ExampleInventory.Where(Item=>Item.Key.StartsWith(Prefix,StringComparison.Ordinal)))
@@ -116,7 +126,7 @@ internal sealed class SdkInstallation
             Captured.Add(Item.Key[Prefix.Length..],Bytes);
         }
         if(!Captured.ContainsKey("lui.json") || !Captured.ContainsKey("Src/Main.luau"))
-            throw Invalid("TemplateUnavailable: select an SDK containing this example (preview.2 or later)");
+            throw Invalid("TemplateUnavailable: select an SDK containing this example");
         Directory.CreateDirectory(Destination);
         foreach(var Item in Captured)
         {

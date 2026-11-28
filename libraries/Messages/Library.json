@@ -1,0 +1,23 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Messages",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [
+    "Json"
+  ],
+  "Modules": [
+    {
+      "Name": "Messages",
+      "Summary": "Copy bounded messages through a versioned byte format and FIFO mailbox.",
+      "Types": [
+        "Mailbox"
+      ],
+      "Functions": [
+        "Encode",
+        "Decode",
+        "Mailbox"
+      ]
+    }
+  ]
+}

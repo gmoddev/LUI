@@ -1,0 +1,23 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Toml",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [
+    "Config",
+    "Json"
+  ],
+  "NativeProvider": "Toml",
+  "Modules": [
+    {
+      "Name": "Toml",
+      "Summary": "Read and write typed TOML documents and validate application settings.",
+      "Types": [],
+      "Functions": [
+        "Decode",
+        "Encode",
+        "Settings"
+      ]
+    }
+  ]
+}

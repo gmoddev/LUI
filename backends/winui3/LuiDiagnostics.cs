@@ -9,6 +9,7 @@ internal static class LuiDiagnostics
     private static readonly object Gate = new();
     private static string? LogPath;
     private static bool Enabled;
+    internal static bool IsEnabled => Enabled;
     private static bool PolicyEnabled;
     private static string? PolicyDirectory;
     private static Mutex? FileGate;

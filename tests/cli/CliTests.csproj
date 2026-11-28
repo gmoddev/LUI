@@ -8,10 +8,16 @@
   <ItemGroup>
     <Compile Include="../../tools/cli/SdkInstallation.cs" Link="SdkInstallation.cs" />
     <Compile Include="../../tools/cli/CliProgram.cs" Link="CliProgram.cs" />
+    <Compile Include="../../tools/cli/WindowsStreams.cs" Link="WindowsStreams.cs" />
+    <Compile Include="../../tools/cli/UnixStreams.cs" Link="UnixStreams.cs" />
     <Compile Include="../../tools/cli/NativeScriptChecker.cs" Link="NativeScriptChecker.cs" />
     <Compile Include="../../tools/cli/NativeTypeChecker.cs" Link="NativeTypeChecker.cs" />
     <Compile Include="../../tools/cli/ProjectTypeChecker.cs" Link="ProjectTypeChecker.cs" />
     <Compile Include="../../tools/cli/ProjectPackager.cs" Link="ProjectPackager.cs" />
+    <Compile Include="../../tools/cli/PackageSource.cs" Link="PackageSource.cs" />
+    <Compile Include="../../tools/cli/PackageRequests.cs" Link="PackageRequests.cs" />
+    <Compile Include="../../tools/cli/PackageImport.cs" Link="PackageImport.cs" />
+    <Compile Include="../../tools/cli/PackageRestore.cs" Link="PackageRestore.cs" />
     <Compile Include="../../tools/project/AppManifest.cs" Link="AppManifest.cs" />
     <Compile Include="../../tools/packaging/PackageBuilder.cs" Link="PackageBuilder.cs" />
   </ItemGroup>

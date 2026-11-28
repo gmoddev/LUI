@@ -35,7 +35,7 @@ Test('real modular editor transactions retain identities, project Problems, reda
         const Original=Fs.readFileSync(Source,'utf8');
         Fs.writeFileSync(Source,'local Wrong: number = "TYPE_PRIVATE_CANARY"\n'+Original);
         const Checked=WaitFor(Types,'result');
-        Types.Start({Manifest,Cli,Checker,Definitions:Path.resolve(__dirname,'../../types/LUI.d.luau'),Modular:true});
+        Types.Start({Manifest,Cli,Checker,Definitions:Path.join(Path.dirname(Checker),'LUI.d.luau'),Modular:true});
         const [Result]=await Checked;
         Assert.ok(Result.diagnostics.some(Issue=>Issue.source==='app:State.luau' && Issue.kind==='type'));
         Assert.equal(JSON.stringify(Result.diagnostics).includes('TYPE_PRIVATE_CANARY'),false);

@@ -1,0 +1,12 @@
+{
+  "SchemaVersion": 2,
+  "Script": "Src/Main.luau",
+  "Capabilities": ["network.client", "network.server"],
+  "Extensions": [], "Assets": [], "ExtensionDeclarations": [],
+  "Diagnostics": {"Mode": "Development"},
+  "NetworkPolicy": {
+    "ClientLoopbackOnly": true, "ClientPortMin": 18083, "ClientPortMax": 18083,
+    "ServerLoopbackOnly": true, "ServerPortMin": 18083, "ServerPortMax": 18083
+  },
+  "Modules": {"Root": "Src", "Files": ["Main.luau"], "Requires": [], "Dependencies": []}
+}

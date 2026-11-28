@@ -1,8 +1,10 @@
 ---
 import DefaultHeader from '@astrojs/starlight/components/Header.astro';
 import Catalog from '../../Releases.json';
-const Active = Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
-const Base = '/LUI/docs/sdk-' + Active;
+const Experimental = Astro.url.pathname.includes('/candidate/ffi/');
+const Candidate = Astro.url.pathname.includes('/candidate/preview.3/');
+const Active = Experimental ? 'experimental FFI' : Candidate ? 'preview.3 candidate' : Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
+const Base = '/LUI/docs/sdk-' + (Candidate || Experimental ? Catalog.Current : Active);
 const Relative = Astro.url.pathname.match(/\/docs\/sdk-[^/]+\/(.*)/)?.[1] || 'learn/first-project/';
 ---
 <div class="LuiHeader">
@@ -15,6 +17,8 @@ const Relative = Astro.url.pathname.match(/\/docs\/sdk-[^/]+\/(.*)/)?.[1] || 'le
       <select aria-label="Documentation SDK version" data-doc-version data-relative={Relative}>
         <option value="0.1.0-preview.2" selected={Active==='0.1.0-preview.2'}>Preview.2</option>
         <option value="0.1.0-preview.1" selected={Active==='0.1.0-preview.1'}>Preview.1 archive</option>
+        <option value="experimental FFI" selected={Experimental}>Experimental FFI</option>
+        <option value="preview.3 candidate" selected={Candidate}>Preview.3 candidate (unreleased)</option>
       </select>
     </label>
   </nav>
@@ -27,6 +31,8 @@ const Relative = Astro.url.pathname.match(/\/docs\/sdk-[^/]+\/(.*)/)?.[1] || 'le
   }
   const Select=document.querySelector<HTMLSelectElement>('[data-doc-version]');
   Select?.addEventListener('change',()=>{
+    if(Select.value==='experimental FFI'){location.href='/LUI/candidate/ffi/libraries/ffi/';return;}
+    if(Select.value==='preview.3 candidate'){location.href='/LUI/candidate/preview.3/commands/';return;}
     let Relative=Select.dataset.relative||'learn/first-project/';
     if(Select.value==='0.1.0-preview.1'&&(Relative.startsWith('libraries/')||Relative==='guides/libraries/'))Relative='api/';
     location.href='/LUI/docs/sdk-'+Select.value+'/'+Relative;

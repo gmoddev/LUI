@@ -1,0 +1,57 @@
+---
+title: Command shortcuts while editing
+description: Let a Save command work in a focused editor without stealing text editing keys.
+---
+
+<span hidden data-pagefind-filter="SDK:preview.3 candidate"></span>
+
+**Unreleased preview.3 candidate.** This option is not in the published preview.2
+SDK. The released [preview.2 Commands reference](/LUI/docs/sdk-0.1.0-preview.2/libraries/luiworkbench/commands/)
+keeps its original behavior. No new SDK download is published by this page.
+
+Commands usually ignores keyboard shortcuts while a text box is focused. That
+protects typing, but also prevents an app's Ctrl+S action from running in an
+editor. In the candidate library, set `AllowWhileEditing = true` on that command.
+
+Create a workbench project with the prepared preview.3 candidate SDK. Keep its
+vendored libraries, manifest and module lock together. Replace `Src/Main.luau`
+with this complete example, then use the candidate SDK's `lui check` and `lui run`:
+
+```luau
+{{Example}}
+```
+
+Focus the editor and press Ctrl+S. The status reports the captured byte count
+and your text stays in the editor. This example stores the snapshot in memory;
+it does not write a file. An application can bind the same command to a button
+and use its existing storage service inside the callback.
+
+The default is `false`. Opt-in needs a Control shortcut without Alt. Plain
+typing and AltGr cannot trigger it; Shift must match the registered binding
+exactly. Repeated key notifications are ignored. Native composition suppresses
+`Window.Shortcut` before Commands runs.
+
+Text editing still has precedence when an undo stack is empty. These Control
+keys, with or without Shift, cannot opt in: A/C/V/X/Y/Z, Insert/Delete/Backspace,
+Home/End, arrow keys, PageUp/PageDown, Enter/Return and Tab. Register such a command
+without the flag if it should work outside an editor. Invalid registration throws
+a bounded `[LUI:Commands]` error; validate configuration or catch expected errors
+with `pcall`. A command callback failure returns `false, 'Failed'` from Execute
+or Dispatch without exposing the callback's error text.
+
+The flag is copied when the command is registered. Changing your original table
+later does not change the binding. `List()` reports the effective boolean.
+Dispose the registry when its owner is destroyed; it does not cancel tasks or
+storage requests started by application callbacks.
+
+The library is portable Luau over the existing scheduler and Window shortcut
+contract. Focus, modifiers, composition and retirement have Windows/Linux
+headless owner-input tests. Physical keyboard, IME and native host behavior are
+qualified separately; a host without shortcut notifications emits no event.
+
+<details>
+<summary>Candidate exported types</summary>
+
+{{Declarations}}
+
+</details>

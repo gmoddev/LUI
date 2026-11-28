@@ -1,6 +1,6 @@
 # JsonClient
 
-An optional HTTP JSON adapter for SDK `0.1.0-preview.2` development. It uses
+An optional HTTP JSON adapter for the unreleased SDK `0.1.0-preview.3` candidate. It uses
 `@Json/Json` and the existing `HttpService`.
 
 ```luau
@@ -21,7 +21,7 @@ and pin both modules through the ordinary module lock. The SDK's standalone
 
 `RequestAsync(Url, Options?)` returns decoded data and the immutable native HTTP
 response. `GetAsync(Url)` is the GET shorthand. Options accept Method, Value,
-Headers, TimeoutMs and MaxResponseBytes. A missing Value sends no body.
+Headers, TimeoutMs, MaxResponseBytes and CancellationToken. A missing Value sends no body.
 `false` and `Json.Null` encode as distinct JSON bodies. Content-Type defaults
 to application/json for a body when no case-insensitive match is supplied.
 Header records are copied before native admission. Native header, URL, method,
@@ -38,6 +38,27 @@ scheduler tasks. Generation retirement releases native requests and connections.
 The adapter creates no persistent native resources of its own. Explicit native
 `HttpService:CancelAll()` retains its runtime-wide cancellation semantics.
 Transport failures retain native error codes. Codec/option errors omit payloads.
+
+Preview.3 adds optional per-operation cancellation using the existing native
+token; published preview.2 does not have it:
+
+```luau
+local Token = app:GetService('HttpService'):CreateCancellationToken()
+task.spawn(function()
+    local Ok = pcall(function()
+        Client:RequestAsync('https://example.com/status', {CancellationToken = Token})
+    end)
+    if not Ok then print('[LUI:JsonClient] Request failed or was cancelled') end
+end)
+-- From a Cancel button or owner teardown: Token:Cancel()
+```
+
+The token can be shared intentionally by related requests, is idempotent and
+cannot be reused after cancellation. Other tokens and ordinary requests survive.
+Keep it with the action that owns the request. No extra promise or scheduler is
+introduced. Native capability, URL policy, deadlines and resource limits still
+apply. A successful HTTP response whose nonempty body is invalid JSON still fails
+decoding; cancellation is distinct from a received HTTP error status.
 
 Version is `0.1.0`. The library catalog targets the next SDK and supplies module
 types to the generated development reference.

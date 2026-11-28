@@ -7,8 +7,85 @@ target_compile_definitions(LuiHeadlessTests PRIVATE LUI_WINUI_FOCUS_CASE_PATH="$
 target_compile_definitions(LuiHeadlessTests PRIVATE LUI_WINUI_INPUT_CASE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/winui/InputQualification.luau")
 target_compile_definitions(LuiHeadlessTests PRIVATE LUI_WINUI_NATIVE_CASE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/winui/NativeMapping.luau")
 enable_testing()
+add_executable(LuiWebSocketProtocolTests tests/network/WebSocketProtocol.cpp)
+target_link_libraries(LuiWebSocketProtocolTests PRIVATE LuiWebSocket)
+add_test(NAME LuiWebSocketProtocolTests COMMAND LuiWebSocketProtocolTests)
+set_tests_properties(LuiWebSocketProtocolTests PROPERTIES TIMEOUT 30)
+add_executable(LuiWebSocketTests tests/network/WebSocket.cpp tests/network/WebSocketLayout.c)
+set_target_properties(LuiWebSocketTests PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+target_include_directories(LuiWebSocketTests PRIVATE "${asio_SOURCE_DIR}/asio/include")
+target_compile_definitions(LuiWebSocketTests PRIVATE ASIO_STANDALONE LUI_TLS_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/network/tls")
+if(WIN32)
+    target_compile_definitions(LuiWebSocketTests PRIVATE _WIN32_WINNT=0x0A00)
+endif()
+target_link_libraries(LuiWebSocketTests PRIVATE LuiRuntime LuiTls)
+add_test(NAME LuiWebSocketTests COMMAND LuiWebSocketTests)
+set_tests_properties(LuiWebSocketTests PROPERTIES TIMEOUT 60)
+add_subdirectory(native/standard)
+option(LUI_STANDARD_FFI "Build the optional trusted-native FFI provider and its qualification fixture" OFF)
+if(LUI_STANDARD_FFI)
+    add_subdirectory(native/ffi)
+    add_subdirectory(tests/ffi)
+    set_target_properties(LuiFfi PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/StandardProviders/$<CONFIG>"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/StandardProviders/$<CONFIG>")
+    if(TARGET LuiFfiBroker)
+        set_target_properties(LuiFfiBroker PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/StandardProviders/$<CONFIG>")
+    endif()
+endif()
+set(LuiPinArgs)
+set(LuiProviderTargets)
+foreach(Name Compression Crypto SQLite Regex Toml Ffi)
+    if(TARGET Lui${Name})
+        list(APPEND LuiPinArgs "-D${Name}=$<TARGET_FILE:Lui${Name}>")
+        list(APPEND LuiProviderTargets Lui${Name})
+    endif()
+endforeach()
+add_executable(LuiHeadlessHost tools/headless/Main.cpp tools/headless/Stdio.cpp tools/headless/StandardProviders.cpp
+    tools/headless/Environment.cpp tools/headless/ProcessHost.cpp tools/headless/ProcessLinux.cpp tools/headless/ProcessWindows.cpp)
+if(LuiProviderTargets)
+    set(PinDir "${CMAKE_CURRENT_BINARY_DIR}/StandardPins/$<CONFIG>")
+    file(GENERATE OUTPUT "${PinDir}/Selection.txt" CONTENT "${LuiProviderTargets}\n")
+    add_custom_command(OUTPUT "${PinDir}/LuiStandardPins.h"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PinDir}"
+        COMMAND ${CMAKE_COMMAND} ${LuiPinArgs} "-DOutput=${PinDir}/LuiStandardPins.h" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StandardPins.cmake"
+        DEPENDS ${LuiProviderTargets} "${PinDir}/Selection.txt" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StandardPins.cmake" VERBATIM)
+    target_sources(LuiHeadlessHost PRIVATE "${PinDir}/LuiStandardPins.h")
+    target_compile_definitions(LuiHeadlessHost PRIVATE LUI_STANDARD_PINS)
+    target_include_directories(LuiHeadlessHost PRIVATE "${PinDir}")
+endif()
+target_link_libraries(LuiHeadlessHost PRIVATE LuiRuntime nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_link_libraries(LuiHeadlessHost PRIVATE shell32)
+endif()
+add_executable(LuiExecutionTests tests/runtime/Execution.cpp)
+target_link_libraries(LuiExecutionTests PRIVATE LuiRuntime)
+add_executable(LuiHttpPolicyTests tests/network/HttpPolicy.cpp)
+target_include_directories(LuiHttpPolicyTests PRIVATE "${asio_SOURCE_DIR}/asio/include")
+target_compile_definitions(LuiHttpPolicyTests PRIVATE ASIO_STANDALONE)
+if(WIN32)
+    target_compile_definitions(LuiHttpPolicyTests PRIVATE _WIN32_WINNT=0x0A00)
+endif()
+target_link_libraries(LuiHttpPolicyTests PRIVATE LuiHttp LuiRuntime LuiTls)
+if(UNIX)
+    target_link_libraries(LuiHeadlessHost PRIVATE Threads::Threads)
+    target_link_libraries(LuiExecutionTests PRIVATE Threads::Threads)
+    set_target_properties(LuiHeadlessHost PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN/../lib")
+    install(TARGETS LuiHeadlessHost RUNTIME DESTINATION bin COMPONENT SdkHeadless)
+endif()
+add_test(NAME LuiExecutionTests COMMAND LuiExecutionTests)
+set_tests_properties(LuiExecutionTests PROPERTIES TIMEOUT 10)
+add_test(NAME LuiHttpPolicyTests COMMAND LuiHttpPolicyTests)
+set_tests_properties(LuiHttpPolicyTests PROPERTIES TIMEOUT 60)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME LuiWebSocketHeadlessTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/headless/WebSocket.py" "$<TARGET_FILE:LuiHeadlessHost>")
+    set_tests_properties(LuiWebSocketHeadlessTests PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME LuiHeadlessHostTests COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/headless/Qualification.py" "$<TARGET_FILE:LuiHeadlessHost>")
+    set_tests_properties(LuiHeadlessHostTests PROPERTIES TIMEOUT 60)
     add_test(NAME LuiLibraryTests COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/libraries/Run.py"
         --runtime "$<TARGET_FILE:LuiRuntime>" --checker "$<TARGET_FILE:LuiTypeCheck>" --suite all)
@@ -183,6 +260,14 @@ target_compile_definitions(LuiTypeTests PRIVATE LUI_TYPES_PATH="${CMAKE_CURRENT_
 add_test(NAME LuiTypeTests COMMAND LuiTypeTests)
 
 add_library(LuiProjectAnalysis STATIC tools/typecheck/ProjectCheck.cpp)
+add_executable(LuiSelectedFileTests tests/services/SelectedFiles.cpp runtime/services/SelectedFiles.cpp)
+target_include_directories(LuiSelectedFileTests PRIVATE runtime/services)
+target_link_libraries(LuiSelectedFileTests PRIVATE LuiProject)
+add_test(NAME LuiSelectedFileTests COMMAND LuiSelectedFileTests)
+add_executable(LuiFileServiceTests tests/services/Files.cpp)
+target_link_libraries(LuiFileServiceTests PRIVATE LuiRuntime)
+add_test(NAME LuiFileServiceTests COMMAND LuiFileServiceTests)
+set_tests_properties(LuiSelectedFileTests LuiFileServiceTests PROPERTIES TIMEOUT 30)
 target_include_directories(LuiProjectAnalysis PUBLIC tools/typecheck)
 target_link_libraries(LuiProjectAnalysis PRIVATE Luau.Analysis nlohmann_json::nlohmann_json PUBLIC LuiProject)
 if(NOT WIN32)
@@ -225,7 +310,7 @@ add_executable(LuiNativeLoaderTests tests/project/NativeLoader.cpp)
 target_link_libraries(LuiNativeLoaderTests PRIVATE LuiRuntime LuiProject nlohmann_json::nlohmann_json)
 add_test(NAME LuiNativeLoaderTests COMMAND LuiNativeLoaderTests $<TARGET_FILE:LuiSampleExtension>)
 add_executable(LuiTypeCheck tools/typecheck/Main.cpp)
-target_link_libraries(LuiTypeCheck PRIVATE Luau.Analysis LuiProjectAnalysis nlohmann_json::nlohmann_json)
+target_link_libraries(LuiTypeCheck PRIVATE Luau.Analysis Luau.Compiler LuiProjectAnalysis nlohmann_json::nlohmann_json)
 if(WIN32)
     target_link_libraries(LuiTypeCheck PRIVATE shell32)
 endif()
@@ -319,6 +404,13 @@ add_test(NAME LuiAssetTests COMMAND LuiAssetTests)
 
 # Canonical dependency closure for native/tooling qualification on every OS.
 add_custom_target(LuiNativeQualification DEPENDS
+    LuiSelectedFileTests
+    LuiFileServiceTests
+    LuiWebSocketProtocolTests
+    LuiWebSocketTests
+    LuiHeadlessHost
+    LuiExecutionTests
+    LuiHttpPolicyTests
     LuiHeadlessTests
     LuiNativeServiceTests
     LuiNativeRuntimeTests

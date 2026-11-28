@@ -1,4 +1,5 @@
 #include "LuiRuntime.h"
+#include "LuiOwnerWake.h"
 #include "../../runtime/internal/State.h"
 
 #include <algorithm>
@@ -84,6 +85,24 @@ void ApiAndValidation() {
     const std::string Schema = Lui_GetSchemaJson();
     Check(Schema.find("FrameSurface") != std::string::npos && Schema.find("SubmitFrame") != std::string::npos, "reflected API");
     Run(Runtime, Setup);
+    {
+        const int Id = Runtime->FrameSurfaces[0]->Id;
+        uint32_t Color = 0xffaabbcc;
+        LuiFrameViewV1 Pixels{sizeof(Pixels),1,&Color,4,0,0,1,1,4,1};
+        Check(!Lui_WriteFrameSurfaceV1(Runtime, -1, &Pixels), "missing host surface rejected");
+        Check(!Lui_WriteFrameSurfaceV1(Runtime, 1, &Pixels), "host write to Window rejected");
+        Pixels.Epoch=1;
+        Check(!Lui_WriteFrameSurfaceV1(Runtime, Id, &Pixels), "host cannot supply source epoch");
+        Pixels.Epoch=0;
+        Check(Lui_WriteFrameSurfaceV1(Runtime, Id, &Pixels), "owner frame accepted");
+        LuiFrameViewV1 Copy{sizeof(Copy),1};
+        Color=0;
+        Check(Lui_FrameView(Runtime->FrameSurfaces[0]->PendingFrame,&Copy) &&
+            *static_cast<const uint32_t*>(Copy.Pixels)==0xffaabbcc, "caller frame copied before returning");
+        int Foreign=1;
+        std::thread Other([&]{Foreign=Lui_WriteFrameSurfaceV1(Runtime,Id,nullptr);}); Other.join();
+        Check(!Foreign && Lui_WriteFrameSurfaceV1(Runtime,Id,nullptr), "only owner can retire native submissions");
+    }
     Run(Runtime, R"(
         assert(S:IsA('FrameSurface') and S:IsA('GuiObject') and S:IsA('Instance'))
         assert(S.ScaleMode=='Fit' and S.FrameState=='Empty')
@@ -174,6 +193,44 @@ void OwnershipAndRaces() {
     std::thread Late([&] { Lui_FrameComplete(Old, 1); Value.Release(); }); Late.join();
     Lui_Pump(Runtime); Run(Runtime, "assert(S.FrameState=='Empty'); S:Destroy()");
     Check(Stats(Runtime).PixelBytes == 0 && Stats(Runtime).StagingBytes == 0 && Stats(Runtime).Surfaces == 0, "last async release frees retired ownership");
+    Lui_Destroy(Runtime);
+}
+void CompletionOnlyOwnerTurn() {
+    Adapter Value;
+    auto* Runtime = Lui_Create();
+    Install(Runtime, Value);
+    Run(Runtime, Setup);
+    Run(Runtime, "task.defer(function() end)");
+    Check(Lui_GetFrameTaskDelayV1(Runtime) == -1, "no frame work keeps the expedited timer idle");
+    Run(Runtime, "Put(41)");
+    Check(Lui_GetFrameTaskDelayV1(Runtime) == -1, "immediate work cannot start a deadline wake loop");
+    Run(Runtime, "task.delay(.03, function() end)");
+    const auto Delay = Lui_GetFrameTaskDelayV1(Runtime);
+    Check(Delay >= 0 && Delay <= 30000, "visible pending frame can expedite a delayed task");
+    Lui_Pump(Runtime);
+    Check(Value.Leases.size() == 1, "normal pump admitted first upload");
+    Check(Lui_FrameComplete(Value.Leases.back(), 1), "first upload completed");
+    Run(Runtime, "task.defer(function() Put(42) end)");
+    Runtime->LayoutDirty = true;
+    Check(Lui_SettleFrameUploadsV1(Runtime) == 0 && Value.PublishedBytes.empty(), "dirty geometry defers completion-only publication");
+    Runtime->LayoutDirty = false;
+    Check(Lui_SettleFrameUploadsV1(Runtime) == 1 && Value.PublishedBytes == std::vector<unsigned char>{41},
+        "clean completion publishes before a queued task can submit");
+    Check(Value.Leases.size() == 1 && Stats(Runtime).Accepted == 1, "settlement runs neither Lua nor upload admission");
+    Lui_Pump(Runtime);
+    Check(Value.Leases.size() == 2 && Stats(Runtime).Accepted == 2, "normal pump keeps task and upload admission");
+    Check(Lui_FrameComplete(Value.Leases.back(), 1), "second upload completed");
+    Run(Runtime, "Put(43)");
+    Check(Lui_SettleFrameUploadsV1(Runtime) == 1 && Stats(Runtime).Stale == 1 && Stats(Runtime).Pending == 1,
+        "settlement retires a superseded completion and preserves the pending successor");
+    Check(Value.Leases.size() == 2 && Value.PublishedBytes.size() == 1, "superseded output was never attached");
+    std::thread Foreign([&] {
+        Check(Lui_SettleFrameUploadsV1(Runtime) == 0 && Lui_GetFrameTaskDelayV1(Runtime) == -1, "private wake helpers are owner-only");
+    });
+    Foreign.join();
+    Run(Runtime, "S:Destroy()");
+    Value.Release();
+    Check(Stats(Runtime).PixelBytes == 0 && Stats(Runtime).StagingBytes == 0, "completion-only resources retire");
     Lui_Destroy(Runtime);
 }
 void BackpressureAndVisibility() {
@@ -276,6 +333,10 @@ void AllocationAndStagingBounds() {
     Run(Runtime, "Put(3); Put(4)");
     auto Before = Stats(Runtime);
     Check(Before.Frames == 3 && Before.Pending == 1 && Before.InFlight == 1, "three-allocation surface ceiling");
+    uint32_t Colors[2]{};
+    LuiFrameViewV1 Growing{sizeof(Growing),1,Colors,8,0,0,2,1,8,1};
+    Check(Lui_WriteFrameSurfaceV1(Runtime,Runtime->FrameSurfaces[0]->Id,&Growing)==-1,
+        "native producer can drop an input on transient backpressure");
     Run(Runtime, "local Ok,Code=S:SubmitFrame(buffer.create(8),2,1,8,'BGRA8Premultiplied'); assert(not Ok and Code=='WouldBlock' and S.FrameState=='Pending')");
     Check(Stats(Runtime).Frames == 3 && Stats(Runtime).Accepted == Before.Accepted, "growing replacement remains atomic at ceiling");
     Run(Runtime, "local Closed=false; S.Destroying:Connect(function() local Ok,Code=S:SubmitFrame(B,1,1,4,'BGRA8Premultiplied'); Closed=not Ok and Code=='Closed' end); S:Destroy(); assert(Closed)");
@@ -348,7 +409,7 @@ void Performance(bool Paced = false) {
 }
 int main(int Count, char** Arguments) {
     if (Count == 2 && std::string(Arguments[1]) == "--paced") Performance(true);
-    else { ApiAndValidation(); OwnershipAndRaces(); BackpressureAndVisibility(); SaturationAndPrivacy(); Unsupported(); AllocationAndStagingBounds(); Overproduction(); ShutdownWithPending(); Performance(); }
+    else { ApiAndValidation(); OwnershipAndRaces(); CompletionOnlyOwnerTurn(); BackpressureAndVisibility(); SaturationAndPrivacy(); Unsupported(); AllocationAndStagingBounds(); Overproduction(); ShutdownWithPending(); Performance(); }
     if (!Failures) std::puts("[LUI:FrameTest] API, validation, ownership, scheduling, retirement, quotas and privacy passed");
     return Failures ? 1 : 0;
 }

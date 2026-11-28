@@ -76,6 +76,29 @@ internal static class SdkTests
         File.WriteAllText(Metadata, Inventory.Replace("\"SchemaVersion\":1", "\"SchemaVersion\":1,\"SchemaVersion\":1"));
         Require(Invoke("doctor", "--sdk", Root).Code == 1, "duplicate metadata field accepted");
         File.WriteAllText(Metadata, Inventory);
+        JsonNode Candidate = JsonNode.Parse(Inventory)!;
+        Candidate["SdkVersion"] = "0.1.0-preview.2b";
+        foreach(string Key in OperatingSystem.IsWindows()?new[]{"PreviewHost","NativeHost","Runtime"}:new[]{"PreviewHost"}) {
+            string Prior=Candidate["Components"]![Key]!.GetValue<string>();
+            string Shared="Cli/"+Path.GetFileName(Prior);
+            File.Copy(Path.Combine(Root,Prior),Path.Combine(Root,Shared));
+            Candidate["Components"]![Key]=Shared;Candidate["Files"]![Shared]=Candidate["Files"]![Prior]!.DeepClone();
+        }
+        File.WriteAllText(Metadata,Candidate.ToJsonString());
+        Require(Invoke("doctor","--sdk",Root).Code==0,"compact preview.2b inventory was refused");
+        var Historical=SdkInstallation.Resolve(Root,null,true)!;
+        try { Historical.Configure(new() { ["--mode"]="headless" },"run"); throw new Exception("unexpected historical headless host"); }
+        catch (InvalidDataException Error) when (Error.Message.Contains("HeadlessUnavailable")) {}
+        Candidate["SdkVersion"] = "0.1.0-preview.3";
+        File.WriteAllText(Metadata,Candidate.ToJsonString());
+        Require(Invoke("doctor","--sdk",Root).Code==1,"next SDK silently lacked its headless component");
+        string HeadlessRelative=OperatingSystem.IsWindows()?"Cli/LuiHeadlessHost.exe":"Native/HeadlessHost";
+        File.WriteAllText(Path.Combine(Root,HeadlessRelative),"Synthetic, not executed");
+        Candidate["Components"]!["HeadlessHost"]=HeadlessRelative;
+        Candidate["Files"]![HeadlessRelative]=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(Root,HeadlessRelative)))).ToLowerInvariant();
+        File.WriteAllText(Metadata,Candidate.ToJsonString());
+        Require(Invoke("doctor","--sdk",Root).Code==0,"inventoried next-SDK headless component was refused");
+        File.WriteAllText(Metadata,Inventory);
         File.AppendAllText(Path.Combine(Root, Components["Definitions"]), "tampered");
         Require(Invoke("doctor", "--sdk", Root).Code == 1, "modified SDK component accepted");
     }

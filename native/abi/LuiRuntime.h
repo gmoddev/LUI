@@ -122,6 +122,23 @@ typedef struct LuiImageCallbacksV1 {
     void (LUI_CALL* Cancel)(void* Context, uint64_t Token);
 } LuiImageCallbacksV1;
 
+/* Private, additive image-source bridge. Load borrows an immutable source.
+   A retained source may be used from a worker after the owner has retired.
+   Both image bridges share the V1 cancel callback and its context.
+   Kind 1 is encoded PNG/JPEG, kind 2 is packed BGRA8Premultiplied. */
+typedef struct LuiImageSource LuiImageSource;
+typedef struct LuiImageSourceViewV1 {
+    uint32_t StructSize, AbiVersion;
+    uint32_t Kind, Width, Height, RowStride;
+    uint64_t Identity, ByteCount;
+    const void* Data;
+} LuiImageSourceViewV1;
+typedef struct LuiImageSourceCallbacksV1 {
+    uint32_t StructSize, AbiVersion;
+    void* Context;
+    int (LUI_CALL* Load)(void* Context, int Id, uint64_t Token, LuiImageSource* Source);
+} LuiImageSourceCallbacksV1;
+
 /* Private DSP-1 bridge; not either extension ABI. Exact size/version, Reserved=0.
    Owner callbacks must return promptly. Submit borrows Frame until return; retain
    it for async use and release only after toolkit/worker references are gone.
@@ -163,6 +180,11 @@ LUI_API int LUI_CALL Lui_FrameView(LuiFrame* Frame, LuiFrameViewV1* View);
 LUI_API int LUI_CALL Lui_FrameComplete(LuiFrame* Frame, int Success);
 LUI_API int LUI_CALL Lui_FrameReserveStaging(LuiFrame* Frame, uint64_t Bytes);
 LUI_API int LUI_CALL Lui_GetFrameStats(LuiRuntime* Runtime, LuiFrameStatsV1* Stats);
+/* Private owner-only ingress for a retained FrameSurface. A non-null view is
+   borrowed only for this call. Its Epoch and Sequence must be zero (assigned
+   by the surface). A null view clears displayed and pending resources. Returns
+   1 on acceptance, -1 on temporary quota backpressure, and 0 on rejection. */
+LUI_API int LUI_CALL Lui_WriteFrameSurfaceV1(LuiRuntime* Runtime, int Id, const LuiFrameViewV1* Pixels);
 
 /* Internal platform bridge. Async completions must return to the owner thread. */
 typedef struct LuiPlatformCallbacksV1 {
@@ -196,6 +218,10 @@ LUI_API int LUI_CALL Lui_WindowClosed(LuiRuntime* Runtime, int Id);
 LUI_API int LUI_CALL Lui_SetPresentationCallbacks(LuiRuntime* Runtime, const LuiPresentationCallbacksV1* Callbacks);
 LUI_API int LUI_CALL Lui_SetImageCallbacks(LuiRuntime* Runtime, const LuiImageCallbacksV1* Callbacks);
 LUI_API int LUI_CALL Lui_ImageCompleted(LuiRuntime* Runtime, int Id, uint64_t Token, int Success);
+LUI_API int LUI_CALL Lui_SetImageSourceCallbacksV1(LuiRuntime* Runtime, const LuiImageSourceCallbacksV1* Callbacks);
+LUI_API int LUI_CALL Lui_ImageSourceViewV1(LuiImageSource* Source, LuiImageSourceViewV1* View);
+LUI_API void LUI_CALL Lui_RetainImageSourceV1(LuiImageSource* Source);
+LUI_API void LUI_CALL Lui_ReleaseImageSourceV1(LuiImageSource* Source);
 /* Private owner telemetry: 1 input handler/queue admission through owner response;
    2 owner presentation through native submission. Bounded aggregate samples. */
 LUI_API int LUI_CALL Lui_RecordPerformance(LuiRuntime* Runtime, int Kind, double Milliseconds);

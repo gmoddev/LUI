@@ -41,6 +41,18 @@ export default defineConfig({
         { label: 'Guides', items: [{ autogenerate: { directory: `${Previous}/guides` } }] },
         { label: 'API', items: [{ autogenerate: { directory: `${Previous}/api` } }] },
       ] },
+      { label: 'Experimental native integration', collapsed: true, items: [
+        { label: 'Trusted native calls', link: 'candidate/ffi/libraries/ffi/' },
+        { label: 'Isolated native calls', link: 'candidate/ffi/libraries/ffibroker/' },
+      ] },
+      { label: 'Unreleased preview.3 candidate', collapsed: true, items: [
+        { label: 'Editor command shortcuts', link: 'candidate/preview.3/commands/' },
+        { label: 'HTTP cancellation and WebSockets', link: 'candidate/preview.3/networking/' },
+        { label: 'Headless applications', link: 'candidate/preview.3/headless/' },
+        { label: 'Open and save documents', link: 'candidate/preview.3/files/' },
+        { label: 'Images and icon atlases', link: 'candidate/preview.3/images/' },
+        { label: 'Runtime libraries', items: [{ autogenerate: { directory: 'candidate/preview.3/libraries' } }] },
+      ] },
     ],
   })],
 });

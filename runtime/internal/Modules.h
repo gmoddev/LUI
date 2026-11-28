@@ -21,6 +21,9 @@ struct ModuleContext {
 void RegisterModules(lua_State* State);
 void CheckModuleEffect(lua_State* State);
 void MarkModuleLimit(LuiRuntime* Runtime);
+void* VmAllocate(void* Context, void* Pointer, size_t OldSize, size_t NewSize);
+int WorkerModuleEntry(lua_State* State);
+uint32_t InstallWorkers(LuiRuntime* Runtime);
 bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::CompiledSnapshot> Snapshot,
     const LuiProjectRunOptionsV1* Options);
 // Called inside a protected VM call. Creates private chunk globals and runs entry.

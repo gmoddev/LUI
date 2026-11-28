@@ -1,0 +1,11 @@
+--!strict
+local Ffi = require("@Ffi/Ffi")
+local Stdio = require("@Stdio/Stdio")
+local Platform = Ffi.Platform()
+local Process = Ffi.System("process")
+local Pid = Process:Bind(if Platform.OS == "Windows" then "GetCurrentProcessId" else "getpid", {}, "u32")
+local Value = Pid:Call({})
+assert(Value > 0)
+Stdio.Write(Platform.OS .. " pid=" .. tostring(Value) .. " long=" .. tostring(Platform.LongBytes) .. "\n", function() end)
+Pid:Close()
+Process:Close()

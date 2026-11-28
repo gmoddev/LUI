@@ -1,4 +1,6 @@
 #include "LuiRuntime.h"
+#include "LuiExecution.h"
+#include "LuiOwnerWake.h"
 #include "reflection/Schema.h"
 #include "internal/State.h"
 #include "internal/Dispatch.h"
@@ -75,7 +77,7 @@ struct DepthGuard {
     ~DepthGuard() { --Depth; }
 };
 
-static void* VmAllocate(void* Context, void* Pointer, size_t OldSize, size_t NewSize) {
+void* VmAllocate(void* Context, void* Pointer, size_t OldSize, size_t NewSize) {
     auto* Runtime = static_cast<LuiRuntime*>(Context);
     if (!NewSize) {
         std::free(Pointer);
@@ -220,6 +222,19 @@ static void QueueParent(LuiRuntime* Runtime, const Node* Value) {
         }
     }
     Runtime->PendingChanges.push_back({BackendChange::Kind::Parent, Value->Id, {}, {}, Value->ParentId});
+}
+
+static bool ImageRegionsAvailable(const LuiRuntime* Runtime) {
+    return Runtime->BackendName=="winui3" || Runtime->BackendName=="gtk4";
+}
+
+static void QueueImageRegion(LuiRuntime* Runtime, const Node* Value) {
+    if (!ImageRegionsAvailable(Runtime)) return;
+    const auto& Offset=Value->SourceRectOffset;
+    const auto& Size=Value->SourceRectSize;
+    QueueProperty(Runtime, Value, "__ImageRegion",
+        std::to_string(int(Offset.X)) + "," + std::to_string(int(Offset.Y)) + "," +
+        std::to_string(int(Size.X)) + "," + std::to_string(int(Size.Y)));
 }
 
 static void FlushChanges(LuiRuntime* Runtime) {
@@ -373,6 +388,7 @@ static void Disconnect(LuiRuntime* Runtime, int ListenerId) {
     auto Found = Runtime->Listeners.find(ListenerId);
     if (Found == Runtime->Listeners.end() || !Found->second.Active) return;
     Found->second.Active = false;
+    Runtime->RetirementPending = true;
     lua_unref(Runtime->State, Found->second.Reference);
     Found->second.Reference = 0;
 }
@@ -451,6 +467,9 @@ static void DestroyNode(LuiRuntime* Runtime, Node* Value) {
     Value->ActivePointers.clear();
     Value->ActiveKeys.clear();
     Value->Destroyed = true;
+    Runtime->RetirementPending = true;
+    Value->RuntimeImage.reset();
+    Value->ImageHandle.reset();
     auto& Pending = Runtime->PendingChanges;
     Pending.erase(std::remove_if(Pending.begin(), Pending.end(),
         [Value](const BackendChange& Change) { return Change.Id == Value->Id; }), Pending.end());
@@ -594,6 +613,23 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
             luaL_error(State, "CanvasPosition requires finite components between zero and 1e9");
         Value->CanvasPosition = Parsed;
         Runtime->LayoutDirty = true;
+    } else if (Key == "SourceRectOffset" || Key == "SourceRectSize") {
+        const bool IsSize=Key=="SourceRectSize";
+        VectorValue Parsed;
+        const auto Component=[](double Number) {return Number>=0 && Number<=4096 && std::floor(Number)==Number;};
+        if (Value->ClassName!="ImageLabel" || !ReadVector(State, ValueIndex, Parsed) ||
+            !Component(Parsed.X) || !Component(Parsed.Y) || (IsSize && ((Parsed.X==0)!=(Parsed.Y==0))))
+            luaL_error(State, "[LUI:Image] InvalidRegion");
+        (IsSize?Value->SourceRectSize:Value->SourceRectOffset)=Parsed;
+        QueueImageRegion(Runtime, Value);
+    } else if (Key == "ImageResource") {
+        if (Value->ClassName != "ImageLabel") luaL_error(State, "[LUI:Image] ExpectedImageLabel");
+        if (!lua_isnil(State, ValueIndex) || Value->RuntimeImage) {
+            SetImageResource(State, Value, ValueIndex);
+            CancelImage(Runtime, Value);
+            Value->Source.clear();
+            QueueProperty(Runtime, Value, "Source", Value->Source);
+        }
     } else if (Key == "Source") {
         if (Value->ClassName != "ImageLabel" || lua_type(State, ValueIndex) != LUA_TSTRING)
             luaL_error(State, "Source belongs to ImageLabel and must be string");
@@ -601,6 +637,8 @@ static void SetProperty(lua_State* State, Node* Value, const char* Name, int Val
         if (!Source.empty() && Runtime->Assets.find(Source) == Runtime->Assets.end())
             luaL_error(State, "asset '%s' was not declared", Source.c_str());
         CancelImage(Runtime, Value);
+        Value->RuntimeImage.reset();
+        Value->ImageHandle.reset();
         Value->Source = Source;
         QueueProperty(Runtime, Value, "Source", Source);
     } else if (Key == "Name" || Key == "Title" || Key == "Text" ||
@@ -892,6 +930,10 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->PlaceholderText = Source->PlaceholderText;
     Value->SelectionStart = Source->SelectionStart; Value->SelectionLength = Source->SelectionLength;
     Value->Source = Source->Source;
+    Value->ImageHandle = Source->ImageHandle;
+    Value->RuntimeImage = Source->RuntimeImage;
+    Value->SourceRectOffset = Source->SourceRectOffset;
+    Value->SourceRectSize = Source->SourceRectSize;
     Value->AccessibilityLabel = Source->AccessibilityLabel;
     Value->AccessibilityDescription = Source->AccessibilityDescription;
     Value->Visible = Source->Visible;
@@ -928,6 +970,7 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
     Value->Reference = lua_ref(State, -1);
     Runtime->Nodes.emplace(Id, std::move(Value));
     Node* Copy = Runtime->Nodes.at(Id).get();
+    if (Copy->FrameSlot) TrackFrameSurface(Runtime, Copy);
     Copy->NativeCreated = !Runtime->ProjectBootstrap;
     if (!Runtime->ProjectBootstrap && LuiSchema::IsNative(Copy->ClassName) && Runtime->Backend.Create) {
         DepthGuard Guard(Runtime->BackendDepth);
@@ -949,7 +992,8 @@ static bool CloneTree(lua_State* State, LuiRuntime* Runtime, const Node* Source,
         }
         if (Copy->ClassName == "Window") QueueProperty(Runtime, Copy, "Title", Copy->Title);
         if (Copy->ClassName == "FrameSurface") QueueProperty(Runtime, Copy, "ScaleMode", Copy->ScaleMode);
-        if (Copy->ClassName == "ImageLabel" && !Copy->Source.empty())
+        if (Copy->ClassName == "ImageLabel" && Copy->SourceRectSize.X != 0) QueueImageRegion(Runtime, Copy);
+        if (Copy->ClassName == "ImageLabel" && (!Copy->Source.empty() || Copy->RuntimeImage))
             QueueProperty(Runtime, Copy, "Source", Copy->Source);
         if (Copy->ClassName == "TextLabel" || Copy->ClassName == "TextButton" ||
             LuiSchema::IsA(Copy->ClassName, "TextBox") || Copy->ClassName == "CheckBox")
@@ -1200,9 +1244,12 @@ static int NodeIndex(lua_State* State) {
     else if (Key == "AccessibilityLabel") lua_pushstring(State, Value->AccessibilityLabel.c_str());
     else if (Key == "AccessibilityDescription") lua_pushstring(State, Value->AccessibilityDescription.c_str());
     else if (Key == "Source") lua_pushstring(State, Value->Source.c_str());
+    else if (Key == "ImageResource") PushImageResource(State, Value);
     else if (Key == "LoadState") lua_pushstring(State, Value->LoadState.c_str());
     else if (Key == "ScaleMode") lua_pushstring(State, Value->ScaleMode.c_str());
     else if (Key == "FrameState") lua_pushstring(State, Value->FrameState.c_str());
+    else if (Key == "SourceRectOffset") PushVector(State, Value->SourceRectOffset);
+    else if (Key == "SourceRectSize") PushVector(State, Value->SourceRectSize);
     else if (Key == "Visible") lua_pushboolean(State, Value->Visible);
     else if (Key == "IsClosed") lua_pushboolean(State, Value->WindowClosed);
     else if (Key == "Enabled") lua_pushboolean(State, Value->Enabled);
@@ -1259,6 +1306,12 @@ static int NodeNewIndex(lua_State* State) {
 static int InitializeNode(lua_State* State) {
     Node* Value = GetNode(State, 1);
     luaL_checktype(State, 2, LUA_TTABLE);
+    if (Value->ClassName=="ImageLabel") {
+        lua_getfield(State, 2, "ImageResource");
+        lua_getfield(State, 2, "Source");
+        if (!lua_isnil(State, -2) && !lua_isnil(State, -1)) luaL_error(State, "[LUI:Image] ConflictingSources");
+        lua_pop(State, 2);
+    }
     lua_getfield(State,2,"Sensitive"); if(!lua_isnil(State,-1)) SetProperty(State,Value,"Sensitive",-1); lua_pop(State,1);
     lua_getfield(State,2,"Parent");
     if(!lua_isnil(State,-1) && GetNode(State,-1)->EffectiveSensitive) ClassifyNode(GetRuntime(State),Value);
@@ -1376,6 +1429,7 @@ static int InstanceNew(lua_State* State) {
     lua_setmetatable(State, -2);
     Value->Reference = lua_ref(State, -1);
     Runtime->Nodes.emplace(Id, std::move(Value));
+    if (ClassName=="FrameSurface") TrackFrameSurface(Runtime, Runtime->Nodes.at(Id).get());
     int Created = 1;
     Runtime->Nodes.at(Id)->NativeCreated = !Runtime->ProjectBootstrap;
     if (!Runtime->ProjectBootstrap && Definition->Native && Runtime->Backend.Create) {
@@ -1472,12 +1526,15 @@ static int TaskDelay(lua_State* State) {
     lua_pop(State, 1);
     lua_pushvalue(State, 2);
     lua_xmove(State, Thread, 1);
-    Runtime->Tasks.push_back({Reference, std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(Seconds * 1000))});
+    const auto Delay = std::chrono::milliseconds(static_cast<int64_t>(Seconds * 1000));
+    Runtime->Tasks.push_back({Reference, std::chrono::steady_clock::now() + Delay, 0, Delay.count() >= 2});
     return 0;
 }
 
 static void CollectRetired(LuiRuntime* Runtime) {
-    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning || Runtime->ShuttingDown) return;
+    if (!Runtime->RetirementPending || Runtime->VmDepth || Runtime->BackendDepth ||
+        Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning || Runtime->ShuttingDown) return;
+    Runtime->RetirementPending = false;
     for (auto Iterator = Runtime->Nodes.begin(); Iterator != Runtime->Nodes.end();) {
         if (Iterator->second->Destroyed && !Iterator->second->DestroyingInProgress) {
             if (Iterator->second->Handle) {
@@ -1540,14 +1597,18 @@ void FlushLayout(LuiRuntime* Runtime) {
         if (Found != Runtime->Nodes.end() && !Found->second->Destroyed && !Runtime->BackendFailed)
             FireSignal(Runtime, Found->second.get(), "CanvasChanged");
     }
-    std::vector<int> ImageSignals;
-    for (auto& Pair : Runtime->Nodes) if (!Pair.second->Destroyed && Pair.second->ImageStatePending) {
-        Pair.second->ImageStatePending = false; ImageSignals.push_back(Pair.first);
-    }
-    std::sort(ImageSignals.begin(), ImageSignals.end());
-    for (int Id : ImageSignals) {
-        const auto Found = Runtime->Nodes.find(Id);
-        if (Found != Runtime->Nodes.end() && !Found->second->Destroyed && !Runtime->BackendFailed) FireSignal(Runtime, Found->second.get(), "LoadChanged");
+    if (Runtime->ImageSignalsPending) {
+        Runtime->ImageSignalsPending = false;
+        std::vector<int> ImageSignals;
+        for (auto& Pair : Runtime->Nodes) if (!Pair.second->Destroyed && Pair.second->ImageStatePending) {
+            Pair.second->ImageStatePending = false; ImageSignals.push_back(Pair.first);
+        }
+        std::sort(ImageSignals.begin(), ImageSignals.end());
+        for (int Id : ImageSignals) {
+            const auto Found = Runtime->Nodes.find(Id);
+            if (Found != Runtime->Nodes.end() && !Found->second->Destroyed && !Runtime->BackendFailed)
+                FireSignal(Runtime, Found->second.get(), "LoadChanged");
+        }
     }
     if (!Runtime->BackendFailed) DrainBackendEvents(Runtime);
     CollectRetired(Runtime);
@@ -1608,6 +1669,8 @@ static int PlatformServiceSupports(lua_State* State) {
         (Name == "Notifications" && HasNativeService(Runtime, "NotificationService")) ||
         (Name == "Tray" && HasNativeService(Runtime, "TrayService")) ||
         (Name == "FrameSurface" && Runtime->Frames.Submit != nullptr) ||
+        (Name == "ImageRegion" && ImageRegionsAvailable(Runtime)) ||
+        (Name == "RuntimeImages" && Runtime->ImageSources.Load != nullptr) ||
         (Name == "WindowLifecycle" && (!HasNativeBackend(Runtime->Backend) || Runtime->Windows.Close != nullptr)) ||
         (Name == "network.client" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT) != 0) ||
         (Name == "network.server" && (Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER) != 0) ||
@@ -1698,20 +1761,24 @@ static int AppGetService(lua_State* State) {
     CheckModuleEffect(State);
     const std::string Name = luaL_checkstring(State, 2);
     auto* Runtime = GetRuntime(State);
+    if (Name == "WorkerService" && !HasNativeService(Runtime, Name) && InstallWorkers(Runtime))
+        luaL_error(State, "[LUI:Workers] Unavailable");
     if (!LuiSchema::FindService(Name) && !HasExtensionService(Runtime, Name) && !HasNativeService(Runtime, Name))
         luaL_error(State, "unknown service '%s'", Name.c_str());
     if (((Runtime->Sandboxed && HasExtensionService(Runtime, Name)) || NativeServiceNeedsHostGrant(Runtime, Name)) &&
         !(Runtime->GrantedCapabilities & LUI_CAPABILITY_HOST_SERVICES))
         luaL_error(State, "[LUI:Capabilities] HostServicesRequired");
-    if ((Name == "StorageService" || Name == "NotificationService" || Name == "TrayService") && !HasNativeService(Runtime, Name))
+    if ((Name == "StorageService" || Name == "NotificationService" || Name == "TrayService" || Name == "FileService") && !HasNativeService(Runtime, Name))
         luaL_error(State, "[LUI:Capabilities] ProviderUnavailable");
+    if (Name == "FileService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_DIALOGS))
+        luaL_error(State,"[LUI:Capabilities] DialogsUnavailable");
     if ((Name == "ClipboardService" || Name == "DialogService") &&
         !PlatformServiceAvailable(Runtime, Name))
         luaL_error(State, "%s", Name == "ClipboardService" ? "[LUI:Capabilities] ClipboardUnavailable" : "[LUI:Capabilities] DialogsUnavailable");
     if (Name == "NetworkService" &&
         !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_RAW))
         luaL_error(State, "[LUI:Capabilities] NetworkRawRequired");
-    if (Name == "HttpService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
+    if ((Name == "HttpService" || Name == "WebSocketService") && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
         luaL_error(State, "[LUI:Capabilities] NetworkClientRequired");
     if (Name == "HttpServerService" && !(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_SERVER))
         luaL_error(State, "[LUI:Capabilities] NetworkServerRequired");
@@ -1726,6 +1793,7 @@ static int AppGetService(lua_State* State) {
         PushPlatformService(State, Runtime, Name);
     else if (Name == "NetworkService") PushNetworkService(State);
     else if (Name == "HttpService") PushHttpService(State);
+    else if (Name == "WebSocketService") PushWebSocketService(State);
     else if (Name == "HttpServerService") PushHttpServerService(State);
     else if (Name == "ThemeService") {
         lua_newuserdata(State, 1);
@@ -1741,11 +1809,28 @@ static int AppGetService(lua_State* State) {
     } else if (Name == "AssetService") {
         lua_pushcfunction(State, AssetServiceHas, "AssetService.Has");
         lua_setfield(State, -2, "Has");
+        AddImageAssetMethods(State, Runtime);
     } else if (Name == "PlatformService") {
         lua_pushcfunction(State, PlatformServiceSupports, "PlatformService.Supports");
         lua_setfield(State, -2, "Supports");
         lua_pushstring(State, Runtime->BackendName.c_str());
         lua_setfield(State, -2, "BackendName");
+#if defined(_WIN32)
+        lua_pushliteral(State, "Windows");
+#elif defined(__linux__) && !defined(__ANDROID__)
+        lua_pushliteral(State, "Linux");
+#else
+        lua_pushliteral(State, "Other");
+#endif
+        lua_setfield(State, -2, "OperatingSystem");
+#if defined(_M_X64) || defined(__x86_64__)
+        lua_pushliteral(State, "x86_64");
+#elif defined(_M_ARM64) || defined(__aarch64__)
+        lua_pushliteral(State, "arm64");
+#else
+        lua_pushliteral(State, "Other");
+#endif
+        lua_setfield(State, -2, "Architecture");
     }
     if (Name != "ThemeService") lua_setreadonly(State, -1, true);
     Runtime->ServiceRefs.emplace(Name, lua_ref(State, -1));
@@ -1763,6 +1848,7 @@ static void RegisterGlobals(lua_State* State) {
     RegisterMeta(State, "LuiThemeServiceMeta", ThemeServiceIndex, ThemeServiceNewIndex);
     RegisterNetworkTypes(State);
     RegisterNativeTypes(State);
+    RegisterImageResource(State);
     LuiStyle::Register(State);
     lua_newtable(State);
     lua_pushcfunction(State, InstanceNew, "Instance.new");
@@ -1915,6 +2001,8 @@ extern "C" LUI_API const char* LUI_CALL Lui_GetPerformanceJson(LuiRuntime* Runti
         Output["Connections"] = Connections; Output["LuaMemoryBytes"] = Runtime->VmBytes;
         Output["QueuedEvents"] = Runtime->PendingBackendEvents.size(); Output["QueuedBytes"] = Runtime->PendingBackendBytes;
         Output["PendingImages"] = Runtime->PendingImages; Output["LayoutPasses"] = Runtime->LayoutPasses;
+        Output["RuntimeImageBytes"] = RuntimeImageBytes(Runtime);
+        Output["RuntimeImageSources"] = RuntimeImageCount(Runtime);
         auto Distribution = [&](const char* Name,const std::deque<double>& Input) {
             std::vector<double> Values(Input.begin(),Input.end()); std::sort(Values.begin(),Values.end());
             auto Percentile = [&](double Fraction) {return Values.empty()?0:Values[static_cast<size_t>(std::ceil(Values.size()*Fraction))-1];};
@@ -2069,6 +2157,10 @@ extern "C" LUI_API int LUI_CALL Lui_RunScript(LuiRuntime* Runtime, const char* S
     if (Runtime->BackendFailed) return 0;
     if (Runtime->Modules) {
         Runtime->LastError = "[LUI:Modules] ProjectAlreadyStarted";
+        return 0;
+    }
+    if (Runtime->ProjectNativeVerified) {
+        Runtime->LastError = "[LUI:Project] CapturedProjectRequired";
         return 0;
     }
     if (Runtime->Sandboxed && std::strlen(Source) > Runtime->VmLimitBytes) {
@@ -2415,6 +2507,40 @@ bool PumpBoundedTasks(LuiRuntime* Runtime, size_t MaximumEntries,
     FlushLayout(Runtime);
     if (Dispatched) *Dispatched = Count;
     return !Runtime->BackendFailed && Runtime->InterruptCount <= Runtime->MaxInterrupts;
+}
+
+extern "C" LUI_API int LUI_CALL Lui_HasPendingWorkV1(LuiRuntime* Runtime) {
+    // Wrong-thread probes do not mutate owner diagnostics.
+    if (!Runtime || Runtime->Owner != std::this_thread::get_id() ||
+        !Runtime->State || Runtime->ShuttingDown || Runtime->BackendFailed) return -1;
+    if (Runtime->VmDepth || Runtime->BackendDepth || Runtime->DrainingBackendEvents || Runtime->UiCompletionRunning)
+        return 1;
+    if (!Runtime->Tasks.empty() || Runtime->TaskRoundActive || !Runtime->PendingAsyncReferences.empty() ||
+        Runtime->PendingNativeRequests || !Runtime->PlatformRequests.empty() ||
+        Runtime->PendingImages || !Runtime->PendingBackendEvents.empty() ||
+        NetworkHasPendingWork(Runtime) || NativeHasPendingWork(Runtime)) return 1;
+    if (FrameWorkPending(Runtime)) return 1;
+    std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex);
+    return !Runtime->PendingUiCompletions.empty() || !Runtime->PlatformCompletions.empty() ||
+        !Runtime->NetworkCompletions.empty();
+}
+
+extern "C" LUI_API int LUI_CALL Lui_GetFrameTaskDelayV1(LuiRuntime* Runtime) {
+    if (Lui_IsOwnerPumpReadyV1(Runtime) != 1 || Runtime->TaskLimit || Runtime->ProjectBootstrap ||
+        Runtime->ModuleDepth || Runtime->Tasks.empty() || !HasVisibleFrameWork(Runtime)) return -1;
+    const auto Now = std::chrono::steady_clock::now();
+    auto Next = Now + std::chrono::milliseconds(50);
+    bool Found = false;
+    // Deferred work and sub-2 ms retries still run on ordinary owner turns.
+    // They can share an expedited turn without starting a fast wake loop.
+    for (const auto& Call : Runtime->Tasks) {
+        if (!Call.TimedWake || Call.Due > Next) continue;
+        Found = true;
+        Next = Call.Due;
+    }
+    if (!Found) return -1;
+    const auto Remaining = Next - Now;
+    return static_cast<int>(std::max<int64_t>(0, std::chrono::ceil<std::chrono::microseconds>(Remaining).count()));
 }
 
 extern "C" LUI_API int LUI_CALL Lui_Pump(LuiRuntime* Runtime) {

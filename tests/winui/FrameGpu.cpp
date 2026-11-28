@@ -16,6 +16,7 @@ __declspec(dllimport) HRESULT __cdecl LuiWinUI_FrameCopyV1(Frame*);
 __declspec(dllimport) void __cdecl LuiWinUI_FrameCancelV1(Frame*);
 __declspec(dllimport) HRESULT __cdecl LuiWinUI_FrameSubmitCopyV1(Frame*);
 __declspec(dllimport) int __cdecl LuiWinUI_FramePollV1(Frame*);
+__declspec(dllimport) HRESULT __cdecl LuiWinUI_FrameNotifyFenceV1(Frame*,HANDLE);
 __declspec(dllimport) int __cdecl LuiWinUI_FrameReleaseV1(Frame*);
 __declspec(dllimport) HRESULT __cdecl LuiWinUI_FrameGpuStatsV1(Stats*);
 __declspec(dllimport) void __cdecl LuiWinUI_FrameAllocationFaultForTestV1(int);
@@ -73,11 +74,16 @@ void ActiveCopy(DeviceHandle* DeviceValue,int Action){
 LuiRuntime* FenceRetention(DeviceHandle* DeviceValue,bool Remove,bool Wrap=false){
     auto* Runtime=MakeRuntime(1920,1080);Frame* Value=Begin(DeviceValue);if(!Value){Lui_Destroy(Runtime);return nullptr;}
     Check(Value->Capacity==8323072&&Value->Footprint.Footprint.RowPitch==7680,"1080p exact queried heap allocation and pitch");
+    HANDLE CopyEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    Check(CopyEvent&&FAILED(LuiWinUI_FrameNotifyFenceV1(Value,CopyEvent)),"an unsubmitted copy has no fence to notify");
     WaitCopy(Value);
     Check(Value->Pixels[Value->Footprint.Offset]==7,"caller mutation cannot change owned source");
     ComPtr<ID3D12Fence> Barrier;Check(SUCCEEDED((*DeviceValue)->Native->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&Barrier))),"private queue barrier");
     Check(SUCCEEDED((*DeviceValue)->Queue->Wait(Barrier.Get(),1)),"queue waits without physical GPU reset");
     Check(SUCCEEDED(LuiWinUI_FrameSubmitCopyV1(Value)),"submit explicit copy and completion fence");
+    const bool CopyWaitArmed=Check(CopyEvent&&SUCCEEDED(LuiWinUI_FrameNotifyFenceV1(Value,CopyEvent)),
+        "register asynchronous copy fence notification");
+    if(CopyWaitArmed)Check(WaitForSingleObject(CopyEvent,0)==WAIT_TIMEOUT,"blocked GPU copy does not signal completion");
     HANDLE RemovedEvent=nullptr;std::future<HRESULT> DrainSignal;
     if(Wrap&&Remove){
         RemovedEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
@@ -104,11 +110,13 @@ LuiRuntime* FenceRetention(DeviceHandle* DeviceValue,bool Remove,bool Wrap=false
     Check(CoreStats(Runtime).StagingBytes==MaxStaging&&GpuStats().UploadBytes==8323072,"accounting survives retired runtime");
     if(Remove){
         Check(FAILED(LuiWinUI_FrameDeviceRemoveForTestV1(DeviceValue)),"real task-private D3D12 removal");
+        if(CopyWaitArmed)Check(WaitForSingleObject(CopyEvent,5000)==WAIT_OBJECT_0,"removal signals a pending copy event");
         Check(LuiWinUI_FramePollV1(Value)==-1,"removed fence is failure, not ready");
         Check(GpuStats().UploadBytes==8323072&&CoreStats(Runtime).StagingBytes==MaxStaging,
             "removed fence retains GPU allocation and P1 reservation");
     }else{
         Check(SUCCEEDED(Barrier->Signal(1)),"release GPU barrier");
+        if(CopyWaitArmed)Check(WaitForSingleObject(CopyEvent,5000)==WAIT_OBJECT_0,"completed GPU copy signals its event");
         auto End=std::chrono::steady_clock::now()+std::chrono::seconds(5);
         while(LuiWinUI_FramePollV1(Value)==0&&std::chrono::steady_clock::now()<End)std::this_thread::sleep_for(std::chrono::milliseconds(1));
         Check(LuiWinUI_FramePollV1(Value)==1,"GPU fence completion observed");
@@ -126,6 +134,7 @@ LuiRuntime* FenceRetention(DeviceHandle* DeviceValue,bool Remove,bool Wrap=false
         Check(SUCCEEDED(DrainSignal.get()),"11on12 queue barrier receives an eventual signal after removal");
         if(RemovedEvent)CloseHandle(RemovedEvent);
     }
+    if(CopyEvent)CloseHandle(CopyEvent);
     return Runtime;
 }
 void Faults(DeviceHandle* DeviceValue){

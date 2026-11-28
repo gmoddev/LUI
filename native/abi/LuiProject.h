@@ -95,6 +95,9 @@ LUI_API int LUI_CALL Lui_ProjectResolve(const LuiProject* Project,
    first; their code is privileged even when VM resource quotas are enabled. */
 #define LUI_PROJECT_RUN_ABI_VERSION 1u
 #define LUI_PROJECT_RUN_DEVELOPMENT_DIAGNOSTICS 1u
+/* Opt-in for an owner that already verified its first-party native images.
+   Freezes the Luau globals. Native machine code still has process privileges. */
+#define LUI_PROJECT_RUN_SANDBOX_NATIVE_SCRIPT 2u
 typedef struct LuiProjectRunOptionsV1 {
     uint32_t StructSize, AbiVersion;
     uint32_t Flags;
@@ -104,6 +107,7 @@ typedef struct LuiProjectRunOptionsV1 {
 LUI_API int LUI_CALL Lui_RunProject(LuiRuntime* Runtime, const LuiProject* Project, const LuiProjectRunOptionsV1* Options);
 #define LUI_PROJECT_NATIVE_ABI_VERSION 1u
 #define LUI_PROJECT_NATIVE_TRUSTED 1u
+#define LUI_PROJECT_NATIVE_TRUSTED_WORKERS 2u
 typedef struct LuiProjectNativeOptionsV1 { uint32_t StructSize, AbiVersion, Flags, Reserved; } LuiProjectNativeOptionsV1;
 /* Explicit owner trust, policy-enabled fresh runtime, captured binaries only.
    Native code is privileged and is not sandboxed by VM quotas. */

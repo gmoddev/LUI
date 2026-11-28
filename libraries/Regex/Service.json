@@ -1,0 +1,30 @@
+{
+  "Name": "Regex",
+  "Signals": [],
+  "Methods": [
+    {
+      "Name": "Compile",
+      "Arguments": [
+        "string"
+      ],
+      "Returns": "number"
+    },
+    {
+      "Name": "Search",
+      "Arguments": [
+        "number",
+        "string",
+        "number",
+        "boolean"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "Release",
+      "Arguments": [
+        "number"
+      ],
+      "Returns": "boolean"
+    }
+  ]
+}

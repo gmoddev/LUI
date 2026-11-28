@@ -1,0 +1,23 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Crypto",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "NativeProvider": "Crypto",
+  "Modules": [
+    {
+      "Name": "Crypto",
+      "Summary": "Hash, authenticate and generate bounded binary strings.",
+      "Types": [],
+      "Functions": [
+        "Sha256",
+        "HmacSha256",
+        "RandomBytes",
+        "HkdfSha256",
+        "Seal",
+        "Open"
+      ]
+    }
+  ]
+}

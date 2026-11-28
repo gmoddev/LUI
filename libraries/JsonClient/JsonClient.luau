@@ -7,6 +7,7 @@ export type RequestOptions = {
     Headers: {HttpHeader}?,
     TimeoutMs: number?,
     MaxResponseBytes: number?,
+    CancellationToken: HttpCancellationToken?,
 }
 export type Client = {
     RequestAsync: (Self: Client, Url: string, Options: RequestOptions?) -> (unknown, HttpResponse),
@@ -43,7 +44,7 @@ function JsonClient.Open(): Client
             if type(Options) ~= 'table' or getmetatable(Options) ~= nil then Fail() end
             for Key in Options :: any do
                 if Key ~= 'Method' and Key ~= 'Value' and Key ~= 'Headers'
-                    and Key ~= 'TimeoutMs' and Key ~= 'MaxResponseBytes' then Fail() end
+                    and Key ~= 'TimeoutMs' and Key ~= 'MaxResponseBytes' and Key ~= 'CancellationToken' then Fail() end
             end
         end
         local Settings: RequestOptions = Options or {}
@@ -57,7 +58,8 @@ function JsonClient.Open(): Client
             if not HasContentType then table.insert(Fields, {Name = 'Content-Type', Value = 'application/json'}) end
         end
         local Response = Http:RequestAsync({Url = Url, Method = Settings.Method, Body = Body,
-            Headers = Fields, TimeoutMs = Settings.TimeoutMs, MaxResponseBytes = Settings.MaxResponseBytes})
+            Headers = Fields, TimeoutMs = Settings.TimeoutMs, MaxResponseBytes = Settings.MaxResponseBytes,
+            CancellationToken = Settings.CancellationToken})
         return (if Response.Body == '' then nil else Json.Decode(Response.Body)), Response
     end
     function Value.GetAsync(_Self: Client, Url: string): (unknown, HttpResponse)

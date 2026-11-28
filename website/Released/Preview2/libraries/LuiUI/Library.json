@@ -1,0 +1,11 @@
+{
+  "SchemaVersion": 1,
+  "Name": "LuiUI",
+  "TargetSdk": "0.1.0-preview.2",
+  "Status": "Development",
+  "Requires": [],
+  "SupportFiles": ["Scope.luau", "State.luau"],
+  "Modules": [
+    {"Name": "NumericInput", "Summary": "Edit a bounded numeric value with existing text and step-button controls.", "Types": ["Options", "Controller"]}
+  ]
+}

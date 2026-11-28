@@ -27,6 +27,12 @@ services](NATIVE-SERVICES.md) and the [executable fixture](../tests/services/Pro
 
 Schema v2 preparation/checking/staging captures and hashes declared native bytes and generates primitive types without loading a library. [Project hosting](PROJECT-HOST.md) adds actual owner-trusted verified Windows/Linux loading before project execution; isolated preview continues to refuse privileged providers.
 
+Local Luau packages can carry a binding facade, provider sidecars and their
+platform binaries. The consuming application explicitly selects each provider
+and declares its capabilities. Check and stage the restored project with the
+ordinary native pipeline. The operator supplies the matching host grant at
+execution. See [local packages](PACKAGES.md#packages-with-native-providers).
+
 In a manifest, Extensions is a list of provider names, for example `"Extensions": ["NativeMath"]`. List the sidecar under ExtensionDeclarations and request NativeExtensions plus every capability it requires. HostServices is needed for Host sidecars; it is not automatically granted by native metadata. Legacy schema v1 Extensions remains a library-path list.
 
 Native sidecars use this exact schema 2 shape (the zero digests below are placeholders, not usable pins):

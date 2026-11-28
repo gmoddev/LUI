@@ -1,0 +1,33 @@
+{
+  "SchemaVersion": 1,
+  "Name": "SQLite",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [
+    "Binary"
+  ],
+  "NativeProvider": "SQLite",
+  "Modules": [
+    {
+      "Name": "SQLite",
+      "Summary": "Run parameterized transactions against bounded snapshots or an explicitly granted persistent database.",
+      "Types": [
+        "Null",
+        "IntegerValue",
+        "Value",
+        "Parameters",
+        "Result",
+        "Batch",
+        "Completion",
+        "Statement",
+        "Connection"
+      ],
+      "Functions": [
+        "Open",
+        "OpenLive",
+        "CheckLive",
+        "Integer"
+      ]
+    }
+  ]
+}

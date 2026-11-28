@@ -57,6 +57,7 @@ int main(int Count,char** Arguments) {
         Require(!Lui_LoadProjectNative(Runtime,Project,&Untrusted),"implicit native trust admitted");
         Fs::remove(Root/Binary); // Actual load must use captured bytes, not this path.
         Require(Lui_LoadProjectNative(Runtime,Project,&Native),Lui_GetLastError(Runtime));
+        Require(!Lui_RunScript(Runtime,"return true","UnrelatedSource"),"unrelated source inherited a captured native project");
         LuiProjectRunOptionsV1 Run{sizeof(Run),1,0,0,0}; Require(Lui_RunProject(Runtime,Project,&Run),Lui_GetLastError(Runtime));
         Require(!Lui_LoadProjectNative(Runtime,Project,&Native),"native provider loaded twice");
         Lui_Destroy(Runtime);

@@ -166,6 +166,7 @@ internal static class NativeTextHostQualificationRunner
         IntPtr Module=IntPtr.Zero;
         IntPtr Editor=IntPtr.Zero;
         IntPtr CodeHost=IntPtr.Zero;
+        CodeEditorHost.EditorEvent? CodeEvent=null;
         int OwnerThread=Environment.CurrentManagedThreadId;
         bool Success=false;
         string? Failure=null;
@@ -330,7 +331,7 @@ internal static class NativeTextHostQualificationRunner
             int CodeEdits=0;
             string LastCodeEdit=string.Empty;
             string KeyProbeSequence=string.Empty;
-            CodeEditorHost.EditorEvent CodeEvent=(Context,Kind,Text,Start,Length)=>
+            CodeEvent=(Context,Kind,Text,Start,Length)=>
             {
                 if(Kind==4 && Start==120) KeyProbeSequence+="before;";
                 if(Kind==18 && Start==120) KeyProbeSequence+="after;";
@@ -414,6 +415,7 @@ internal static class NativeTextHostQualificationRunner
         finally
         {
             if(CodeHost!=IntPtr.Zero) CodeEditorHost.LuiWinUITextDestroyHostV1(CodeHost);
+            GC.KeepAlive(CodeEvent);
             if(Editor!=IntPtr.Zero)
             {
                 if(IsWindow(Editor)) DestroyWindow(Editor);

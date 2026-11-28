@@ -1,0 +1,33 @@
+{
+  "Name": "SQLite",
+  "ResourceKindCount": 0,
+  "Methods": [
+    {
+      "Name": "Transaction",
+      "Profile": "OwnedAsync",
+      "MaxInputBytes": 1114116,
+      "MaxResultBytes": 1114116,
+      "InputKind": 0,
+      "ResultKind": 0,
+      "DeadlineMilliseconds": 30000
+    },
+    {
+      "Name": "LiveTransaction",
+      "Profile": "OwnedAsync",
+      "MaxInputBytes": 65540,
+      "MaxResultBytes": 65540,
+      "InputKind": 0,
+      "ResultKind": 0,
+      "DeadlineMilliseconds": 30000
+    },
+    {
+      "Name": "CheckLive",
+      "Profile": "OwnedAsync",
+      "MaxInputBytes": 4,
+      "MaxResultBytes": 1,
+      "InputKind": 0,
+      "ResultKind": 0,
+      "DeadlineMilliseconds": 30000
+    }
+  ]
+}

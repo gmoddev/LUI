@@ -1,0 +1,71 @@
+{
+  "SchemaVersion": 1,
+  "AbiVersion": 1,
+  "Provider": "Host",
+  "Services": [
+    {
+      "Name": "Stdio",
+      "Methods": [
+        {
+          "Name": "Read",
+          "Arguments": [
+            "number",
+            "boolean"
+          ],
+          "Returns": "number"
+        },
+        {
+          "Name": "Write",
+          "Arguments": [
+            "number",
+            "string"
+          ],
+          "Returns": "number"
+        },
+        {
+          "Name": "Cancel",
+          "Arguments": [
+            "number"
+          ],
+          "Returns": "boolean"
+        },
+        {
+          "Name": "IsTerminal",
+          "Arguments": [
+            "number"
+          ],
+          "Returns": "boolean"
+        },
+        {
+          "Name": "Argument",
+          "Arguments": [
+            "number"
+          ],
+          "Returns": "string"
+        },
+        {
+          "Name": "ArgumentCount",
+          "Arguments": [],
+          "Returns": "number"
+        },
+        {
+          "Name": "SetExitStatus",
+          "Arguments": [
+            "number"
+          ],
+          "Returns": "nil"
+        }
+      ],
+      "Signals": [
+        {
+          "Name": "Completed",
+          "Arguments": [
+            "number",
+            "string",
+            "string"
+          ]
+        }
+      ]
+    }
+  ]
+}

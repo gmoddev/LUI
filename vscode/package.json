@@ -32,6 +32,7 @@
     "commands": [
       { "command": "lui.chooseSdk", "title": "LUI: Choose SDK" },
       { "command": "lui.createProject", "title": "LUI: Create Project" },
+      { "command": "lui.restoreLockedPackages", "title": "LUI: Restore Locked Packages" },
       { "command": "lui.addProjectFile", "title": "LUI: Add File to Project" },
       { "command": "lui.startPreview", "title": "LUI: Inspect Layout", "icon": "$(list-tree)" },
       { "command": "lui.reloadPreview", "title": "LUI: Reload Preview", "icon": "$(refresh)" },
@@ -66,6 +67,12 @@
     "configuration": {
       "title": "LUI Preview",
       "properties": {
+        "lui.packageManifestPath": {
+          "type": "string",
+          "default": "lui.json",
+          "scope": "resource",
+          "description": "Authored LUI manifest used by Restore Locked Packages. Keep the resolved manifest in the same project directory."
+        },
         "lui.sdkPath": {
           "type": "string", "default": "", "scope": "machine",
           "description": "Extracted LUI SDK root. Uses the CLI's validated matched tools and the project's exact SDK pin. LUI_SDK is the environment fallback."

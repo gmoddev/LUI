@@ -98,7 +98,8 @@ if(WIN32)
         endif()
         target_sources(LuiWinUIFrames PRIVATE backends/winui3/FrameXaml.cpp)
         target_include_directories(LuiWinUIFrames PRIVATE "${LUI_WINUI_PROJECTION_DIR}" "${LUI_WINUI_INCLUDE_DIR}" "C:/Program Files (x86)/Windows Kits/10/Include/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/cppwinrt")
-        target_compile_definitions(LuiWinUIFrames PRIVATE LUI_WINUI_PRESENTER=1)
+        target_compile_definitions(LuiWinUIFrames PRIVATE LUI_WINUI_PRESENTER=1
+            $<$<CONFIG:Release>:WINRT_NO_SOURCE_LOCATION>)
         # C++/WinRT selects standard <coroutine> in C++20; newer MSVC rejects
         # its C++17 fallback to the deprecated <experimental/coroutine> header.
         set_target_properties(LuiWinUIFrames PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -137,6 +138,12 @@ if(WIN32)
     target_link_libraries(LuiHttp PRIVATE ws2_32)
 endif()
 target_link_libraries(LuiRuntime PRIVATE LuiHttp)
+
+# Bounded RFC6455 framing reuses the existing transport, TLS and owner scheduler.
+add_library(LuiWebSocket STATIC runtime/network/websocket/Protocol.cpp)
+target_include_directories(LuiWebSocket PUBLIC runtime/network/websocket)
+target_link_libraries(LuiWebSocket PUBLIC LuiHttp LuiOpenSsl)
+target_link_libraries(LuiRuntime PRIVATE LuiWebSocket)
 
 include(cmake/NativeTests.cmake)
 add_dependencies(LuiNativeQualification LuiFrameSurfaceTests LuiOwnerWakeTests LuiWindowLifecycleTests)

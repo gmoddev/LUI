@@ -45,6 +45,62 @@ try
             !Flood.ToString().Contains("CANARY"), "native CLI flood was unbounded or disclosed data");
     }
     SdkTests.Run(TempRoot, Checker, Runtime);
+    string HeadlessManifest = Path.Combine(TempRoot, "headless project μ", "lui.json");
+    var Headless = CliProgram.CreateHeadlessStartInfo(Path.Combine(TempRoot, "headless host.exe"), HeadlessManifest,
+        new Dictionary<string,string>{{"--grant","network.client,network.server"},{"--http-origin","http://127.0.0.1:8080"},{"--timeout-ms","4000"}});
+    Require(Headless.ArgumentList.Contains("network.client") && Headless.ArgumentList.Contains("network.server") &&
+        Headless.ArgumentList.Contains("http://127.0.0.1:8080") && Headless.ArgumentList.Contains("4000") &&
+        Headless.ArgumentList[1] == Path.GetFullPath(HeadlessManifest) && !Headless.UseShellExecute && Headless.CreateNoWindow,
+        "headless launch lost literal arguments, explicit grants or nonintrusive process settings");
+    bool InvalidHeadless = false;
+    try { CliProgram.CreateHeadlessStartInfo("host.exe",HeadlessManifest,new Dictionary<string,string>{{"--grant","native"}}); }
+    catch (ArgumentException) { InvalidHeadless = true; }
+    Require(InvalidHeadless,"headless launch admitted an unsupported native grant");
+    var FfiLaunch = CliProgram.CreateHeadlessStartInfo("host.exe",HeadlessManifest,
+        new Dictionary<string,string>{{"--providers","Crypto"},{"--trusted-ffi","true"}});
+    Require(FfiLaunch.ArgumentList.Contains("--trusted-ffi") && FfiLaunch.ArgumentList.Contains("Crypto") &&
+        !FfiLaunch.ArgumentList.Contains("Ffi") && !Headless.ArgumentList.Contains("--trusted-ffi"),
+        "FFI authority was not passed as the independent operator switch");
+    foreach (var InvalidFfiOptions in new[]{new Dictionary<string,string>{{"--providers","Ffi"}},
+        new Dictionary<string,string>{{"--trusted-ffi","yes"}}}) {
+        bool Refused = false;
+        try { CliProgram.CreateHeadlessStartInfo("host.exe",HeadlessManifest,InvalidFfiOptions); } catch (ArgumentException) { Refused=true; }
+        Require(Refused,"invalid FFI trust option accepted");
+    }
+    Require(CliProgram.TryHeadlessDiagnostic("[LUI:Headless] HttpPolicyRequired",out string HeadlessAdvice) &&
+        HeadlessAdvice.Contains("--http-origin") &&
+        !CliProgram.TryHeadlessDiagnostic("[LUI:Headless] CapabilityDenied CANARY",out _) &&
+        !CliProgram.TryHeadlessDiagnostic("private source CANARY",out _),"headless diagnostics accepted arbitrary stderr");
+    string? HeadlessHost = Environment.GetEnvironmentVariable("LUI_TEST_HEADLESS");
+    if (HeadlessHost is not null)
+    {
+        string HeadlessRoot = Path.Combine(TempRoot,"Headless project μ");
+        Directory.CreateDirectory(Path.Combine(HeadlessRoot,"Src"));
+        string HeadlessProject = Path.Combine(HeadlessRoot,"lui.json");
+        void PrepareHeadless(string Script, string[] Capabilities)
+        {
+            File.WriteAllText(Path.Combine(HeadlessRoot,"Src/Main.luau"),Script);
+            File.WriteAllText(HeadlessProject,JsonSerializer.Serialize(new {SchemaVersion=2,Script="Src/Main.luau",Capabilities,
+                Extensions=Array.Empty<string>(),Assets=Array.Empty<string>(),ExtensionDeclarations=Array.Empty<string>(),
+                Diagnostics=new{Mode="Development"},Modules=new{Root="Src",Files=new[]{"Main.luau"},Requires=Array.Empty<string>(),Dependencies=Array.Empty<object>()}}));
+        }
+        PrepareHeadless("assert(1+1==2)",[]);
+        Require(Invoke("run",HeadlessProject,"--mode","headless","--host",HeadlessHost).Status==0,"real headless app in a Unicode path failed");
+        PrepareHeadless("error('HEADLESS_SOURCE_CANARY')",["network.client"]);
+        var Denied = Invoke("run",HeadlessProject,"--mode","headless","--host",HeadlessHost);
+        Require(Denied.Status==1 && Denied.Error.Contains("Pass --grant") && !Denied.Error.Contains("CANARY") && !Denied.Error.Contains("without a startup reason"),"headless capability advice was lost or disclosed source");
+        var MissingPolicy=Invoke("run",HeadlessProject,"--mode","headless","--host",HeadlessHost,"--grant","network.client");
+        Require(MissingPolicy.Status==1 && MissingPolicy.Error.Contains("--http-origin") && !MissingPolicy.Error.Contains("CANARY"),"headless HTTP policy advice was lost");
+        PrepareHeadless("Instance.new('Window',{Title='HEADLESS_SOURCE_CANARY'})",[]);
+        var Presentation=Invoke("run",HeadlessProject,"--mode","headless","--host",HeadlessHost);
+        Require(Presentation.Status==1 && Presentation.Error.Contains("without UI Instances") && !Presentation.Error.Contains("CANARY"),"headless presentation refusal was vague or disclosed source");
+        PrepareHeadless("error('HEADLESS_SOURCE_CANARY')",[]);
+        var RuntimeFailure=Invoke("run",HeadlessProject,"--mode","headless","--host",HeadlessHost);
+        Require(RuntimeFailure.Status==1 && RuntimeFailure.Error.Contains("RuntimeFailed") && !RuntimeFailure.Error.Contains("CANARY"),"headless runtime failure transport was unsafe");
+        PrepareHeadless("task.delay(5,function() end)",[]);
+        var Timeout=Invoke("run",HeadlessProject,"--mode","headless","--host",HeadlessHost,"--timeout-ms","20");
+        Require(Timeout.Status==124 && Timeout.Error.Contains("--timeout-ms"),"headless timeout status/advice was lost");
+    }
     string Project = Path.Combine(TempRoot, "My_LUI_Project");
     var Created = Invoke("new", Project);
     Require(Created.Status == 0, "project scaffold failed: " + Created.Error);
@@ -310,6 +366,9 @@ try
         Require(Start.ArgumentList.Count == 2 && Start.ArgumentList[0] == "--manifest" &&
             Start.ArgumentList[1] == ManifestPath && Start.WorkingDirectory == Project,
             "run did not pass an absolute manifest to the native host");
+        var TrustedStart=CliProgram.CreateRunStartInfo(Path.Combine(Host,"Lui.WinUI.exe"),ManifestPath,true);
+        Require(TrustedStart.ArgumentList.SequenceEqual(new[]{"--manifest",ManifestPath,"--allow-native"}),
+            "legacy desktop explicit native grant was lost");
     }
 }
 finally

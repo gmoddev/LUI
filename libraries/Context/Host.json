@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "AbiVersion": 1,
+  "Provider": "Host",
+  "Services": [
+    {
+      "Name": "Context",
+      "Methods": [
+        {
+          "Name": "Has",
+          "Arguments": [
+            "string"
+          ],
+          "Returns": "boolean"
+        },
+        {
+          "Name": "Read",
+          "Arguments": [
+            "string"
+          ],
+          "Returns": "string"
+        },
+        {
+          "Name": "Platform",
+          "Arguments": [],
+          "Returns": "string"
+        },
+        {
+          "Name": "Elapsed",
+          "Arguments": [],
+          "Returns": "number"
+        }
+      ],
+      "Signals": []
+    }
+  ]
+}

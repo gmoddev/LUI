@@ -12,8 +12,8 @@ import { ValidateDocumentation, ImproveReference, ServiceSetup } from '../script
 import { LibraryExamples } from '../scripts/DocumentationLibraries.mjs';
 
 const Repository=FilePath(new URL('../../',import.meta.url));
-const Schema=JSON.parse(ReadFile(Path.join(Repository,'types/schema.json'),'utf8'));
-const Definitions=Declarations(ReadFile(Path.join(Repository,'types/LUI.d.luau'),'utf8'));
+const Schema=JSON.parse(ReadFile(Path.join(Repository,'website/Released/Preview2/types/schema.json'),'utf8'));
+const Definitions=Declarations(ReadFile(Path.join(Repository,'website/Released/Preview2/types/LUI.d.luau'),'utf8'));
 Test('every reflected member and public type has authored guidance and a usage example',()=>{
   Assert.deepEqual(ValidateDocumentation(Schema,Definitions),{Symbols:52,Members:237,Types:81,Globals:8});
   const Missing=structuredClone(Members);delete Missing.TextButton.Enabled;
@@ -35,7 +35,7 @@ Test('reference generation keeps native method signatures and runnable source al
   const { mkdir:MakeDirectory, copyFile:CopyFile }=await import('node:fs/promises');
   const Root=Path.join(Site,'Repository');
   try {
-    for(const Name of ['types/schema.json','types/LUI.d.luau']){await MakeDirectory(Path.dirname(Path.join(Root,Name)),{recursive:true});await CopyFile(Path.join(Repository,Name),Path.join(Root,Name));}
+    for(const Name of ['types/schema.json','types/LUI.d.luau']){await MakeDirectory(Path.dirname(Path.join(Root,Name)),{recursive:true});await CopyFile(Path.join(Repository,'website/Released/Preview2',Name),Path.join(Root,Name));}
     const Release=JSON.parse(ReadFile(Path.join(Repository,'website/Release-preview.2.json'),'utf8'));
     const Report=await ImproveReference(Root,Site,{Metadata:Release});
     Assert.equal(Report.ReferenceExamples,89);

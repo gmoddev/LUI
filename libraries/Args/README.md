@@ -1,0 +1,3 @@
+# Args
+
+Use `Args.Parse(Stdio.Arguments(), {verbose="Flag", output="Value"})` to parse application arguments after the host's separator. The result has Options and Positionals. Flags return true. Valued long options accept a following word or an equals sign, including an explicit empty value. Use the equals form for a value beginning with two hyphens. The standalone double hyphen ends option processing. Single-hyphen words remain positional. Unknown flags, duplicates, missing values and invalid schemas raise fixed errors. The parser accepts 64 words, 4096 bytes per word and 32 KiB total. Parsing a supplied array needs no service or capability.

@@ -1,0 +1,22 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Path",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Path",
+      "Summary": "Manipulate portable lexical paths with explicit roots.",
+      "Types": [],
+      "Functions": [
+        "Normalize",
+        "Join",
+        "Resolve",
+        "Parent",
+        "Name",
+        "Extension"
+      ]
+    }
+  ]
+}

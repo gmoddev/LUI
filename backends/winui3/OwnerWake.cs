@@ -9,6 +9,7 @@ internal sealed partial class WinUIBackend
     [ThreadStatic] private static OwnerDispatcher? ThreadOwnerDispatcher;
     private OwnerWakeGroup? OwnerWake;
     private bool Pumping;
+    private bool FrameCompletionWakePending;
     private Action? OwnerPumpObservation;
     private sealed class OwnerDispatcher
     {
@@ -30,11 +31,15 @@ internal sealed partial class WinUIBackend
     }
     private sealed class OwnerWakeGroup
     {
+        private const int FullTurn = 1, FrameTurn = 2, DeadlineTurn = 4;
         private readonly OwnerDispatcher Dispatcher;
         private readonly List<WinUIBackend> Targets=new();
         private IntPtr Domain;
         private ulong Registration;
         private int Stopped;
+        private int Reasons;
+        private FrameDeadline? Deadline;
+        private bool DeadlineUnavailable,SettlementUnavailable;
         private bool Running,Deferred;
         internal bool SuppressForQualification;
         internal long Notifications,Turns,Rejected,Suppressed,BusyDeferrals;
@@ -59,7 +64,7 @@ internal sealed partial class WinUIBackend
         }
         private static uint Request(IntPtr Context)
         {
-            try{return ((OwnerWakeGroup)GCHandle.FromIntPtr(Context).Target!).Enqueue();}catch{return 0;}
+            try{return ((OwnerWakeGroup)GCHandle.FromIntPtr(Context).Target!).Enqueue(FullTurn);}catch{return 0;}
         }
         private static void Release(IntPtr Context)
         {
@@ -67,27 +72,87 @@ internal sealed partial class WinUIBackend
             // This callback can run on a provider worker: no UI/runtime access.
             try{GCHandle.FromIntPtr(Context).Free();}catch{}
         }
-        private uint Enqueue()
+        private uint Enqueue(int Reason)
         {
             Interlocked.Increment(ref Notifications);
             if(Volatile.Read(ref Stopped)!=0)return 0;
             if(Volatile.Read(ref SuppressForQualification)){Interlocked.Increment(ref Suppressed);return 0;}
+            Interlocked.Or(ref Reasons,Reason);
             uint Status=Dispatcher.Enqueue(this);if(Status==0)Interlocked.Increment(ref Rejected);return Status;
         }
-        internal bool TryOwners()
+        internal void RequestFrameDelivery(WinUIBackend Target)
+        {
+            if(EnableFrameSettlement&&!SettlementUnavailable){
+                Target.FrameCompletionWakePending=true;
+                _=Enqueue(FrameTurn);
+            }else _=Enqueue(FullTurn);
+        }
+        private static int FrameDelay(WinUIBackend Target)
+        {
+            if(Target.IsDisposed||Target.IsDisposing||Target.FrameQualificationTimerPaused||Target.FrameActivityAt==0||
+                System.Diagnostics.Stopwatch.GetElapsedTime(Target.FrameActivityAt).TotalMilliseconds>250)return -1;
+            return Native.Lui_GetFrameTaskDelayV1(Target.Runtime);
+        }
+        internal void RefreshFrameDeadline()
+        {
+            if(!EnableFrameDeadline||Running||DeadlineUnavailable||Volatile.Read(ref Stopped)!=0)return;
+            int Delay=-1;
+            try{
+                foreach(var Target in Targets){
+                    int Next=FrameDelay(Target);
+                    if(Next>=0&&(Delay<0||Next<Delay))Delay=Next;
+                }
+                if(Delay<0&&Deadline is null)return;
+                Deadline??=new FrameDeadline(()=>Enqueue(DeadlineTurn));
+                if(Deadline.Update(Delay))return;
+            }catch(Exception Error) when(Error is EntryPointNotFoundException or System.ComponentModel.Win32Exception or OutOfMemoryException){}
+            DeadlineUnavailable=true;
+            Deadline?.Dispose();
+            Deadline=null;
+        }
+        internal bool TryOwners(bool RequireFull=false)
         {
             if(Volatile.Read(ref Stopped)!=0)return false;
             if(Running||DeferIfBusy()){
                 Deferred=true;++BusyDeferrals;return false;
             }
+            int Pending=Interlocked.Exchange(ref Reasons,0);
+            if(Pending==0&&!Deferred&&!RequireFull)return false;
+            bool Scoped=!RequireFull&&!Deferred&&(Pending&FullTurn)==0;
             Deferred=false;
+            if(Scoped){
+                Running=true;
+                try{
+                    bool Settled=true;
+                    if((Pending&FrameTurn)!=0){
+                        foreach(var Target in Targets){
+                            if(!Target.FrameCompletionWakePending)continue;
+                            Target.FrameCompletionWakePending=false;
+                            if(!Target.IsDisposed&&!Target.IsDisposing&&Native.Lui_IsOwnerPumpReadyV1(Target.Runtime)==1&&
+                                !Target.TrySettleFrameUploads())Settled=false;
+                        }
+                    }
+                    if(Settled){
+                        if((Pending&DeadlineTurn)!=0){
+                            foreach(var Target in Targets.ToArray())
+                                if(FrameDelay(Target)==0)Target.Pump();
+                        }
+                        return true;
+                    }
+                }catch(EntryPointNotFoundException){SettlementUnavailable=true;}
+                catch{LuiDiagnostics.Error("OwnerWake","[LUI:OwnerWake] FrameSettlementFailed");}
+                finally{Running=false;RefreshFrameDeadline();}
+            }
             if(Native.Lui_AcknowledgeNativeWakeV1(Domain,Registration)!=0)return false;
             Interlocked.Exchange(ref Dispatcher.NeedsRetry,0);
             Running=true;++Turns;
             try{
-                foreach(var Target in Targets.ToArray())if(!Target.IsDisposed&&!Target.IsDisposing)Target.Pump();
+                foreach(var Target in Targets.ToArray()){
+                    Target.FrameCompletionWakePending=false;
+                    if(!Target.IsDisposed&&!Target.IsDisposing)Target.Pump();
+                }
             }catch{LuiDiagnostics.Error("OwnerWake","[LUI:OwnerWake] OwnerTurnFailed");}
-            finally{Running=false;}
+            finally{Running=false;RefreshFrameDeadline();}
             return true;
         }
         internal bool DeferIfBusy()
@@ -98,7 +163,7 @@ internal sealed partial class WinUIBackend
         internal bool Retry()
         {
             if(Running||Volatile.Read(ref Dispatcher.Queued)!=0)return false;
-            if(Deferred||Volatile.Read(ref Dispatcher.NeedsRetry)!=0)return TryOwners();
+            if(Deferred||Volatile.Read(ref Dispatcher.NeedsRetry)!=0)return TryOwners(true);
             // A periodic owner turn also clears residual native pending state
             // after an overtaken enqueue failure. Records are still drained by
             // the normal pump; later completions may request a fresh wake.
@@ -107,9 +172,11 @@ internal sealed partial class WinUIBackend
         internal void Add(WinUIBackend Backend)=>Targets.Add(Backend);
         internal void Remove(WinUIBackend Backend)
         {
+            Backend.FrameCompletionWakePending=false;
             Targets.Remove(Backend);
-            if(Targets.Count!=0)return;
+            if(Targets.Count!=0){RefreshFrameDeadline();return;}
             Volatile.Write(ref Stopped,1);
+            Deadline?.Dispose(); Deadline=null;
             Volatile.Write(ref Dispatcher.Active,null);
             // Queued closures hold only this stopped group. They never dereference
             // the released domain or a destroyed backend/runtime.

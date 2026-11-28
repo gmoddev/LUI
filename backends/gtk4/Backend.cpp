@@ -14,6 +14,17 @@
 
 namespace Lui::Gtk {
 namespace {
+bool PointerToSlot(GtkWidget* Native, GtkWidget* Slot, double& X, double& Y) {
+    if (!Slot) return false;
+    const graphene_point_t Input{static_cast<float>(X), static_cast<float>(Y)};
+    graphene_point_t Output{};
+    if (!gtk_widget_compute_point(Native, Slot, &Input, &Output) ||
+        !std::isfinite(Output.x) || !std::isfinite(Output.y)) return false;
+    X = Output.x;
+    Y = Output.y;
+    return true;
+}
+
 int PointerButton(guint Button) {
     switch(Button) {case 1:return 1; case 3:return 2; case 2:return 3; case 8:return 4; case 9:return 5; default:return 0;}
 }
@@ -42,6 +53,7 @@ Backend::Backend(uint32_t Mode):OwnerThread(std::this_thread::get_id()) {
     LuiPresentationCallbacksV1 Presentation{sizeof(Presentation),1,this,Present};
     if(!Lui_SetPresentationCallbacks(Runtime,&Presentation)) throw std::runtime_error("[LUI:GTK] PresentationFailed");
     StartImages();
+    StartFrames();
     StartPlatform();
     Settings=gtk_settings_get_default();
     if(Settings) {
@@ -55,7 +67,7 @@ Backend::~Backend() {Stop();}
 bool Backend::Owner() const {return OwnerThread==std::this_thread::get_id();}
 int Backend::Fail() {Lui_ReportBackendError(Runtime,"[LUI:Backend] OperationFailed"); return 0;}
 void Backend::SetAsset(const std::string& Name,std::string Bytes) {
-    if(!Owner() || Bytes.size()>16*1024*1024 || Assets.size()>=256 || Assets.count(Name) || AssetBytes+Bytes.size()>64*1024*1024) throw std::runtime_error("[LUI:GTK] LimitExceeded");
+    if(!Owner() || Bytes.size()>16*1024*1024 || Assets.size()>=1024 || Assets.count(Name) || AssetBytes+Bytes.size()>64*1024*1024) throw std::runtime_error("[LUI:GTK] LimitExceeded");
     if(!Lui_RegisterAsset(Runtime,Name.c_str())) throw std::runtime_error("[LUI:GTK] AssetFailed");
     AssetBytes+=Bytes.size(); Assets.emplace(Name,std::make_shared<const std::string>(std::move(Bytes)));
 }
@@ -70,6 +82,7 @@ void Backend::Stop() {
     // an uncommitted object, so native ownership is also drained explicitly.
     while(!Views.empty()) Destroy(this,Views.begin()->first);
     Assets.clear();
+    AssetBytes=0;
 }
 bool Backend::HasWindows() const {
     for(const auto& Pair:Views) if(Pair.second->ClassName=="Window" && Pair.second->Alive && !Pair.second->Closed) return true;
@@ -328,19 +341,31 @@ void Backend::Connect(View& Target) {
     g_signal_connect(Motion,"motion",reinterpret_cast<GCallback>(+[](GtkEventControllerMotion* Controller,double X,double Y,gpointer Context) {
         auto* Device=gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(Controller));
         if(!Device || gdk_device_get_source(Device)!=GDK_SOURCE_MOUSE) return;
-        auto* Target=static_cast<View*>(Context); Event Value{Kind::Pointer,0,0}; Value.Phase=1; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
+        auto* Target=static_cast<View*>(Context);
+        if (!PointerToSlot(Target->Native, Target->Slot, X, Y)) return;
+        Event Value{Kind::Pointer,0,0}; Value.Phase=1; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
     }),Data); Add(Motion);
     auto* Click=gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(Click),0);
     // GTK callback ABI needs noncapturing adapters. Mouse only in this initial profile.
     g_signal_connect(Click,"pressed",reinterpret_cast<GCallback>(+[](GtkGestureClick* Gesture,int,double X,double Y,gpointer Context) {
         auto* Device=gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(Gesture)); if(!Device || gdk_device_get_source(Device)!=GDK_SOURCE_MOUSE) return;
         int Button=PointerButton(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(Gesture))); if(!Button) return;
-        auto* Target=static_cast<View*>(Context); Target->ActiveButtons.insert(Button); Event Value{Kind::Pointer,0,0}; Value.Button=Button; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
+        auto* Target=static_cast<View*>(Context);
+        if (!PointerToSlot(Target->Native, Target->Slot, X, Y)) return;
+        Target->ActiveButtons.insert(Button); Event Value{Kind::Pointer,0,0}; Value.Button=Button; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
     }),Data);
     g_signal_connect(Click,"released",reinterpret_cast<GCallback>(+[](GtkGestureClick* Gesture,int,double X,double Y,gpointer Context) {
         auto* Device=gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(Gesture)); if(!Device || gdk_device_get_source(Device)!=GDK_SOURCE_MOUSE) return;
         int Button=PointerButton(gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(Gesture))); if(!Button) return;
-        auto* Target=static_cast<View*>(Context); Target->ActiveButtons.erase(Button); Event Value{Kind::Pointer,0,0}; Value.Phase=2; Value.Button=Button; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
+        auto* Target=static_cast<View*>(Context);
+        if (!PointerToSlot(Target->Native, Target->Slot, X, Y)) {
+            if (!Target->ActiveButtons.empty()) {
+                Target->ActiveButtons.clear();
+                Event Cancel{Kind::Pointer,0,0}; Cancel.Phase=3; Target->Owner->Queue(Target,std::move(Cancel));
+            }
+            return;
+        }
+        Target->ActiveButtons.erase(Button); Event Value{Kind::Pointer,0,0}; Value.Phase=2; Value.Button=Button; Value.X=X; Value.Y=Y; Target->Owner->Queue(Target,std::move(Value));
     }),Data);
     g_signal_connect(Click,"cancel",reinterpret_cast<GCallback>(+[](GtkGesture*,GdkEventSequence*,gpointer Context) {auto* Target=static_cast<View*>(Context); Target->ActiveButtons.clear(); Event Value{Kind::Pointer,0,0}; Value.Phase=3; Target->Owner->Queue(Target,std::move(Value));}),Data);
     Add(GTK_EVENT_CONTROLLER(Click));
@@ -590,7 +615,7 @@ int Backend::Create(void* Context,int Id,const char* ClassName) {
     else if(Target->ClassName=="CheckBox") Target->Native=gtk_check_button_new();
     else if(Target->ClassName=="Slider") {Target->Native=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,0,100,1); gtk_scale_set_draw_value(GTK_SCALE(Target->Native),false);}
     else if(Target->ClassName=="ProgressBar") Target->Native=gtk_progress_bar_new();
-    else if(Target->ClassName=="ImageLabel") {Target->Native=gtk_picture_new(); gtk_picture_set_content_fit(GTK_PICTURE(Target->Native),GTK_CONTENT_FIT_CONTAIN); gtk_picture_set_can_shrink(GTK_PICTURE(Target->Native),true);}
+    else if(Target->ClassName=="ImageLabel" || Target->ClassName=="FrameSurface") {Target->Native=gtk_picture_new(); gtk_picture_set_content_fit(GTK_PICTURE(Target->Native),GTK_CONTENT_FIT_CONTAIN); gtk_picture_set_can_shrink(GTK_PICTURE(Target->Native),true);}
     else return Self.Fail();
     g_object_ref_sink(Target->Native);
     Target->Style=gtk_css_provider_new();
@@ -608,6 +633,10 @@ int Backend::Property(void* Context,int Id,const char* Name,const char* Text) {
     struct Guard {View& Target; ~Guard(){Target.Applying=false;}} Applying{Target};
     try {
         const std::string Property=Name, Value=Text;
+        if(Property=="Name" && Self.MetricsNames && Target.ClassName=="Window") {
+            if(Value.empty() || Value.size()>128) Self.MetricsNames->erase(Id);
+            else (*Self.MetricsNames)[Id]=Value;
+        }
         if(Property=="__Style") {
             Target.StyleJson=Value;
             const auto Style=nlohmann::json::parse(Value);
@@ -706,8 +735,16 @@ int Backend::Property(void* Context,int Id,const char* Name,const char* Text) {
             Target.AccessibilityDescription=Value;
             if(Value.empty()) gtk_accessible_reset_property(GTK_ACCESSIBLE(Target.Native),GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
             else gtk_accessible_update_property(GTK_ACCESSIBLE(Target.Native),GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,Text,-1);
+        } else if(Property=="ScaleMode" && Target.ClassName=="FrameSurface") {
+            const auto Fit=std::strcmp(Text,"Stretch")==0?GTK_CONTENT_FIT_FILL:
+                std::strcmp(Text,"Fill")==0?GTK_CONTENT_FIT_COVER:GTK_CONTENT_FIT_CONTAIN;
+            gtk_picture_set_content_fit(GTK_PICTURE(Target.Native),Fit);
         } else if(Property=="Source" && Target.ClassName=="ImageLabel") {
-            if(Value.empty()) Self.ReleaseImage(Target);
+            Self.ReleaseImage(Target);
+        } else if(Property=="__ImageRegion" && Target.ClassName=="ImageLabel") {
+            if(std::sscanf(Text,"%d,%d,%d,%d",&Target.ImageX,&Target.ImageY,&Target.ImageWidth,&Target.ImageHeight)!=4)
+                return Self.Fail();
+            Self.PresentImage(Target);
         }
         return 1;
     } catch(...) {return Self.Fail();}
@@ -759,6 +796,7 @@ int Backend::Present(void* Context,int Id,int HasClip,double X,double Y,double W
 }
 int Backend::Destroy(void* Context,int Id) {
     auto& Self=*static_cast<Backend*>(Context); auto Found=Self.Views.find(Id); if(Found==Self.Views.end()) return 1;
+    if(Self.MetricsNames) Self.MetricsNames->erase(Id);
     auto Target=std::move(Found->second); Self.Views.erase(Found); Target->Alive=false;
     if(Target->ClassName=="ImageLabel") Self.ReleaseImage(*Target);
     g_signal_handlers_disconnect_by_data(Target->Native,Target.get());

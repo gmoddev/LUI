@@ -5,7 +5,8 @@ import { Hash, Declarations, Validate, MakeZip } from '../scripts/Reference.mjs'
 import { Summaries } from '../scripts/Editorial.mjs';
 import { Checkpoints, ProjectFiles } from '../scripts/Tutorials.mjs';
 import { Recipes } from '../scripts/Recipes.mjs';
-import { LoadReleases } from '../scripts/Releases.mjs';
+import { LoadReleases, ReleaseInput } from '../scripts/Releases.mjs';
+import { GenerateCandidate } from '../scripts/Candidate.mjs';
 import { ModuleDeclarations, GenerateLibraryReference } from '../scripts/LibraryReference.mjs';
 import { mkdtemp as MakeTemporary, mkdir as MakeDirectory, writeFile as WriteFile, rm as Remove, copyFile as CopyFile } from 'node:fs/promises';
 import { existsSync as Exists } from 'node:fs';
@@ -13,8 +14,8 @@ import { tmpdir as TemporaryDirectory } from 'node:os';
 import { fileURLToPath as FilePath } from 'node:url';
 import Path from 'node:path';
 
-const Schema = JSON.parse(ReadFile(new URL('../../types/schema.json', import.meta.url), 'utf8'));
-const Definitions = ReadFile(new URL('../../types/LUI.d.luau', import.meta.url), 'utf8');
+const Schema = JSON.parse(ReadFile(new URL('../Released/Preview2/types/schema.json', import.meta.url), 'utf8'));
+const Definitions = ReadFile(new URL('../Released/Preview2/types/LUI.d.luau', import.meta.url), 'utf8');
 const Release = JSON.parse(ReadFile(new URL('../Release.json', import.meta.url), 'utf8'));
 Test('two release inputs retain independent SDK pins and refuse historical input drift', async () => {
   const Repository = FilePath(new URL('../../', import.meta.url));
@@ -26,11 +27,18 @@ Test('two release inputs retain independent SDK pins and refuse historical input
   const Temporary = await MakeTemporary(Path.join(TemporaryDirectory(), 'lui-release-inputs-'));
   try {
     const Data = JSON.parse(ReadFile(Path.join(Repository, 'website/Releases.json'), 'utf8'));
-    const Files = new Set(['website/Releases.json', ...Data.Releases.flatMap(Entry => Object.keys(Entry.Inputs))]);
+    const Files = new Set(['website/Releases.json', ...Catalog.Releases.flatMap(Entry => Object.keys(Entry.Inputs).map(Name=>Path.relative(Repository,ReleaseInput(Repository,Entry,Name))))]);
     for (const Name of Files) { await MakeDirectory(Path.dirname(Path.join(Temporary, Name)), {recursive:true}); await CopyFile(Path.join(Repository, Name), Path.join(Temporary, Name)); }
     await WriteFile(Path.join(Temporary,'website/Content/Setup.md.in'), 'changed historical guide');
     await Assert.rejects(LoadReleases(Temporary), /Frozen release input differs/);
     await CopyFile(Path.join(Repository,'website/Content/Setup.md.in'),Path.join(Temporary,'website/Content/Setup.md.in'));
+    await MakeDirectory(Path.join(Temporary,'types'),{recursive:true});
+    await WriteFile(Path.join(Temporary,'types/schema.json'),'new candidate schema');
+    await LoadReleases(Temporary); // Next-SDK sources cannot change the released API.
+    const Frozen=Path.join(Temporary,Data.Releases[0].SourceRoot,'types/schema.json');
+    await WriteFile(Frozen,'changed released schema');
+    await Assert.rejects(LoadReleases(Temporary), /Frozen release input differs/);
+    await CopyFile(Path.join(Repository,Data.Releases[0].SourceRoot,'types/schema.json'),Frozen);
     await WriteFile(Path.join(Temporary,'website/scripts/Generate.mjs'),'changed historical generator');
     await Assert.rejects(LoadReleases(Temporary), /Frozen release input differs/);
   } finally { await Remove(Temporary,{recursive:true,force:true}); }
@@ -42,17 +50,49 @@ Test('development generation removes retired pages only inside its generated lib
     await MakeDirectory(Output, { recursive: true });
     await WriteFile(Path.join(Output, 'retired.md'), 'retired API');
     await WriteFile(Path.join(Site, 'keep.txt'), 'unrelated');
-    const Result = await GenerateLibraryReference(FilePath(new URL('../../', import.meta.url)), Site);
+    const Repository=FilePath(new URL('../../', import.meta.url));
+    const Result = await GenerateLibraryReference(Repository, Site, {SourceRepository:Path.join(Repository,'website/Released/Preview2')});
     Assert.equal(Result.Pages, 13); Assert.deepEqual(Result.Guides, ['workflow']);
     Assert.equal(Exists(Path.join(Output, 'retired.md')), false);
     Assert.equal(Exists(Path.join(Output, 'commands.md')), true);
+    Assert.doesNotMatch(ReadFile(Path.join(Output,'commands.md'),'utf8'),/AllowWhileEditing/);
     Assert.equal(Exists(Path.join(Site, 'src/content/docs/next/libraries/json/json.md')), true);
     Assert.equal(Exists(Path.join(Site, 'src/content/docs/next/libraries/jsonclient/jsonclient.md')), true);
     Assert.equal(Exists(Path.join(Site, 'src/content/docs/next/libraries/luiui/numericinput.md')), true);
     Assert.equal(ReadFile(Path.join(Site, 'src/content/docs/next/guides/workflow.md'), 'utf8'),
-      ReadFile(new URL('../Content/NextWorkflow.md.in', import.meta.url), 'utf8'));
+      ReadFile(new URL('../Content/NextWorkflow.md.in', import.meta.url), 'utf8').replaceAll('\r\n','\n'));
     Assert.equal(Exists(Path.join(Site, 'keep.txt')), true);
   } finally { await Remove(Site, { recursive: true, force: true }); }
+});
+Test('candidate command docs use current declarations without adding them to released pages', async()=>{
+  const Site=await MakeTemporary(Path.join(TemporaryDirectory(),'lui-candidate-docs-'));
+  const Repository=FilePath(new URL('../../',import.meta.url));
+  try {
+    await MakeDirectory(Path.join(Site,'Content/Candidate'),{recursive:true});
+    for(const Name of ['Commands','Networking','Headless','Files','Images'])await CopyFile(Path.join(Repository,'website/Content/Candidate',Name+'.md.in'),Path.join(Site,'Content/Candidate',Name+'.md.in'));
+    await GenerateCandidate(Repository,Site);
+    const Text=ReadFile(Path.join(Site,'src/content/docs/candidate/preview.3/commands.md'),'utf8');
+    Assert.match(Text,/Unreleased preview.3 candidate/);
+    Assert.match(Text,/read AllowWhileEditing: boolean\?/);
+    Assert.match(Text,/read AllowWhileEditing: boolean}/);
+    Assert.doesNotMatch(Text,/\{\{Declarations\}\}/);
+    const Networking=ReadFile(Path.join(Site,'src/content/docs/candidate/preview.3/networking.md'),'utf8');
+    Assert.match(Networking,/RouteWebSocket/);Assert.match(Networking,/CancellationToken/);
+    Assert.doesNotMatch(Networking,/\{\{/);
+    Assert.match(ReadFile(Path.join(Site,'src/content/docs/candidate/preview.3/headless.md'),'utf8'),/HttpPolicyRequired/);
+    const Files=ReadFile(Path.join(Site,'src/content/docs/candidate/preview.3/files.md'),'utf8');
+    Assert.match(Files,/export type FileService/);Assert.match(Files,/export type Picker/);
+    Assert.match(Files,/SaveFile/);Assert.doesNotMatch(Files,/\{\{/);
+    const Images=ReadFile(Path.join(Site,'src/content/docs/candidate/preview.3/images.md'),'utf8');
+    Assert.match(Images,/Supports\("ImageRegion"\)/);
+    Assert.match(Images,/SourceRectOffset/);Assert.match(Images,/SourceRectSize/);
+    for (const [Name, Declaration] of [['binary', 'export type Writer'], ['config', 'export type Settings'], ['encoding', 'Encoding.Base64Decode('],
+      ['path', 'Path.Resolve('], ['spec', 'Spec.Run('], ['utc', 'Utc.Parse(']]) {
+      const Guide = ReadFile(Path.join(Site, 'src/content/docs/candidate/preview.3/libraries', Name + '.md'), 'utf8');
+      Assert.ok(Guide.includes(Declaration));
+      Assert.ok(Guide.includes('require("@'));
+    }
+  } finally { await Remove(Site,{recursive:true,force:true}); }
 });
 Test('development module declarations stop before implementations and reconcile the catalog', () => {
   const Catalog = JSON.parse(ReadFile(new URL('../../libraries/LuiWorkbench/Library.json', import.meta.url), 'utf8'));

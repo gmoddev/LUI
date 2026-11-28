@@ -1,0 +1,56 @@
+{
+  "Name": "Crypto",
+  "Signals": [],
+  "Methods": [
+    {
+      "Name": "Sha256",
+      "Arguments": [
+        "string"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "HmacSha256",
+      "Arguments": [
+        "string",
+        "string"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "RandomBytes",
+      "Arguments": [
+        "number"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "HkdfSha256",
+      "Arguments": [
+        "string",
+        "string",
+        "string",
+        "number"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "Seal",
+      "Arguments": [
+        "string",
+        "string",
+        "string"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "Open",
+      "Arguments": [
+        "string",
+        "string",
+        "string"
+      ],
+      "Returns": "string"
+    }
+  ]
+}

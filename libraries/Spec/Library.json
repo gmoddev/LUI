@@ -1,0 +1,25 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Spec",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Spec",
+      "Summary": "Run synchronous application tests and collect bounded benchmark timings.",
+      "Types": [
+        "Defer",
+        "Case",
+        "Result",
+        "BenchmarkOptions",
+        "BenchmarkResult"
+      ],
+      "Functions": [
+        "List",
+        "Run",
+        "Benchmark"
+      ]
+    }
+  ]
+}

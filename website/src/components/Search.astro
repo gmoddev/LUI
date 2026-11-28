@@ -1,6 +1,8 @@
 ---
 import Catalog from '../../Releases.json';
-const Version=Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
+const Experimental = Astro.url.pathname.includes('/candidate/ffi/');
+const Candidate=Astro.url.pathname.includes('/candidate/preview.3/');
+const Version=Experimental?'experimental FFI':Candidate?'preview.3 candidate':Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.Current;
 ---
 <lui-doc-search data-version={Version}>
   <button type="button" data-open aria-label="Search documentation" aria-keyshortcuts="Control+K Meta+K">Search <kbd>Ctrl / ⌘ K</kbd></button>
@@ -12,6 +14,8 @@ const Version=Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.
     <select id="LuiSearchVersion">
       <option value="0.1.0-preview.2" selected={Version==='0.1.0-preview.2'}>Preview.2</option>
       <option value="0.1.0-preview.1" selected={Version==='0.1.0-preview.1'}>Preview.1 (archive)</option>
+      <option value="experimental FFI" selected={Experimental}>Experimental FFI</option>
+        <option value="preview.3 candidate" selected={Candidate}>Preview.3 (unreleased candidate)</option>
       <option value="all">All SDK versions</option>
     </select>
     <p role="status" aria-live="polite" data-status>Enter at least two characters.</p>
@@ -58,7 +62,7 @@ const Version=Astro.url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1] || Catalog.
           for(const Row of Rows){
             const Url=new URL(Row.url,location.origin);if(Url.origin!==location.origin||!Url.pathname.startsWith('/LUI/'))continue;
             const Item=document.createElement('li');const Link=document.createElement('a');Link.href=Url.href;
-            const Sdk=Url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1]||this.dataset.version;
+            const Sdk=Url.pathname.includes('/candidate/ffi/')?'experimental FFI':Url.pathname.includes('/candidate/preview.3/')?'preview.3 candidate':Url.pathname.match(/\/docs\/sdk-([^/]+)\//)?.[1]||this.dataset.version;
             Link.textContent=(Row.meta.title||'Documentation')+' · '+Sdk;
             const Excerpt=document.createElement('p');Excerpt.textContent=new DOMParser().parseFromString(Row.excerpt||'','text/html').body.textContent;
             Item.append(Link,Excerpt);Fragment.append(Item);

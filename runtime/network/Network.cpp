@@ -2,8 +2,12 @@
 #include "../internal/State.h"
 #include "../internal/Modules.h"
 #include "../internal/Scheduler.h"
+#include "../internal/Http.h"
+#include "../internal/WebSocket.h"
+#include "../services/Domain.h"
 #include "http/Serializer.h"
 #include "tls/Provider.h"
+#include "websocket/Protocol.h"
 
 #include "lua.h"
 #include "lualib.h"
@@ -19,6 +23,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <new>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -27,6 +32,113 @@
 
 using Tcp = asio::ip::tcp;
 using ErrorCode = asio::error_code;
+
+static std::string HttpHost(std::string Host) {
+    ErrorCode Error;
+    auto Address = asio::ip::make_address(Host, Error);
+    if (!Error) return Address.to_string();
+    if (Host.empty() || Host.front() == '.' || Host.back() == '.') return {};
+    for (char& Byte : Host) {
+        if (Byte >= 'A' && Byte <= 'Z') Byte += 'a' - 'A';
+        if (!((Byte >= 'a' && Byte <= 'z') || (Byte >= '0' && Byte <= '9') || Byte == '-' || Byte == '.')) return {};
+    }
+    return Host;
+}
+static std::string HttpOrigin(const Lui::Http::Url& Url) {
+    auto Host = HttpHost(Url.Host);
+    return Host.empty() ? std::string() : (Url.Secure ? "https|" : "http|") + Host + "|" + std::to_string(Url.Port);
+}
+static bool HttpPublicAddress(const asio::ip::address& Address) {
+    if (Address.is_v6()) {
+        auto Bytes = Address.to_v6().to_bytes();
+        if (Address.to_v6().is_v4_mapped()) {
+            asio::ip::address_v4::bytes_type V4{{Bytes[12], Bytes[13], Bytes[14], Bytes[15]}};
+            return HttpPublicAddress(asio::ip::address_v4(V4));
+        }
+        // Conservatively admit global unicast only; exclude special transition,
+        // documentation and protocol-assignment prefixes. No NAT64 inference.
+        return (Bytes[0] & 0xe0) == 0x20 &&
+            !(Bytes[0] == 0x20 && Bytes[1] == 0x01 && Bytes[2] < 2) &&
+            !(Bytes[0] == 0x20 && Bytes[1] == 0x01 && Bytes[2] == 0x0d && Bytes[3] == 0xb8) &&
+            !(Bytes[0] == 0x20 && Bytes[1] == 0x02) &&
+            !(Bytes[0] == 0x3f && Bytes[1] == 0xff && (Bytes[2] & 0xf0) == 0);
+    }
+    auto Bytes = Address.to_v4().to_bytes();
+    return Bytes[0] != 0 && Bytes[0] != 10 && Bytes[0] != 127 && Bytes[0] < 224 &&
+        !(Bytes[0] == 100 && Bytes[1] >= 64 && Bytes[1] <= 127) &&
+        !(Bytes[0] == 169 && Bytes[1] == 254) &&
+        !(Bytes[0] == 172 && Bytes[1] >= 16 && Bytes[1] <= 31) &&
+        !(Bytes[0] == 192 && ((Bytes[1] == 0 && (Bytes[2] == 0 || Bytes[2] == 2)) ||
+            Bytes[1] == 168 || (Bytes[1] == 88 && Bytes[2] == 99))) &&
+        !(Bytes[0] == 198 && (Bytes[1] == 18 || Bytes[1] == 19 || (Bytes[1] == 51 && Bytes[2] == 100))) &&
+        !(Bytes[0] == 203 && Bytes[1] == 0 && Bytes[2] == 113);
+}
+static std::shared_ptr<HttpRuntimeState> HttpState(LuiRuntime* Runtime) {
+    if (!Runtime->HttpState) Runtime->HttpState = std::make_shared<HttpRuntimeState>();
+    return Runtime->HttpState;
+}
+extern "C" LUI_API int LUI_CALL Lui_SetHttpOptionsV1(LuiRuntime* Runtime, const LuiHttpOptionsV1* Options) {
+    if (!Runtime || Runtime->Owner != std::this_thread::get_id()) return 0;
+    if (!Options || Options->StructSize != sizeof(*Options) || Options->AbiVersion != 1 ||
+        Options->Reserved || (Options->Flags & ~LUI_HTTP_PUBLIC_ONLY) ||
+        Options->MaxRequestBytes > 1024 * 1024 || Options->MaxResponseBytes > 8 * 1024 * 1024 ||
+        !Options->MaxConcurrent || Options->MaxConcurrent > 32 ||
+        Options->MaxReservedBytes < 256 * 1024 || Options->MaxReservedBytes > 608ull * 1024 * 1024 ||
+        Options->OriginCount > 64 || (Options->OriginCount && !Options->Origins) ||
+        Runtime->ShuttingDown || Runtime->ApplicationStarted || Runtime->Network ||
+        (Runtime->HttpState && Runtime->HttpState->Configured)) return 0;
+    try {
+        auto Next = std::make_shared<HttpRuntimeState>();
+        Next->Flags = Options->Flags; Next->MaxRequestBytes = Options->MaxRequestBytes;
+        Next->MaxResponseBytes = Options->MaxResponseBytes; Next->MaxConcurrent = Options->MaxConcurrent;
+        Next->MaxReservedBytes = Options->MaxReservedBytes;
+        for (uint32_t Index = 0; Index < Options->OriginCount; ++Index) {
+            const auto& Input = Options->Origins[Index];
+            if (!Input.Url || !Input.UrlBytes || Input.UrlBytes > 8192 || Input.Reserved) return 0;
+            const std::string Text(Input.Url, Input.UrlBytes);
+            Lui::Http::Url Url;
+            if (Lui::Http::ParseUrl(Text, Url) != Lui::Http::ErrorCode::None || Url.Target != "/") return 0;
+            auto Key = HttpOrigin(Url);
+            if (Key.empty() || std::find(Next->Origins.begin(), Next->Origins.end(), Key) != Next->Origins.end()) return 0;
+            Next->Origins.push_back(std::move(Key));
+        }
+        Next->Configured = true; Runtime->HttpState = std::move(Next); return 1;
+    } catch (...) { return 0; }
+}
+extern "C" LUI_API int LUI_CALL Lui_GetHttpStatsV1(LuiRuntime* Runtime, LuiHttpStatsV1* Stats) {
+    if (!Runtime || Runtime->Owner != std::this_thread::get_id() || !Stats ||
+        Stats->StructSize != sizeof(*Stats) || Stats->AbiVersion != 1 || Runtime->ShuttingDown) return 0;
+    LuiHttpStatsV1 Value{sizeof(Value), 1};
+    if (const auto& State = Runtime->HttpState) {
+        Value.LiveRequests = State->LiveRequests.load(); Value.PeakRequests = State->PeakRequests.load();
+        Value.ReservedBytes = State->ReservedBytes.load(); Value.PeakReservedBytes = State->PeakReservedBytes.load();
+        Value.Accepted = State->Accepted.load(); Value.Rejected = State->Rejected.load(); Value.Completed = State->Completed.load();
+        Value.LiveCancellationTokens = State->LiveCancellationTokens.load();
+    }
+    *Stats = Value; return 1;
+}
+struct HttpReservation {
+    std::shared_ptr<HttpRuntimeState> State;
+    uint64_t Bytes;
+    HttpReservation(std::shared_ptr<HttpRuntimeState> State, uint64_t Bytes) : State(std::move(State)), Bytes(Bytes) {
+        const auto Live = this->State->LiveRequests.fetch_add(1) + 1;
+        const auto Reserved = this->State->ReservedBytes.fetch_add(Bytes) + Bytes;
+        // Admission is owner-only; workers only decrement these values.
+        this->State->PeakRequests = std::max(this->State->PeakRequests.load(), Live);
+        this->State->PeakReservedBytes = std::max(this->State->PeakReservedBytes.load(), Reserved);
+        ++this->State->Accepted;
+    }
+    ~HttpReservation() { State->ReservedBytes.fetch_sub(Bytes); State->LiveRequests.fetch_sub(1); }
+};
+struct HttpCancellation {
+    std::shared_ptr<HttpRuntimeState> State;
+    std::atomic<bool> Canceled{false};
+    bool Posted = false; // Owner only; one successful cancellation job per token.
+    explicit HttpCancellation(std::shared_ptr<HttpRuntimeState> State) : State(std::move(State)) { ++this->State->LiveCancellationTokens; }
+    ~HttpCancellation() { --State->LiveCancellationTokens; }
+};
+using HttpTokenRoot = std::shared_ptr<HttpCancellation>;
+static constexpr int HttpTokenTag = 4;
 
 template<typename... Arguments>
 static int Raise(lua_State* State, const char* Format, Arguments... Values) {
@@ -39,6 +151,8 @@ struct NetworkDatagramSocket;
 struct HttpOperation;
 struct HostedServer;
 struct HostedSession;
+struct WebSocketConnection;
+static void CancelWebSockets(NetworkContext* Network, const HttpTokenRoot& Token);
 static void RegisterHostedTypes(lua_State* State);
 static void DispatchHosted(LuiRuntime* Runtime, const std::shared_ptr<HostedSession>& Session);
 static void ReleaseHosted(LuiRuntime* Runtime);
@@ -75,9 +189,10 @@ struct NetworkConnection {
 };
 
 struct NetworkContext {
-    explicit NetworkContext(LuiRuntime* Owner) : Runtime(Owner), Work(asio::make_work_guard(Io)),
+    explicit NetworkContext(LuiRuntime* Owner) : Runtime(Owner), OwnerDomain(Owner->NativeDomain), Work(asio::make_work_guard(Io)),
         Worker([this] { Io.run(); }) {}
     LuiRuntime* Runtime;
+    std::shared_ptr<Lui::Native::Domain> OwnerDomain;
     asio::io_context Io;
     asio::executor_work_guard<asio::io_context::executor_type> Work;
     int NextId = 1;
@@ -87,6 +202,10 @@ struct NetworkContext {
     std::atomic<uint64_t> HttpCancelThrough{0};
     std::atomic<bool> HttpCancelPending{false};
     std::unordered_map<int, std::shared_ptr<HttpOperation>> HttpOperations; // Network worker only.
+    std::unordered_map<int, std::shared_ptr<WebSocketConnection>> WebSockets; // Scheduler owner only; worker owns each socket's protocol state.
+    std::unordered_map<int, std::shared_ptr<WebSocketConnection>> ActiveWebSockets; // Worker only.
+    std::deque<std::shared_ptr<WebSocketConnection>> ConnectingWebSockets; // Worker only, bounded by eight admitted roots.
+    int ConnectingWebSocket = 0;
     std::unordered_map<int, std::shared_ptr<NetworkListener>> Listeners;
     std::unordered_map<int, std::shared_ptr<NetworkConnection>> Connections;
     std::unordered_map<int, std::shared_ptr<NetworkDatagramSocket>> Datagrams; // Scheduler owner only.
@@ -157,8 +276,12 @@ static std::string NetworkError(const ErrorCode& Error) {
 }
 
 static void Queue(LuiRuntime* Runtime, NetworkCompletion Completion) {
-    std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex);
-    if (!Runtime->ShuttingDown) Runtime->NetworkCompletions.push_back(std::move(Completion));
+    bool Queued = false;
+    {
+        std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex);
+        if (!Runtime->ShuttingDown) { Runtime->NetworkCompletions.push_back(std::move(Completion)); Queued = true; }
+    }
+    if (Queued) Lui::Native::NotifyOwner(Runtime->Network->OwnerDomain);
 }
 
 static bool QueueClosed(LuiRuntime* Runtime, const std::shared_ptr<NetworkConnection>& Connection) {
@@ -341,6 +464,10 @@ static int BindTcp(lua_State* State, bool Raw) {
 static int ListenTcp(lua_State* State) { return BindTcp(State, true); }
 
 struct DialOperation {
+    // Optional protocol ownership lease. Declared first so it is released only
+    // after resolver, timer, endpoint and attempt storage actually retires.
+    // Cancellation can settle the caller before Asio releases a DNS handler.
+    std::shared_ptr<void> RetentionLease;
     DialOperation(asio::io_context& Io, LuiRuntime* Owner, int TaskReference)
         : Runtime(Owner), Reference(TaskReference), Resolver(Io), Deadline(Io), Pace(Io), Io(Io) {}
     LuiRuntime* Runtime;
@@ -355,9 +482,20 @@ struct DialOperation {
     size_t Active = 0;
     bool Done = false;
     bool PacePending = false;
+    bool HttpPublicOnly = false;
     std::string LastError;
     std::function<void(std::shared_ptr<NetworkConnection>, std::string)> Completion;
+    std::function<void(int)> Failure; // Optional private protocol exception boundary.
 };
+
+template<typename Function>
+static auto DialGuard(std::shared_ptr<DialOperation> Operation, Function Callback) {
+    return [Operation = std::move(Operation), Callback = std::move(Callback)](auto&&... Arguments) mutable {
+        try { Callback(std::forward<decltype(Arguments)>(Arguments)...); }
+        catch (const std::bad_alloc&) { if (Operation->Failure) Operation->Failure(1); else throw; }
+        catch (const std::exception&) { if (Operation->Failure) Operation->Failure(2); else throw; }
+    };
+}
 
 static void FinishDial(const std::shared_ptr<DialOperation>& Operation,
     const std::shared_ptr<NetworkConnection>& Winner, const std::string& Error) {
@@ -388,10 +526,10 @@ static void ScheduleDialPace(const std::shared_ptr<DialOperation>& Operation) {
         Operation->Active >= 2) return;
     Operation->PacePending = true;
     Operation->Pace.expires_after(std::chrono::milliseconds(250));
-    Operation->Pace.async_wait([Operation](const ErrorCode& Error) {
+    Operation->Pace.async_wait(DialGuard(Operation, [Operation](const ErrorCode& Error) {
         Operation->PacePending = false;
         if (!Error) StartDial(Operation);
-    });
+    }));
 }
 
 static void StartDial(const std::shared_ptr<DialOperation>& Operation) {
@@ -401,7 +539,7 @@ static void StartDial(const std::shared_ptr<DialOperation>& Operation) {
     Operation->Attempts.push_back(Connection);
     ++Operation->Active;
     Connection->Socket.async_connect(Endpoint,
-        [Operation, Connection](const ErrorCode& Error) {
+        DialGuard(Operation, [Operation, Connection](const ErrorCode& Error) {
             if (Operation->Done) return;
             --Operation->Active;
             if (!Error) {
@@ -414,20 +552,20 @@ static void StartDial(const std::shared_ptr<DialOperation>& Operation) {
             if (Operation->Next >= Operation->Endpoints.size() && Operation->Active == 0)
                 FinishDial(Operation, {}, Operation->LastError);
             else ScheduleDialPace(Operation);
-        });
+        }));
     ScheduleDialPace(Operation);
 }
 
 static void BeginDial(const std::shared_ptr<DialOperation>& Operation, const std::string& Host,
     unsigned short Port, bool LoopbackOnly, unsigned TimeoutMs = 10000) {
-    asio::post(Operation->Io, [Operation, Host, Port, LoopbackOnly, TimeoutMs] {
+    asio::post(Operation->Io, DialGuard(Operation, [Operation, Host, Port, LoopbackOnly, TimeoutMs] {
         if (Operation->Done) return;
         Operation->Deadline.expires_after(std::chrono::milliseconds(TimeoutMs));
-        Operation->Deadline.async_wait([Operation](const ErrorCode& Error) {
+        Operation->Deadline.async_wait(DialGuard(Operation, [Operation](const ErrorCode& Error) {
             if (!Error) FinishDial(Operation, {}, "[LUI:Network] TimedOut");
-        });
+        }));
         Operation->Resolver.async_resolve(Host, std::to_string(Port),
-            [Operation, LoopbackOnly](const ErrorCode& Error, Tcp::resolver::results_type Results) {
+            DialGuard(Operation, [Operation, LoopbackOnly](const ErrorCode& Error, Tcp::resolver::results_type Results) {
                 if (Operation->Done) return;
                 if (Error) {
                     FinishDial(Operation, {}, NetworkError(Error));
@@ -440,6 +578,7 @@ static void BeginDial(const std::shared_ptr<DialOperation>& Operation, const std
                 for (const auto& Result : Results) {
                     const auto Endpoint = Result.endpoint();
                     if (LoopbackOnly && !Endpoint.address().is_loopback()) continue;
+                    if (Operation->HttpPublicOnly && !HttpPublicAddress(Endpoint.address())) continue;
                     if (!FirstSet) {
                         FirstIPv6 = Endpoint.address().is_v6();
                         FirstSet = true;
@@ -456,13 +595,13 @@ static void BeginDial(const std::shared_ptr<DialOperation>& Operation, const std
                         Operation->Endpoints.push_back(Second[Index]);
                 }
                 if (Operation->Endpoints.empty()) {
-                    FinishDial(Operation, {}, LoopbackOnly ? "[LUI:Network] PolicyDenied" :
+                    FinishDial(Operation, {}, (LoopbackOnly || Operation->HttpPublicOnly) ? "[LUI:Network] PolicyDenied" :
                         "[LUI:Network] NameNotFound");
                     return;
                 }
                 StartDial(Operation);
-            });
-    });
+            }));
+    }));
 }
 
 static int ConnectTcp(lua_State* State) {
@@ -499,6 +638,9 @@ static int ConnectTcp(lua_State* State) {
 }
 
 struct HttpOperation {
+    // Last member destroyed: pending handlers may retain this operation after
+    // delivery. Account Wire/parser/settled response until their actual release.
+    std::shared_ptr<HttpReservation> Reservation;
     HttpOperation(NetworkContext* Network, int Reference, std::string Wire, std::string Method, size_t MaxBody)
         : Network(Network), Reference(Reference), Wire(std::move(Wire)), Method(std::move(Method)), Deadline(Network->Io) {
         Lui::Http::Limits Bounds;
@@ -514,6 +656,7 @@ struct HttpOperation {
     std::shared_ptr<NetworkConnection> Connection;
     std::shared_ptr<Lui::Tls::Stream> Tls;
     std::shared_ptr<Lui::Http::Message> ClosingResponse;
+    HttpTokenRoot Cancellation;
     std::unique_ptr<Lui::Http::Parser> Parser;
     std::array<char, 16384> Buffer;
     unsigned Informational = 0;
@@ -551,6 +694,8 @@ static void FinishHttp(const std::shared_ptr<HttpOperation>& Operation, std::str
     Completion.Reference = Operation->Reference;
     Completion.Error = std::move(Error);
     Completion.HttpResponse = std::move(Response);
+    Completion.HttpReservation = Operation->Reservation;
+    ++Operation->Reservation->State->Completed;
     Queue(Operation->Network->Runtime, std::move(Completion));
 }
 
@@ -639,9 +784,11 @@ static int HttpRequest(lua_State* State, bool Get) {
     auto* Runtime = GetRuntime(State);
     if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT))
         return Raise(State, "[LUI:Capabilities] NetworkClientRequired");
+    const auto Policy = HttpState(Runtime);
     Lui::Http::Message Request;
+    HttpTokenRoot Cancellation;
     std::string Url;
-    size_t Timeout = 10000, MaxBody = 1024 * 1024;
+    size_t Timeout = 10000, MaxBody = std::min<uint32_t>(1024 * 1024, Policy->MaxResponseBytes);
     if (Get) {
         size_t Length;
         const char* Text = luaL_checklstring(State, 2, &Length);
@@ -653,13 +800,21 @@ static int HttpRequest(lua_State* State, bool Get) {
         Url = HttpString(State, 2, "Url", "");
         Request.Method = HttpString(State, 2, "Method", "GET");
         Timeout = HttpNumber(State, 2, "TimeoutMs", 10000, 1, 60000);
-        MaxBody = HttpNumber(State, 2, "MaxResponseBytes", 1024 * 1024, 0, 8 * 1024 * 1024);
+        MaxBody = HttpNumber(State, 2, "MaxResponseBytes", MaxBody, 0, Policy->MaxResponseBytes);
+        lua_getfield(State, 2, "CancellationToken");
+        if (!lua_isnil(State, -1)) {
+            auto* Root = static_cast<HttpTokenRoot*>(lua_touserdatatagged(State, -1, HttpTokenTag));
+            if (!Root || !*Root || (*Root)->State != Policy) return Raise(State, "[LUI:Http] InvalidCancellationToken");
+            Cancellation = *Root;
+            if (Cancellation->Canceled) return Raise(State, "[LUI:Http] Canceled");
+        }
+        lua_pop(State, 1);
         lua_getfield(State, 2, "Body");
         if (!lua_isnil(State, -1)) {
             size_t Length = 0;
             const char* Data = lua_type(State, -1) == LUA_TBUFFER
                 ? static_cast<const char*>(lua_tobuffer(State, -1, &Length)) : luaL_checklstring(State, -1, &Length);
-            if (Length > 1024 * 1024) return Raise(State, "[LUI:Http] LimitExceeded");
+            if (Length > Policy->MaxRequestBytes) { ++Policy->Rejected; return Raise(State, "[LUI:Http] LimitExceeded"); }
             Request.Body.assign(Data, Length);
         }
         lua_pop(State, 1);
@@ -695,6 +850,14 @@ static int HttpRequest(lua_State* State, bool Get) {
     auto UrlError = Lui::Http::ParseUrl(Url, Destination);
     if (UrlError != Lui::Http::ErrorCode::None)
         return Raise(State, "[LUI:Http] %s", Lui::Http::GetErrorName(UrlError));
+    const auto Origin = HttpOrigin(Destination);
+    if ((!Policy->Origins.empty() && std::find(Policy->Origins.begin(), Policy->Origins.end(), Origin) == Policy->Origins.end()) ||
+        ((Policy->Flags & LUI_HTTP_PUBLIC_ONLY) && [&] {
+            ErrorCode Error; auto Address = asio::ip::make_address(Destination.Host, Error);
+            return !Error && !HttpPublicAddress(Address);
+        }())) {
+        ++Policy->Rejected; return Raise(State, "[LUI:Http] PolicyDenied");
+    }
     bool LoopbackOnly = (Runtime->NetworkPolicyFlags & LUI_NETWORK_POLICY_CLIENT_LOOPBACK_ONLY) != 0;
     if (Runtime->ClientPortMin && (Destination.Port < Runtime->ClientPortMin || Destination.Port > Runtime->ClientPortMax))
         return Raise(State, "[LUI:Http] PolicyDenied");
@@ -720,16 +883,26 @@ static int HttpRequest(lua_State* State, bool Get) {
     if (SerializeError != Lui::Http::ErrorCode::None)
         return Raise(State, "[LUI:Http] %s", Lui::Http::GetErrorName(SerializeError));
     CheckAwait(State);
+    if ((Runtime->Network && Runtime->Network->HttpOutstanding >= Policy->MaxConcurrent) || Policy->LiveRequests >= Policy->MaxConcurrent) {
+        ++Policy->Rejected; return Raise(State, "[LUI:Http] TooManyRequests");
+    }
+    const uint64_t ReservationBytes = 2ull * Wire.size() + 2ull * MaxBody + 256 * 1024;
+    if (ReservationBytes > Policy->MaxReservedBytes || Policy->ReservedBytes > Policy->MaxReservedBytes - ReservationBytes) {
+        ++Policy->Rejected; return Raise(State, "[LUI:Http] ResourceExhausted");
+    }
     auto* Network = Context(Runtime);
-    if (Network->HttpOutstanding >= 32) return Raise(State, "[LUI:Http] TooManyRequests");
-    int Reference = BeginAwait(State);
-    ++Network->HttpOutstanding;
+    const int Reference = Runtime->ActiveTaskReference;
     auto Operation = std::make_shared<HttpOperation>(Network, Reference, std::move(Wire), Request.Method, MaxBody);
+    Operation->Reservation = std::make_shared<HttpReservation>(Policy, ReservationBytes);
+    Operation->Cancellation = std::move(Cancellation);
     Operation->Sequence = ++Network->HttpSequence;
     Operation->MaxBody = MaxBody;
-    asio::post(Network->Io, [Operation, Destination, LoopbackOnly, Timeout] {
+    BeginAwait(State);
+    ++Network->HttpOutstanding;
+    try { asio::post(Network->Io, [Operation, Destination, LoopbackOnly, Timeout] {
         Operation->Network->HttpOperations.emplace(Operation->Reference, Operation);
-        if (Operation->Sequence <= Operation->Network->HttpCancelThrough.load()) {
+        if (Operation->Sequence <= Operation->Network->HttpCancelThrough.load() ||
+            (Operation->Cancellation && Operation->Cancellation->Canceled)) {
             FinishHttp(Operation, "[LUI:Http] Canceled");
             return;
         }
@@ -738,6 +911,7 @@ static int HttpRequest(lua_State* State, bool Get) {
             if (!Error) FinishHttp(Operation, "[LUI:Http] TimedOut");
         });
         Operation->Dial = std::make_shared<DialOperation>(Operation->Network->Io, Operation->Network->Runtime, 0);
+        Operation->Dial->HttpPublicOnly = (Operation->Reservation->State->Flags & LUI_HTTP_PUBLIC_ONLY) != 0;
         std::weak_ptr<HttpOperation> Weak = Operation;
         Operation->Dial->Completion = [Weak, Destination](std::shared_ptr<NetworkConnection> Connection, std::string Error) {
             auto Operation = Weak.lock();
@@ -759,12 +933,21 @@ static int HttpRequest(lua_State* State, bool Get) {
                 });
         };
         BeginDial(Operation->Dial, Destination.Host, Destination.Port, LoopbackOnly, static_cast<unsigned>(Timeout));
-    });
+    }); } catch (const std::bad_alloc&) {
+        Runtime->PendingAsyncReferences.erase(Reference); Runtime->ActiveTaskHasWaiter = false;
+        --Network->HttpOutstanding; ++Policy->Rejected; ++Policy->Completed; throw;
+    }
     return lua_yield(State, 0);
 }
 
-static int RequestAsync(lua_State* State) { return HttpRequest(State, false); }
-static int GetAsync(lua_State* State) { return HttpRequest(State, true); }
+static int RequestAsync(lua_State* State) {
+    try { return HttpRequest(State, false); }
+    catch (const std::bad_alloc&) { return Raise(State, "[LUI:Http] ResourceExhausted"); }
+}
+static int GetAsync(lua_State* State) {
+    try { return HttpRequest(State, true); }
+    catch (const std::bad_alloc&) { return Raise(State, "[LUI:Http] ResourceExhausted"); }
+}
 static int CancelHttp(lua_State* State) {
     CheckModuleEffect(State);
     auto* Runtime = GetRuntime(State);
@@ -772,7 +955,7 @@ static int CancelHttp(lua_State* State) {
         return Raise(State, "[LUI:Capabilities] NetworkClientRequired");
     if (auto* Network = Runtime->Network) {
         Network->HttpCancelThrough = Network->HttpSequence;
-        if (!Network->HttpCancelPending.exchange(true)) asio::post(Network->Io, [Network] {
+        if (!Network->HttpCancelPending.exchange(true)) try { asio::post(Network->Io, [Network] {
             Network->HttpCancelPending = false;
             const uint64_t Through = Network->HttpCancelThrough.load();
             // Coalesce floods while retaining later cancellation cutoffs. Starts after a
@@ -780,9 +963,65 @@ static int CancelHttp(lua_State* State) {
             auto Operations = Network->HttpOperations;
             for (const auto& Entry : Operations)
                 if (Entry.second->Sequence <= Through) FinishHttp(Entry.second, "[LUI:Http] Canceled");
-        });
+        }); } catch (const std::bad_alloc&) {
+            Network->HttpCancelPending = false;
+            return Raise(State, "[LUI:Http] ResourceExhausted");
+        }
     }
     return 0;
+}
+
+static HttpTokenRoot* CheckedHttpToken(lua_State* State) {
+    auto* Root = static_cast<HttpTokenRoot*>(lua_touserdatatagged(State, 1, HttpTokenTag));
+    if (!Root || !*Root || (*Root)->State != GetRuntime(State)->HttpState)
+        luaL_error(State, "[LUI:Http] InvalidCancellationToken");
+    return Root;
+}
+static int CancelHttpToken(lua_State* State) {
+    CheckModuleEffect(State);
+    const auto Token = *CheckedHttpToken(State);
+    Token->Canceled = true;
+    if (Token->Posted) return 0;
+    if (auto* Network = GetRuntime(State)->Network) try { asio::post(Network->Io, [Network, Token] {
+        auto Operations = Network->HttpOperations;
+        for (const auto& Entry : Operations)
+            if (Entry.second->Cancellation == Token) FinishHttp(Entry.second, "[LUI:Http] Canceled");
+        CancelWebSockets(Network, Token);
+    }); } catch (const std::bad_alloc&) { return Raise(State, "[LUI:Http] ResourceExhausted"); }
+    Token->Posted = true;
+    return 0;
+}
+static int HttpTokenIndex(lua_State* State) {
+    auto* Root = CheckedHttpToken(State);
+    const char* Key = luaL_checkstring(State, 2);
+    if (!std::strcmp(Key, "IsCanceled")) lua_pushboolean(State, (*Root)->Canceled.load());
+    else if (!std::strcmp(Key, "Cancel")) lua_pushcfunction(State, CancelHttpToken, "HttpCancellationToken.Cancel");
+    else lua_pushnil(State);
+    return 1;
+}
+static int HttpTokenText(lua_State* State) {
+    CheckedHttpToken(State);
+    lua_pushliteral(State, "HttpCancellationToken");
+    return 1;
+}
+static void DestroyHttpToken(lua_State*, void* Pointer) { static_cast<HttpTokenRoot*>(Pointer)->~HttpTokenRoot(); }
+static int CreateHttpTokenImpl(lua_State* State) {
+    CheckModuleEffect(State);
+    auto* Runtime = GetRuntime(State);
+    if (!(Runtime->GrantedCapabilities & LUI_CAPABILITY_NETWORK_CLIENT)) return Raise(State, "[LUI:Capabilities] NetworkClientRequired");
+    auto Policy = HttpState(Runtime);
+    if (Policy->LiveCancellationTokens >= 128) return Raise(State, "[LUI:Http] TooManyCancellationTokens");
+    // Allocate VM storage first so an allocator error cannot orphan a native root.
+    auto* Root = static_cast<HttpTokenRoot*>(lua_newuserdatatagged(State, sizeof(HttpTokenRoot), HttpTokenTag));
+    new (Root) HttpTokenRoot();
+    try { *Root = std::make_shared<HttpCancellation>(std::move(Policy)); }
+    catch (const std::bad_alloc&) { return Raise(State, "[LUI:Http] ResourceExhausted"); }
+    lua_getfield(State, LUA_REGISTRYINDEX, "LuiHttpCancellationMeta"); lua_setmetatable(State, -2);
+    return 1;
+}
+static int CreateHttpToken(lua_State* State) {
+    try { return CreateHttpTokenImpl(State); }
+    catch (const std::bad_alloc&) { return Raise(State, "[LUI:Http] ResourceExhausted"); }
 }
 
 static void CloseListenerWorker(LuiRuntime* Runtime, const std::shared_ptr<NetworkListener>& Listener) {
@@ -1175,10 +1414,20 @@ static int MaterializeResult(lua_State* State);
 
 // Uses the same private worker, capability policy, and scheduler completion bridge.
 #include "Udp.inl"
+#include "websocket/Runtime.inl"
 
 void RegisterNetworkTypes(lua_State* State) {
     RegisterHostedTypes(State);
     RegisterUdpTypes(State);
+    RegisterWebSocketTypes(State);
+    lua_setuserdatadtor(State, HttpTokenTag, DestroyHttpToken);
+    luaL_newmetatable(State, "LuiHttpCancellationMeta");
+    lua_pushcfunction(State, HttpTokenIndex, "HttpCancellationToken.__index"); lua_setfield(State, -2, "__index");
+    lua_pushcfunction(State, ReadOnly, "HttpCancellationToken.__newindex"); lua_setfield(State, -2, "__newindex");
+    lua_pushcfunction(State, HttpTokenText, "HttpCancellationToken.__tostring"); lua_setfield(State, -2, "__tostring");
+    lua_pushliteral(State, "HttpCancellationToken"); lua_setfield(State, -2, "__metatable");
+    lua_setreadonly(State, -1, true);
+    lua_pop(State, 1);
     lua_pushcfunction(State, MaterializeResult, "NetworkResult");
     lua_setfield(State, LUA_REGISTRYINDEX, "LuiNetworkMaterialize");
     luaL_newmetatable(State, "LuiTcpListenerMeta");
@@ -1214,6 +1463,7 @@ void PushHttpService(lua_State* State) {
     lua_pushcfunction(State, RequestAsync, "HttpService.RequestAsync"); lua_setfield(State, -2, "RequestAsync");
     lua_pushcfunction(State, GetAsync, "HttpService.GetAsync"); lua_setfield(State, -2, "GetAsync");
     lua_pushcfunction(State, CancelHttp, "HttpService.CancelAll"); lua_setfield(State, -2, "CancelAll");
+    lua_pushcfunction(State, CreateHttpToken, "HttpService.CreateCancellationToken"); lua_setfield(State, -2, "CreateCancellationToken");
     lua_setreadonly(State, -1, true);
 }
 
@@ -1237,6 +1487,14 @@ static int MaterializeResult(lua_State* State) {
     auto* Completion = static_cast<NetworkCompletion*>(lua_touserdata(State, 1));
     if (!Completion->Error.empty()) {
         lua_pushlstring(State, Completion->Error.data(), Completion->Error.size());
+    } else if (Completion->Type == NetworkCompletion::Kind::WebSocket) {
+        PushWebSocket(State, Completion->WebSocket);
+    } else if (Completion->Type == NetworkCompletion::Kind::WebSocketMessage) {
+        lua_createtable(State, 0, 2);
+        const auto& Payload = *Completion->WebSocketData;
+        lua_pushlstring(State, Payload.Data.data(), Payload.Data.size()); lua_setfield(State, -2, "Data");
+        lua_pushboolean(State, Payload.Binary); lua_setfield(State, -2, "Binary");
+        lua_setreadonly(State, -1, true);
     } else if (Completion->Type == NetworkCompletion::Kind::HttpResponse) {
         const auto& Response = *Completion->HttpResponse;
         lua_createtable(State, 0, 6);
@@ -1269,6 +1527,8 @@ static int MaterializeResult(lua_State* State) {
 }
 
 int DrainNetworkCompletions(LuiRuntime* Runtime) {
+    DrainWebSocketFailures(Runtime);
+    DrainHostedStops(Runtime);
     int Count = 0;
     while (Count < 64) {
         NetworkCompletion Completion;
@@ -1284,13 +1544,30 @@ int DrainNetworkCompletions(LuiRuntime* Runtime) {
             continue;
         }
         if (Completion.Type == NetworkCompletion::Kind::HostedRequest) {
-            DispatchHosted(Runtime, Completion.Session);
+            try{DispatchHosted(Runtime, Completion.Session);}
+            catch(const std::bad_alloc&){HostedFailure(Runtime,Completion.Session,"dispatch admission failed");}
             ++Count;
             continue;
         }
+        if (Completion.Type == NetworkCompletion::Kind::HostedWebSocket) {
+            DispatchHostedWebSocket(Runtime, Completion.Session, Completion.WebSocket);
+            ++Count; continue;
+        }
         if (Completion.Type == NetworkCompletion::Kind::HttpResponse && Runtime->Network->HttpOutstanding)
             --Runtime->Network->HttpOutstanding;
-        if (Runtime->PendingAsyncReferences.erase(Completion.Reference) == 0) continue;
+        if (Completion.WebSocket) {
+            for (auto& Delivery : Completion.WebSocket->Deliveries) if (Delivery.load() == -Completion.Reference) Delivery = 0;
+            if (Completion.Reference == Completion.WebSocket->OwnerConnectReference) Completion.WebSocket->OwnerConnectReference = 0;
+            for (auto& Reference : Completion.WebSocket->SendReferences) if (Reference == Completion.Reference) Reference = 0;
+            if (Completion.Type == NetworkCompletion::Kind::WebSocket && !Completion.Error.empty())
+                Runtime->Network->WebSockets.erase(Completion.WebSocket->Id);
+            else if (Completion.Type != NetworkCompletion::Kind::WebSocket && Completion.Reference == Completion.WebSocket->ReceiveReference)
+                Completion.WebSocket->ReceiveReference = 0;
+        }
+        if (Runtime->PendingAsyncReferences.erase(Completion.Reference) == 0) {
+            if (Completion.Type == NetworkCompletion::Kind::WebSocket && Completion.WebSocket) AbandonWebSocket(Completion.WebSocket);
+            continue;
+        }
         lua_getref(Runtime->State, Completion.Reference);
         lua_State* Thread = lua_tothread(Runtime->State, -1);
         lua_pop(Runtime->State, 1);
@@ -1306,6 +1583,7 @@ int DrainNetworkCompletions(LuiRuntime* Runtime) {
             if (Completion.Type == NetworkCompletion::Kind::None && Completion.Error.empty()) {
                 ResumeScheduledTask(Runtime, Completion.Reference, 0);
             } else if (!lua_checkstack(Thread, 1)) {
+                if (Completion.Type == NetworkCompletion::Kind::WebSocket && Completion.WebSocket) AbandonWebSocket(Completion.WebSocket);
                 Runtime->LastError = "[LUI:Network] OutOfMemory while resuming network task";
                 if (Runtime->LogCallback) Runtime->LogCallback(Runtime->LogContext, "Error", Runtime->LastError.c_str());
                 CompleteNetworkTask(Runtime, Completion.Reference, nullptr, LUA_ERRMEM);
@@ -1314,15 +1592,35 @@ int DrainNetworkCompletions(LuiRuntime* Runtime) {
                 lua_getfield(Runtime->State, LUA_REGISTRYINDEX, "LuiNetworkMaterialize");
                 lua_pushlightuserdata(Runtime->State, &Completion);
                 const int MaterializeStatus = lua_pcall(Runtime->State, 1, 1, 0);
+                if (MaterializeStatus != LUA_OK && Completion.Type == NetworkCompletion::Kind::WebSocket && Completion.WebSocket)
+                    AbandonWebSocket(Completion.WebSocket);
                 lua_xmove(Runtime->State, Thread, 1);
                 if (MaterializeStatus != LUA_OK || !Completion.Error.empty())
                     ResumeScheduledTask(Runtime, Completion.Reference, 0, true);
                 else ResumeScheduledTask(Runtime, Completion.Reference, 1);
             }
-        }
+        } else if (Completion.Type == NetworkCompletion::Kind::WebSocket && Completion.WebSocket) AbandonWebSocket(Completion.WebSocket);
         ++Count;
     }
+    bool Pending = false;
+    {
+        std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex);
+        Pending = !Runtime->NetworkCompletions.empty();
+    }
+    if (Pending && Runtime->Network) Lui::Native::NotifyOwner(Runtime->Network->OwnerDomain);
     return Count;
+}
+
+bool NetworkHasPendingWork(LuiRuntime* Runtime) {
+    if (!Runtime || !Runtime->Network) return false;
+    auto* Network = Runtime->Network;
+    if (Network->HttpOutstanding || (Runtime->HttpState && Runtime->HttpState->LiveRequests)) return true;
+    for (const auto& Entry : Network->Listeners) if (Entry.second->Open) return true;
+    for (const auto& Entry : Network->Connections) if (Entry.second->Open) return true;
+    for (const auto& Entry : Network->Datagrams) if (Entry.second->Open) return true;
+    for (const auto& Entry : Network->Servers) if (Entry.second->Open || (Entry.second->StopRequested && !Entry.second->StopPosted)) return true;
+    for (const auto& Entry : Network->WebSockets) if (Entry.second->Phase != 3) return true;
+    return false;
 }
 
 void CloseNetwork(LuiRuntime* Runtime) {
@@ -1331,6 +1629,7 @@ void CloseNetwork(LuiRuntime* Runtime) {
     Network->Work.reset();
     Network->Io.stop();
     if (Network->Worker.joinable()) Network->Worker.join();
+    CloseWebSockets(Network);
     Runtime->NetworkCompletions.clear();
     ReleaseHosted(Runtime);
     for (const auto& Pair : Network->Connections)

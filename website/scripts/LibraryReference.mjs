@@ -1,5 +1,6 @@
 import { readFile as ReadFile, writeFile as WriteFile, mkdir as MakeDirectory, rm as Remove } from 'node:fs/promises';
 import Path from 'node:path';
+import { ReadText } from './Releases.mjs';
 
 // Module types are separate from the frozen released runtime declarations.
 export function ModuleDeclarations(Source) {
@@ -41,7 +42,7 @@ async function GenerateLibrary(Repository, Site, Name, Options) {
   const Fence = Text => '\n```luau\n' + Text + '\n```\n';
   let Index = '---\ntitle: "' + Name + '"\ndescription: Optional source libraries.\n---\n\n' + Banner;
   if (Options.Version === Catalog.TargetSdk) Index += '> **Current release scope:** Windows/Linux headless and editor integration gates pass; the selected Windows virtual recipient also passes. Native GUI/IME and physical-device limits remain explicit in the [platform guide](/LUI/docs/sdk-' + Options.Version + '/guides/platforms/). The bundled guide below retains preparation-era development/status notes; those notes do not supersede this release scope.\n\n';
-  const Guide = await ReadFile(Path.join(Library, 'README.md'), 'utf8');
+  const Guide = await ReadText(Path.join(Library, 'README.md'));
   Index += Guide.replace(/^# [^\n]+\n/, '') + '\n## Module reference\n\n';
   for (const Module of Catalog.Modules) {
     if (!/^[A-Z][A-Za-z]+$/.test(Module.Name) || Seen.has(Module.Name)) throw new Error('[LUI:Docs] Invalid module name');
@@ -70,9 +71,9 @@ async function GenerateLibrary(Repository, Site, Name, Options) {
 
 export async function GenerateLibraryReference(Repository, Site, Options = {}) {
   const Libraries = [];
-  for (const Name of ['LuiWorkbench', 'Json', 'JsonClient', 'LuiUI']) Libraries.push(await GenerateLibrary(Repository, Site, Name, Options));
+  for (const Name of ['LuiWorkbench', 'Json', 'JsonClient', 'LuiUI']) Libraries.push(await GenerateLibrary(Options.SourceRepository || Repository, Site, Name, Options));
   const Guide = Path.resolve(Site, 'src/content/docs', Options.Base || 'next', 'guides');
   await MakeDirectory(Guide, { recursive: true });
-  await WriteFile(Path.join(Guide, 'workflow.md'), await ReadFile(Path.join(Repository, Options.Workflow || 'website/Content/NextWorkflow.md.in'), 'utf8'));
+  await WriteFile(Path.join(Guide, 'workflow.md'), await ReadText(Path.join(Repository, Options.Workflow || 'website/Content/NextWorkflow.md.in')));
   return {TargetSdk: '0.1.0-preview.2', Libraries, Guides: ['workflow'], Pages: 1 + Libraries.reduce((Count, Library) => Count + Library.Pages, 0)};
 }

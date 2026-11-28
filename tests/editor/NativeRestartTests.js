@@ -127,7 +127,7 @@ async function GetEditor() {
         Cleanup: () => {
             Extension.deactivate();
             for (const Child of Children) Child.Retire();
-            Fs.rmSync(Root, { recursive: true, force: true });
+            Fs.rmSync(Root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         },
     };
 }

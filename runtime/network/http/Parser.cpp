@@ -124,8 +124,8 @@ bool Extensions(std::string_view Text) {
 }
 }
 
-Parser::Parser(MessageKind Kind, Limits Bounds, std::string_view ResponseMethod)
-    : Kind(Kind), Bounds(Bounds), ResponseMethod(ResponseMethod) {
+Parser::Parser(MessageKind Kind, Limits Bounds, std::string_view ResponseMethod, bool AllowWebSocketUpgrade)
+    : Kind(Kind), Bounds(Bounds), ResponseMethod(ResponseMethod), AllowWebSocketUpgrade(AllowWebSocketUpgrade && Kind == MessageKind::Request) {
     if (Bounds.LineBytes < 2 || Bounds.LineBytes > 65536 || Bounds.HeaderBytes < 2 || Bounds.HeaderBytes > 1024 * 1024 ||
         Bounds.HeaderCount == 0 || Bounds.HeaderCount > 1024 || Bounds.BodyBytes > 64 * 1024 * 1024 ||
         Bounds.ChunkMetadataBytes < 2 || Bounds.ChunkMetadataBytes > 1024 * 1024 ||
@@ -230,22 +230,34 @@ void Parser::Header(bool IsTrailer) {
         if (!List(Entry.Value, ConnectionOptions)) { Fail(ErrorCode::InvalidHeader); return; }
         for (size_t Index = Start; Index < ConnectionOptions.size(); ++Index) {
             const auto& Option = ConnectionOptions[Index];
-            if (Option == "upgrade") { Fail(ErrorCode::UnsupportedFeature); return; }
+            if (Option == "upgrade") {
+                if (!AllowWebSocketUpgrade) { Fail(ErrorCode::UnsupportedFeature); return; }
+                UpgradeIntent = true;
+            }
             if (FramingOption(Option)) { Fail(ErrorCode::InvalidFraming); return; }
             if (Option == "close") Parsed.KeepAlive = false;
         }
-    } else if (Entry.Name == "upgrade" || (Kind == MessageKind::Request && Entry.Name == "expect")) {
+    } else if (Entry.Name == "upgrade") {
+        if (!AllowWebSocketUpgrade) { Fail(ErrorCode::UnsupportedFeature); return; }
+        UpgradeIntent = true;
+    } else if (Kind == MessageKind::Request && Entry.Name == "expect") {
         Fail(ErrorCode::UnsupportedFeature); return;
     } else if (Entry.Name == "trailer") {
+        HasTrailer = true;
         std::vector<std::string> Names;
         if (!List(Entry.Value, Names)) { Fail(ErrorCode::InvalidHeader); return; }
         if (std::any_of(Names.begin(), Names.end(), ForbiddenTrailer)) { Fail(ErrorCode::ForbiddenTrailer); return; }
     }
+    if (AllowWebSocketUpgrade && Entry.Name.substr(0,14) == "sec-websocket-") UpgradeIntent = true;
     Parsed.Headers.push_back(std::move(Entry));
 }
 
 void Parser::Framing() {
     if (Kind == MessageKind::Request && !HasHost) { Fail(ErrorCode::InvalidHost); return; }
+    if (AllowWebSocketUpgrade && UpgradeIntent) {
+        if (Parsed.Method != "GET" || HasLength || HasTransfer || HasTrailer || !Parsed.KeepAlive) { Fail(ErrorCode::InvalidFraming); return; }
+        Parsed.WebSocketUpgrade = true; Current = State::Complete; return;
+    }
     if (Kind == MessageKind::Response) {
         bool ProhibitedFraming = Parsed.StatusCode < 200 || Parsed.StatusCode == 204;
         if (ProhibitedFraming && (HasLength || HasTransfer)) { Fail(ErrorCode::InvalidFraming); return; }

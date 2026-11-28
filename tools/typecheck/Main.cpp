@@ -5,6 +5,10 @@
 #include "Luau/TypeInfer.h"
 #include "ProjectCheck.h"
 #include "Files.h"
+#include "Imports.h"
+#include "Luau/Parser.h"
+#include "Luau/Compiler.h"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <fstream>
@@ -62,6 +66,57 @@ unsigned Column(const std::string& Source, const std::vector<size_t>& Lines, Lua
     return Units;
 }
 
+int InspectSource() {
+    using Json=nlohmann::json;
+    char Data[4097];
+    std::cin.read(Data,sizeof(Data));
+    const std::string Source(Data,static_cast<size_t>(std::cin.gcount()));
+    if(Source.size()>4096 || std::cin.bad() || Source.find('\0')!=Source.npos || !Lui::Project::Internal::Utf8(Source))
+        throw std::runtime_error("Invalid source input");
+    std::vector<size_t> Lines{0};
+    for(size_t I=0;I<Source.size();++I) if(Source[I]=='\n') Lines.push_back(I+1);
+    auto Range=[&](Luau::Location L) {
+        return Json{{"StartLine",L.begin.line+1},{"StartColumn",Column(Source,Lines,L.begin)+1},
+            {"EndLine",L.end.line+1},{"EndColumn",Column(Source,Lines,L.end)+1}};
+    };
+    Luau::Allocator Allocator;Luau::AstNameTable Names(Allocator);
+    const auto Parsed=Luau::Parser::parse(Source.data(),Source.size(),Names,Allocator);
+    Json Issues=Json::array(),Imports=Json::array();
+    bool Truncated=false;
+    auto Issue=[&](Luau::Location Location,std::string Message) {
+        if(Issues.size()==16) {Truncated=true;return;}
+        if(Message.size()>256) {
+            Message.resize(256);
+            while(!Message.empty() && !Lui::Project::Internal::Utf8(Message)) Message.pop_back();
+            Truncated=true;
+        }
+        auto Item=Range(Location);Item["Message"]=Message;Issues.push_back(std::move(Item));
+    };
+    for(const auto& Error:Parsed.errors) Issue(Error.getLocation(),Error.getMessage());
+    size_t Bytes=0;
+    if(Parsed.root && Parsed.errors.empty()) {
+        struct Visitor final : Luau::AstVisitor {
+            std::function<void(const Luau::AstExprConstantString*)> Add;
+            bool visit(Luau::AstExprCall* Call) override {
+                if(auto* Literal=Lui::Project::GetLiteralImport(Call)) Add(Literal);
+                return true;
+            }
+        } V;
+        V.Add=[&](const Luau::AstExprConstantString* Literal) {
+            if(Imports.size()>=32 || Literal->value.size>256) {Truncated=true;return;}
+            std::string Path(Literal->value.data,Literal->value.size);
+            if(!Lui::Project::Internal::Utf8(Path)) {Truncated=true;return;}
+            auto Item=Range(Literal->location);Item["Path"]=std::move(Path);Imports.push_back(std::move(Item));
+        };
+        if(!Lui::Project::RequireRebound(Parsed.root)) Parsed.root->visit(&V);
+        const auto Compiled=Luau::compile(Source);
+        if(Compiled.empty() || !Compiled.front()) Issue(Parsed.root->location,"Compilation failed");
+        else Bytes=Compiled.size();
+    }
+    std::cout<<Json{{"Valid",Bytes>0},{"BytecodeBytes",Bytes},{"Imports",Imports},{"Diagnostics",Issues},{"Truncated",Truncated}}.dump()<<'\n';
+    return 0;
+}
+
 struct Resolver final : Luau::FileResolver {
     std::string Source;
     std::optional<Luau::SourceCode> readSource(const Luau::ModuleName& Name) override {
@@ -93,6 +148,7 @@ int main(int Count, char** Arguments) {
 #else
         for (int Index=0;Index<Count;++Index) Args.emplace_back(Arguments[Index]);
 #endif
+        if(Count==2 && Args[1]=="--inspect-source") return InspectSource();
         if (Count != 2 && Count != 6 && Count != 8) throw std::runtime_error("Usage: LuiTypeCheck <LUI.d.luau> [--project <manifest> --diagnostics development [--generation <number>]]");
         std::ifstream File(std::filesystem::u8path(Args[1]), std::ios::binary);
         if (!File) throw std::runtime_error("Generated LUI definitions were not found");

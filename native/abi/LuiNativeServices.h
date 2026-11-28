@@ -93,6 +93,8 @@ typedef struct LuiNativeStatsV2 {
 /* Trusted embedding API. Domain owner is the creating thread. ReleaseDomain
    does not force unload; pump retirement until empty before final release. */
 LUI_API LuiNativeDomainV2* LUI_CALL Lui_CreateNativeDomainV2(void);
+/* Trusted owner grants the loaded SQLite instance one dedicated live database directory before entry. */
+LUI_API uint32_t LUI_CALL Lui_GrantSQLiteDirectoryV1(LuiRuntime* Runtime, const char* Directory);
 LUI_API void LUI_CALL Lui_ReleaseNativeDomainV2(LuiNativeDomainV2* Domain);
 LUI_API uint32_t LUI_CALL Lui_PumpNativeDomainV2(LuiNativeDomainV2* Domain);
 LUI_API uint32_t LUI_CALL Lui_GetNativeStatsV2(LuiNativeDomainV2* Domain, LuiNativeStatsV2* Stats);

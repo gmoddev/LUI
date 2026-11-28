@@ -83,6 +83,7 @@ internal sealed partial class WinUIBackend
                 if(Action>0){FrameRun("Pattern()");Pump();Pending=SurfaceView().PreparedFrame!;await Pending.GpuSubmitted.Task.WaitAsync(TimeSpan.FromSeconds(5));}
                 var Ticket=FrameDevice!;IntPtr Device=await Ticket.Creation;
                 FrameRequire(Native.LuiWinUI_FrameDeviceRemoveForTestV1(Device)<0,"DeviceRemovalReason");
+                if(Pending?.Gpu is {} Gate&&Gate!=IntPtr.Zero)Native.LuiWinUI_FrameGpuGateForTestV1(Gate,0);
                 ulong Before=FrameRecoveries;
                 if(Action==2)FrameRun("S:ClearFrame();assert(S.FrameState=='Empty')");
                 Pump();FrameGpuPauseForTest=false;

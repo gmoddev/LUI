@@ -1,6 +1,7 @@
 #include "Backend.h"
 #include "LuiProject.h"
 #include "LuiApplicationServices.h"
+#include "LuiOwnerWake.h"
 #include "Files.h"
 #include "../conversation/Fixture.h"
 #include <nlohmann/json.hpp>
@@ -11,6 +12,9 @@
 #include <fstream>
 #include <unistd.h>
 #include <algorithm>
+#include <array>
+#include <iostream>
+#include <iomanip>
 
 namespace Lui::Gtk {
 // Explicit private test interop; never part of the public Luau or extension API.
@@ -52,7 +56,7 @@ static void Click(Backend& Host,int Id) {g_signal_emit_by_name(Qualification::Na
 static void Log(void* Context,const char*,const char* Text) {static_cast<std::string*>(Context)->append(Text);}
 
 static void Controls() {
-    Backend Host; std::string Logs; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
+    std::string Logs; Backend Host; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
     const unsigned char Pixel[]{0,0,0,255}; auto* PixelBytes=g_bytes_new(Pixel,sizeof(Pixel));
     auto* Texture=gdk_memory_texture_new(1,1,GDK_MEMORY_R8G8B8A8,PixelBytes,4); g_bytes_unref(PixelBytes);
     auto* Encoded=gdk_texture_save_to_png_bytes(GDK_TEXTURE(Texture)); g_object_unref(Texture);
@@ -142,7 +146,7 @@ static void Modular() {
 static void Clipboard() {
     Backend Denied;
     Run(Denied,"assert(not pcall(function() app:GetService('ClipboardService') end)); assert(not pcall(function() app:GetService('DialogService') end))","platform capability denial"); Denied.Stop();
-    Backend Host; std::string Logs; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
+    std::string Logs; Backend Host; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
     LuiCapabilityDeclarationV1 Caps{sizeof(Caps),1,LUI_CAPABILITY_CLIPBOARD|LUI_CAPABILITY_DIALOGS};
     Require(Lui_DeclareCapabilities(Host.GetRuntime(),&Caps),"clipboard grants failed");
     Run(Host,R"(
@@ -165,12 +169,54 @@ static void Clipboard() {
     for(int Index=0;Index<20;++Index) {while(g_main_context_pending(nullptr)) g_main_context_iteration(nullptr,false); g_usleep(1000);}
     Require(Logs.find("CANARY")==std::string::npos,"retired clipboard callback delivered");
 }
+static bool HasLabel(GtkWidget* Widget,const std::string& Text,int Depth=0) {
+    if(Depth>40)return false;
+    if(GTK_IS_LABEL(Widget) && Text==gtk_label_get_text(GTK_LABEL(Widget)))return true;
+    for(auto* Child=gtk_widget_get_first_child(Widget);Child;Child=gtk_widget_get_next_sibling(Child))
+        if(HasLabel(Child,Text,Depth+1))return true;
+    return false;
+}
+static bool ChooserPathReady(GtkWidget* Widget,const std::string& Name={},bool InPath=false,int Depth=0) {
+    if(Depth>40)return false;
+    InPath=InPath || std::string(G_OBJECT_TYPE_NAME(Widget))=="GtkPathBar";
+    if(InPath && GTK_IS_TOGGLE_BUTTON(Widget) && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(Widget)) &&
+        (Name.empty() || HasLabel(Widget,Name)))return true;
+    for(auto* Child=gtk_widget_get_first_child(Widget);Child;Child=gtk_widget_get_next_sibling(Child))
+        if(ChooserPathReady(Child,Name,InPath,Depth+1))return true;
+    return false;
+}
+static void AwaitChooserPath(Backend& Host,GtkWindow* Window,const std::string& Name) {
+    const auto Deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    while(std::chrono::steady_clock::now()<Deadline) {
+        Host.Pump();
+        if(ChooserPathReady(GTK_WIDGET(Window),Name))return;
+        g_usleep(5000);
+    }
+    throw std::runtime_error("native chooser path did not finish loading");
+}
+static void AwaitSelectedFile(Backend& Host,GtkWindow* Window,GFile* Expected) {
+    const auto Deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    auto* Accept=gtk_dialog_get_widget_for_response(GTK_DIALOG(Window),GTK_RESPONSE_ACCEPT);
+    Require(Accept,"selected-file open action");
+    while(std::chrono::steady_clock::now()<Deadline) {
+        Host.Pump();
+        g_autoptr(GFile) Selected=gtk_file_chooser_get_file(GTK_FILE_CHOOSER(Window));
+        if(Selected && g_file_equal(Selected,Expected) && gtk_widget_is_sensitive(Accept))return;
+        g_usleep(5000);
+    }
+    throw std::runtime_error("selected-file open selection did not become ready");
+}
 static GtkWindow* Chooser(Backend& Host) {
-    for(int Attempt=0;Attempt<200;++Attempt) {
+    for(int Attempt=0;Attempt<600;++Attempt) {
         Host.Pump(); auto* Windows=gtk_window_get_toplevels();
         for(guint Index=0;Index<g_list_model_get_n_items(Windows);++Index) {
             auto* Window=GTK_WINDOW(g_list_model_get_item(Windows,Index));
-            const bool Found=GTK_IS_FILE_CHOOSER(Window) && gtk_widget_get_visible(GTK_WIDGET(Window));
+            bool Found=GTK_IS_FILE_CHOOSER(Window) && gtk_widget_get_visible(GTK_WIDGET(Window));
+            // GTK 4.14 can assert when an unfinished initial path-bar load is
+            // canceled by an immediate folder change. Observe readiness before
+            // driving the synthetic save chooser; keep fatal diagnostics on.
+            if(Found && gtk_file_chooser_get_action(GTK_FILE_CHOOSER(Window))==GTK_FILE_CHOOSER_ACTION_SAVE)
+                Found=ChooserPathReady(GTK_WIDGET(Window));
             g_object_unref(Window); if(Found) return Window;
         }
         g_usleep(5000);
@@ -178,7 +224,7 @@ static GtkWindow* Chooser(Backend& Host) {
     throw std::runtime_error("file chooser absent");
 }
 static void Dialogs() {
-    Backend Host; std::string Logs; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
+    std::string Logs; Backend Host; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
     LuiCapabilityDeclarationV1 Caps{sizeof(Caps),1,LUI_CAPABILITY_DIALOGS};
     Require(Lui_DeclareCapabilities(Host.GetRuntime(),&Caps),"dialog grant failed");
     Run(Host,"W=Instance.new('Window',{Title='Dialog qualification'}); W.Visible=true"); Settle(Host);
@@ -203,6 +249,128 @@ static void Dialogs() {
     Host.Stop();
     for(int Index=0;Index<40;++Index) {while(g_main_context_pending(nullptr)) g_main_context_iteration(nullptr,false); g_usleep(1000);}
     Require(Logs.find("CANARY")==std::string::npos,"retired dialog callback delivered");
+}
+static void SelectedDialogs() {
+    GError* Error=nullptr; char* Temporary=g_dir_make_tmp("lui-selected-native-XXXXXX",&Error);
+    Require(Temporary && !Error,"selected-file fixture directory");
+    const std::filesystem::path Root(Temporary); g_free(Temporary);
+    struct DirectoryGuard {
+        std::filesystem::path Previous=std::filesystem::current_path();
+        ~DirectoryGuard(){std::error_code Error;std::filesystem::current_path(Previous,Error);}
+    } Directory;
+    // Save dialogs start in CWD. Use the actual fixture directory so driving
+    // the test does not cancel GTK's asynchronous initial breadcrumb load.
+    std::filesystem::current_path(Root);
+    const auto Input=Root/"input.txt",Output=Root/"copy.txt";
+    {std::ofstream File(Input); File<<"native selected bytes";}
+    std::string Logs; Backend Host; Lui_SetLogCallback(Host.GetRuntime(),&Logs,Log);
+    LuiCapabilityDeclarationV1 Caps{sizeof(Caps),1,LUI_CAPABILITY_DIALOGS};
+    Require(Lui_DeclareCapabilities(Host.GetRuntime(),&Caps),"selected-file grant"); Host.StartFiles();
+    auto* Domain=Lui_GetOwnerDomainV1(Host.GetRuntime());Require(Domain,"selected-file owner domain");
+    struct DomainGuard {LuiNativeDomainV2* Domain;~DomainGuard(){Lui_ReleaseNativeDomainV2(Domain);}} DomainOwner{Domain};
+    auto AwaitChooserClosed=[] {
+        const auto Deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while(std::chrono::steady_clock::now()<Deadline) {
+            while(g_main_context_pending(nullptr))g_main_context_iteration(nullptr,false);
+            auto* Windows=gtk_window_get_toplevels();bool Visible=false;
+            for(guint Index=0;Index<g_list_model_get_n_items(Windows);++Index) {
+                auto* Window=GTK_WINDOW(g_list_model_get_item(Windows,Index));
+                Visible|=GTK_IS_FILE_CHOOSER(Window) && gtk_widget_get_visible(GTK_WIDGET(Window));
+                g_object_unref(Window);
+            }
+            if(!Visible)return;g_usleep(5000);
+        }
+        throw std::runtime_error("selected file chooser remained visible");
+    };
+    auto Await=[&](const char* Operation) {
+        const auto Deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while(std::chrono::steady_clock::now()<Deadline) {
+            Host.Pump();LuiNativeStatsV2 Stats{sizeof(Stats),2};
+            Require(!Lui_GetNativeStatsV2(Domain,&Stats),"selected-file stats");
+            if(!Stats.Requests){Settle(Host);return;}g_usleep(5000);
+        }
+        throw std::runtime_error(std::string("selected native request did not settle (")+Operation+")");
+    };
+    Run(Host,R"(
+        W=Instance.new('Window',{Title='Selected file qualification'});W.Visible=true
+        S=app:GetService('FileService');E=buffer.create(0)
+    )");Settle(Host);
+    Run(Host,R"(
+        S:OpenFile(E,nil,function(Name,File,Failure)
+            assert(not Failure and File and buffer.tostring(Name)=='input.txt')
+            S:Read(E,File,function(Bytes,_,ReadFailure)
+                assert(not ReadFailure and buffer.tostring(Bytes)=='native selected bytes')
+                File:Close();Done=true
+            end)
+        end)
+    )");
+    auto* Window=Chooser(Host); Require(!gtk_window_get_modal(Window),"selected chooser unexpectedly modal");
+    {
+        g_autoptr(GFile) File=g_file_new_for_path(Input.c_str());
+        Require(gtk_file_chooser_set_file(GTK_FILE_CHOOSER(Window),File,&Error) && !Error,"selected-file native selection");
+        // GTK can finish the breadcrumb before applying the requested file selection.
+        AwaitSelectedFile(Host,Window,File);
+    }
+    gtk_dialog_response(GTK_DIALOG(Window),GTK_RESPONSE_ACCEPT); Await("OpenFile/Read");
+    Run(Host,"assert(Done)","selected-file native read completion");
+    Run(Host,R"(
+        Done=false
+        S:OpenFolder(E,nil,function(Name,Folder,Failure)
+            assert(not Failure and Folder);SelectedFolder=Folder
+            S:List(E,Folder,function(Bytes,_,ListFailure)
+                assert(not ListFailure and string.find(buffer.tostring(Bytes),'input.txt\tFile\t',1,true));Done=true
+            end)
+        end)
+    )");
+    Window=Chooser(Host);auto* File=g_file_new_for_path(Root.c_str());
+    Require(gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(Window),File,&Error) && !Error,"native folder selection");
+    g_object_unref(File);AwaitChooserPath(Host,Window,Root.filename().string());
+    gtk_dialog_response(GTK_DIALOG(Window),GTK_RESPONSE_ACCEPT);Await("OpenFolder/List");
+    Run(Host,"assert(Done)","native folder list completion");
+    Run(Host,R"(
+        Done=false
+        S:SaveFile(buffer.fromstring('copy.txt'),nil,function(Name,File,Failure)
+            assert(not Failure and File and buffer.tostring(Name)=='copy.txt')
+            S:Write(buffer.fromstring('native saved bytes'),File,function(_,_,WriteFailure)
+                assert(not WriteFailure);File:Close();SelectedFolder:Close();Done=true
+            end)
+        end)
+    )");
+    Window=Chooser(Host);
+    auto* Suggested=gtk_file_chooser_get_current_name(GTK_FILE_CHOOSER(Window));
+    const bool SuggestedMatches=Suggested && std::string(Suggested)=="copy.txt";g_free(Suggested);
+    Require(SuggestedMatches,"native save suggested name");
+    File=g_file_new_for_path(Root.c_str());
+    auto* CurrentFolder=gtk_file_chooser_get_current_folder(GTK_FILE_CHOOSER(Window));
+    const bool FolderMatches=CurrentFolder && g_file_equal(CurrentFolder,File);
+    if(CurrentFolder)g_object_unref(CurrentFolder);g_object_unref(File);
+    Require(FolderMatches,"native save fixture folder");
+    AwaitChooserPath(Host,Window,Root.filename().string());
+    gtk_dialog_response(GTK_DIALOG(Window),GTK_RESPONSE_ACCEPT);Await("SaveFile/Write");
+    Run(Host,"assert(Done)","native save completion");
+    {std::ifstream Saved(Output);const std::string Bytes{std::istreambuf_iterator<char>{Saved},std::istreambuf_iterator<char>{}};Require(Bytes=="native saved bytes","native saved file bytes");}
+    Run(Host,"Done=false;S:OpenFile(E,nil,function(B,H,Failure) assert(not B and not H and Failure=='Canceled');Done=true end)");
+    gtk_dialog_response(GTK_DIALOG(Chooser(Host)),GTK_RESPONSE_CANCEL);Await("Dismiss");
+    Run(Host,"assert(Done)","selected-file dismissal");
+    AwaitChooserClosed();
+    Run(Host,"Done=false;Request=S:OpenFile(E,nil,function(B,H,Failure) assert(not B and not H and Failure=='Canceled');Done=true end)");Chooser(Host);
+    Run(Host,"assert(Request:Cancel())");Await("Cancel");Run(Host,"assert(Done)","selected-file cancel");
+    AwaitChooserClosed();
+    Run(Host,"S:OpenFile(E,nil,function() print('SELECTED_RETIRED_CANARY') end)");Chooser(Host);
+    LuiNativeStatsV2 Pending{sizeof(Pending),2};
+    Require(!Lui_GetNativeStatsV2(Domain,&Pending) && Pending.Requests==1,"fresh selected picker not admitted");
+    Host.Stop();
+    AwaitChooserClosed();
+    LuiNativeStatsV2 Stats{sizeof(Stats),2};
+    for(int Index=0;Index<200;++Index) {
+        while(g_main_context_pending(nullptr))g_main_context_iteration(nullptr,false);
+        Lui_PumpNativeDomainV2(Domain);Lui_GetNativeStatsV2(Domain,&Stats);
+        if(!Stats.Sessions)break;g_usleep(5000);
+    }
+    Require(!Stats.Sessions && !Stats.Requests && !Stats.Bytes && !Stats.Handles && !Stats.Leases && !Stats.Events && !Stats.ReservedBytes,"selected native retirement leak");
+    Require(Logs.find("CANARY")==std::string::npos,"selected native callback after retirement");
+    std::filesystem::current_path(Directory.Previous);
+    std::filesystem::remove_all(Root);
 }
 static void Viewports() {
     Backend Host;
@@ -453,6 +621,137 @@ static void ImageOwnership() {
     Staging.Stop();
     Require(Qualification::ImageStaging(Staging)==0 && Qualification::ImageRequests(Staging)==0,"staging cancellation/shutdown retained ownership");
 }
+static void ImageRegionsAndReuse() {
+    Backend Host;
+    std::vector<uint32_t> Pixels(8*4);
+    for(size_t Index=0;Index<Pixels.size();++Index) Pixels[Index]=Index%8<4?0xffff0000u:0xff0000ffu;
+    auto* Bytes=g_bytes_new(Pixels.data(),Pixels.size()*sizeof(uint32_t));
+    auto* Input=gdk_memory_texture_new(8,4,GDK_MEMORY_DEFAULT,Bytes,8*sizeof(uint32_t));
+    g_bytes_unref(Bytes);
+    auto* Encoded=gdk_texture_save_to_png_bytes(Input);
+    g_object_unref(Input);
+    gsize Length=0;
+    const char* Data=static_cast<const char*>(g_bytes_get_data(Encoded,&Length));
+    for(int Index=1;Index<=40;++Index) Host.SetAsset("Icon"+std::to_string(Index)+".png",std::string(Data,Length));
+    g_bytes_unref(Encoded);
+    auto Complete=[&] {
+        for(int Step=0;Step<500 && Qualification::ImageRequests(Host);++Step) {Host.Pump(); g_usleep(2000);}
+        Require(Qualification::ImageRequests(Host)==0,"image requests did not settle");
+    };
+    Run(Host,R"(
+        assert(app:GetService('PlatformService'):Supports('ImageRegion'))
+        Images={}
+        for Index=1,20 do Images[Index]=Instance.new('ImageLabel',{Source='Icon'..Index..'.png'}) end
+    )");
+    Complete();
+    Run(Host,R"(
+        for _, Icon in Images do assert(Icon.LoadState=='Ready') end
+        A=Instance.new('ImageLabel',{Name='A',Source='Icon40.png',SourceRectSize=Vector2.new(4,4)})
+        B=Instance.new('ImageLabel',{Name='B',Source='Icon40.png',SourceRectSize=Vector2.new(4,4),SourceRectOffset=Vector2.new(4,0)})
+        Full=Instance.new('ImageLabel',{Name='Full',Source='Icon40.png'})
+        ActiveHit=Instance.new('ImageLabel',{Name='Hit',Source='Icon1.png'})
+        Canceled=Instance.new('ImageLabel',{Source='Icon40.png'})
+    )");
+    Run(Host,"Canceled:Destroy()");
+    Complete();
+    Run(Host,"assert(A.LoadState=='Ready' and B.LoadState=='Ready' and Full.LoadState=='Ready' and ActiveHit.LoadState=='Ready')");
+    Require(Host.ImageMetrics().find("decodes=21 ")!=std::string::npos &&
+        Host.ImageMetrics().find("coalesced=3 ")!=std::string::npos,"simultaneous atlas requests did not share one decode");
+    auto Picture=[&](const char* Name) {return GTK_PICTURE(Qualification::Native(Host,Id(Host,Name)));};
+    auto Pixel=[&](GtkPicture* Image) {
+        auto* Paintable=gtk_picture_get_paintable(Image);
+        Require(Paintable && gdk_paintable_get_intrinsic_width(Paintable)==4 &&
+            gdk_paintable_get_intrinsic_height(Paintable)==4,"region aspect");
+        auto* Snapshot=gtk_snapshot_new();
+        gdk_paintable_snapshot(Paintable,GDK_SNAPSHOT(Snapshot),20,20);
+        auto* Node=gtk_snapshot_free_to_node(Snapshot);
+        Require(Node!=nullptr,"missing region render node");
+        auto* Surface=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,20,20);
+        auto* Context=cairo_create(Surface);
+        gsk_render_node_draw(Node,Context);
+        cairo_surface_flush(Surface);
+        const auto* Row=cairo_image_surface_get_data(Surface)+10*cairo_image_surface_get_stride(Surface);
+        const auto Value=reinterpret_cast<const uint32_t*>(Row)[10];
+        cairo_destroy(Context);
+        cairo_surface_destroy(Surface);
+        gsk_render_node_unref(Node);
+        return Value;
+    };
+    Require(Pixel(Picture("A"))==0xffff0000u && Pixel(Picture("B"))==0xff0000ffu,"atlas tile pixels");
+    Run(Host,"A.SourceRectOffset=Vector2.new(5,0); assert(A.LoadState=='Ready')");
+    Require(!gtk_picture_get_paintable(Picture("A")),"out-of-bounds region displayed pixels");
+    Run(Host,"A.SourceRectSize=Vector2.new(0,0); assert(A.LoadState=='Ready')");
+    Require(gtk_picture_get_paintable(Picture("A"))==gtk_picture_get_paintable(Picture("Full")),"full image did not reuse atlas texture");
+    Run(Host,R"(
+        Full.Source='Icon21.png'
+        Full.Source='Icon22.png'
+        Full:Destroy()
+        for _, Icon in Images do Icon:Destroy() end
+        A:Destroy(); B:Destroy(); ActiveHit:Destroy()
+    )");
+    Complete();
+    Require(Qualification::Views(Host)==0 && Qualification::ImageStaging(Host)==0,"image views or staging retained");
+    Host.Stop();
+    Require(Qualification::ImageBytes(Host)==0,"image cache retained after stop");
+}
+static void RuntimeImages() {
+    Backend Host;
+    Run(Host,R"(
+        local Assets=app:GetService('AssetService')
+        local Pixels=buffer.create(24)
+        buffer.writeu32(Pixels,0,0xff332211)
+        buffer.writeu32(Pixels,12,0xff665544)
+        local Source=assert(Assets:FromPixels(Pixels,2,2,12,'BGRA8Premultiplied'))
+        A=Instance.new('ImageLabel',{Name='A',ImageResource=Source})
+        B=Instance.new('ImageLabel',{Name='B',ImageResource=Source})
+        buffer.fill(Pixels,0,0)
+        Source:Close()
+        local Header=buffer.create(24)
+        buffer.writestring(Header,0,'\137PNG\13\10\26\10')
+        buffer.writestring(Header,12,'IHDR')
+        buffer.writeu8(Header,19,2); buffer.writeu8(Header,23,2)
+        Invalid=Instance.new('ImageLabel',{ImageResource=assert(Assets:FromEncoded(Header))})
+    )");
+    for(int Step=0;Step<500 && Qualification::ImageRequests(Host);++Step) {Host.Pump(); g_usleep(2000);}
+    Run(Host,"assert(A.LoadState=='Ready' and B.LoadState=='Ready' and Invalid.LoadState=='Failed')");
+    auto Paintable=[&](const char* Name) {
+        return gtk_picture_get_paintable(GTK_PICTURE(Qualification::Native(Host,Id(Host,Name))));
+    };
+    auto* Texture=Paintable("A");
+    Require(Texture && Texture==Paintable("B") && GDK_IS_TEXTURE(Texture),"runtime images did not share native texture");
+    uint32_t Pixels[4]{};
+    gdk_texture_download(GDK_TEXTURE(Texture),reinterpret_cast<guchar*>(Pixels),8);
+    Require(Pixels[0]==0xff332211u && Pixels[2]==0xff665544u,"runtime pixels were not copied and packed");
+    auto* Png=gdk_texture_save_to_png_bytes(GDK_TEXTURE(Texture));
+    size_t Length=0;
+    const auto* Data=static_cast<const unsigned char*>(g_bytes_get_data(Png,&Length));
+    std::string Script="local Source=assert(app:GetService('AssetService'):FromEncoded(buffer.fromstring('";
+    for(size_t Index=0;Index<Length;++Index) Script+="\\"+std::to_string(Data[Index]);
+    Script+="'))); Encoded=Instance.new('ImageLabel',{Name='Encoded',ImageResource=Source}); Source:Close()";
+    g_bytes_unref(Png);
+    Run(Host,Script.c_str());
+    for(int Step=0;Step<500 && Qualification::ImageRequests(Host);++Step) {Host.Pump(); g_usleep(2000);}
+    Run(Host,"assert(Encoded.LoadState=='Ready')");
+    gdk_texture_download(GDK_TEXTURE(Paintable("Encoded")),reinterpret_cast<guchar*>(Pixels),8);
+    Require(Pixels[0]==0xff332211u && Pixels[2]==0xff665544u,"runtime encoded pixels");
+    Run(Host,"A:Destroy(); B:Destroy(); Invalid:Destroy(); Encoded:Destroy()");
+    for(int Batch=0;Batch<44;++Batch) {
+        Run(Host,R"(
+            Rows={}
+            local Assets=app:GetService('AssetService')
+            local Pixel=buffer.create(4)
+            for Index=1,24 do
+                local Source=assert(Assets:FromPixels(Pixel,1,1,4,'BGRA8Premultiplied'))
+                Rows[Index]=Instance.new('ImageLabel',{ImageResource=Source})
+                Source:Close()
+            end
+        )");
+        for(int Step=0;Step<500 && Qualification::ImageRequests(Host);++Step) {Host.Pump(); g_usleep(1000);}
+        Run(Host,"for _,Row in Rows do assert(Row.LoadState=='Ready'); Row:Destroy() end");
+    }
+    Host.Stop();
+    Require(Qualification::ImageBytes(Host)==0 && Qualification::ImageStaging(Host)==0,"runtime image retirement");
+}
 static int ButtonId(Backend& Host,const char* Text) {
     for(const auto& Node:Tree(Host)) if(Node.at("className")=="TextButton" && Node.at("text")==Text) return Node.at("id");
     throw std::runtime_error("conversation action missing");
@@ -671,6 +970,120 @@ static void WindowLifecycle() {
     Host.Stop();Require(Qualification::Views(Host)==0,"window lifecycle retained views");
 }
 
+static void FrameSurfaces() {
+    Backend Host;
+    Run(Host,R"(
+        assert(app:GetService("PlatformService"):Supports("FrameSurface"))
+        W=Instance.new("Window",{Visible=true,Size=UDim2.fromOffset(300,200)})
+        W2=Instance.new("Window",{Visible=true,Size=UDim2.fromOffset(240,160)})
+        S=Instance.new("FrameSurface",{Name="Monitor",Parent=W,Size=UDim2.fromScale(1,1)})
+        M=Instance.new("FrameSurface",{Name="Mirror",Parent=W2,Size=UDim2.fromScale(1,1)})
+        P=buffer.create(12)
+        buffer.writeu32(P,0,0xFF112233)
+        buffer.writeu32(P,4,0xFFABCDEF)
+        assert(S:SubmitFrame(P,2,1,12,"BGRA8Premultiplied"))
+        assert(M:SubmitFrame(P,2,1,12,"BGRA8Premultiplied"))
+        buffer.fill(P,0,0)
+    )");
+    Settle(Host);
+    auto* Picture=GTK_PICTURE(Qualification::Native(Host,Id(Host,"Monitor")));
+    auto* Mirror=GTK_PICTURE(Qualification::Native(Host,Id(Host,"Mirror")));
+    auto Read=[](GtkPicture* Target) {
+        auto* Paint=gtk_picture_get_paintable(Target);
+        Require(GDK_IS_TEXTURE(Paint),"prepared CPU frame was not published");
+        Require(gdk_texture_get_width(GDK_TEXTURE(Paint))==2 && gdk_texture_get_height(GDK_TEXTURE(Paint))==1,
+            "native CPU frame size mismatch");
+        std::array<guchar,8> Bytes{};
+        gdk_texture_download(GDK_TEXTURE(Paint),Bytes.data(),Bytes.size());
+        return Bytes;
+    };
+    const std::array<guchar,8> Expected{0x33,0x22,0x11,0xFF,0xEF,0xCD,0xAB,0xFF};
+    Require(Read(Picture)==Expected && Read(Mirror)==Expected,"strided or mutated source corrupted immutable frames");
+    Run(Host,R"(
+        S.ScaleMode="Fill"
+        S.Parent=W2
+        S.Visible=false
+        buffer.writeu32(P,0,0xFF020304)
+        assert(S:SubmitFrame(P,2,1,12,"BGRA8Premultiplied"))
+        buffer.writeu32(P,0,0xFF998877)
+        assert(S:SubmitFrame(P,2,1,12,"BGRA8Premultiplied"))
+    )");
+    Settle(Host);
+    Require(Read(Picture)==Expected && gtk_picture_get_content_fit(Picture)==GTK_CONTENT_FIT_COVER,
+        "migrating or hiding changed the displayed texture before publication");
+    Run(Host,"S.Visible=true; S.ScaleMode='Stretch'");
+    Settle(Host);
+    auto New=Read(Picture);
+    Require(New[0]==0x77 && New[1]==0x88 && New[2]==0x99 && Read(Mirror)==Expected &&
+        gtk_picture_get_content_fit(Picture)==GTK_CONTENT_FIT_FILL,"restore lost the latest frame or changed its sibling");
+    Run(Host,"S:ClearFrame()");
+    Settle(Host);
+    Require(!gtk_picture_get_paintable(Picture) && Read(Mirror)==Expected,"clearing one sink changed its sibling");
+    Run(Host,"W2:Destroy(); W:Destroy()");
+    Settle(Host);
+    LuiFrameStatsV1 Stats{sizeof(Stats),1};
+    Require(Lui_GetFrameStats(Host.GetRuntime(),&Stats) && Stats.Consumed>=3 && Stats.Replaced>=1 &&
+        !Stats.Surfaces && !Stats.Frames && !Stats.PixelBytes && !Stats.StagingBytes,"GTK retained a frame lease after destruction");
+}
+
+// Test bridge for a separate live image producer. Each input contains a small RGB image in hex.
+// Its payload is checked against every pixel downloaded from both native GtkPictures.
+static void FrameFeed() {
+    Backend Host;
+    Run(Host,R"(
+        W=Instance.new("Window",{Visible=true,Size=UDim2.fromOffset(360,240)})
+        F=Instance.new("Window",{Visible=true,Size=UDim2.fromOffset(320,220)})
+        S=Instance.new("FrameSurface",{Name="Feed",Parent=W,Size=UDim2.fromScale(1,1)})
+        M=Instance.new("FrameSurface",{Name="Reference",Parent=F,Size=UDim2.fromScale(1,1)})
+        function Receive(Hex,Width,Height)
+            local P=buffer.create(Width*Height*4)
+            for I=0,Width*Height-1 do
+                local J=I*6+1
+                buffer.writeu8(P,I*4,tonumber(Hex:sub(J+4,J+5),16))
+                buffer.writeu8(P,I*4+1,tonumber(Hex:sub(J+2,J+3),16))
+                buffer.writeu8(P,I*4+2,tonumber(Hex:sub(J,J+1),16))
+                buffer.writeu8(P,I*4+3,255)
+            end
+            assert(S:SubmitFrame(P,Width,Height,Width*4,"BGRA8Premultiplied"))
+            assert(M:SubmitFrame(P,Width,Height,Width*4,"BGRA8Premultiplied"))
+        end
+    )");
+    const auto Surface=Id(Host,"Feed"),Mirror=Id(Host,"Reference");
+    size_t Count=0;
+    unsigned Width,Height;
+    std::string Hex;
+    while(std::cin>>Width>>Height>>std::setw(128*128*6+1)>>Hex) {
+        Require(Width && Height && Width<=128 && Height<=128 && Hex.size()==Width*Height*6 &&
+            Hex.find_first_not_of("0123456789abcdef")==std::string::npos,"invalid frame feed message");
+        if(Count==1) Run(Host,"S.Parent=F; M.Visible=false");
+        if(Count==2) Run(Host,"S.Parent=W; M.Visible=true; F.Size=UDim2.fromOffset(286,188)");
+        const auto Script="Receive('"+Hex+"',"+std::to_string(Width)+","+std::to_string(Height)+")";
+        Run(Host,Script.c_str(),"external frame submission");
+        Settle(Host);
+        for(auto Panel:{Surface,Mirror}) {
+            if(Panel==Mirror && Count==1) continue;
+            auto* Paint=gtk_picture_get_paintable(GTK_PICTURE(Qualification::Native(Host,Panel)));
+            Require(GDK_IS_TEXTURE(Paint) && gdk_texture_get_width(GDK_TEXTURE(Paint))==int(Width) &&
+                gdk_texture_get_height(GDK_TEXTURE(Paint))==int(Height),"frame feed texture extent mismatch");
+            std::vector<guchar> Pixels(Width*Height*4);
+            gdk_texture_download(GDK_TEXTURE(Paint),Pixels.data(),Width*4);
+            for(size_t I=0;I<Width*Height;++I) {
+                const auto Rgb=std::stoul(Hex.substr(I*6,6),nullptr,16);
+                Require(Pixels[I*4]==(Rgb&255) && Pixels[I*4+1]==((Rgb>>8)&255) &&
+                    Pixels[I*4+2]==(Rgb>>16) && Pixels[I*4+3]==255,"frame feed downloaded stale pixels");
+            }
+        }
+        ++Count;
+        std::printf("[LUI:GtkTest] Frame feed %zu %ux%u\n",Count,Width,Height);std::fflush(stdout);
+    }
+    Require(Count>=3,"frame feed requires migration, hide and restore");
+    Run(Host,"W:Destroy();F:Destroy()");
+    Settle(Host);
+    LuiFrameStatsV1 Stats{sizeof(Stats),1};
+    Require(Lui_GetFrameStats(Host.GetRuntime(),&Stats) && !Stats.Frames && !Stats.Surfaces &&
+        !Stats.StagingBytes && !Stats.PixelBytes,"external frames survived teardown");
+}
+
 static void Group(const char* Name,void (*Execute)()) {
     std::printf("[LUI:GtkTest] Begin %s\n",Name); std::fflush(stdout);
     Execute();
@@ -679,14 +1092,25 @@ static void Group(const char* Name,void (*Execute)()) {
 int main(int Count,char** Arguments) {
     try {
         Require(Backend::Initialize(),"display unavailable");
+        // This executable uses only synthetic fixtures. Expose GTK assertion
+        // text here while retaining fatal-criticals; production logs stay fixed.
+        g_log_set_handler("Gtk",GLogLevelFlags(G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_ERROR | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION),
+            +[](const gchar*,GLogLevelFlags,const gchar* Message,gpointer) {
+                std::fprintf(stderr,"[LUI:GtkTest] NativeCritical: %s\n",Message);
+            },nullptr);
         if(Count==5 && std::string(Arguments[1])=="--workbench") {Workbench(Arguments[2],Arguments[3],Arguments[4]);return 0;}
+        if(Count==2 && std::string(Arguments[1])=="--selected-files") {Group("SelectedDialogs",SelectedDialogs);return 0;}
+        if(Count==2 && std::string(Arguments[1])=="--frames") {Group("FrameSurfaces",FrameSurfaces);return 0;}
+        if(Count==2 && std::string(Arguments[1])=="--frame-feed") {Group("FrameFeed",FrameFeed);return 0;}
+        if(Count==2 && std::string(Arguments[1])=="--images") {Group("ImageOwnership",ImageOwnership);Group("ImageRegionsAndReuse",ImageRegionsAndReuse);Group("RuntimeImages",RuntimeImages);return 0;}
         Require(Count==1,"unexpected test arguments");
         Group("Controls",Controls); Group("WindowShortcuts",WindowShortcuts);
         Group("WindowLifecycle",WindowLifecycle); Group("Modular",Modular);
-        Group("Clipboard",Clipboard); Group("Dialogs",Dialogs); Group("Viewports",Viewports);
+        Group("Clipboard",Clipboard); Group("Dialogs",Dialogs); Group("SelectedDialogs",SelectedDialogs); Group("Viewports",Viewports);
         Group("AdvancedText",AdvancedText); Group("CodeEditor",CodeEditor);
         Group("CodeEditorEnvelope",CodeEditorEnvelope);
-        Group("ImageOwnership",ImageOwnership); Group("Conversation",Conversation);
+        Group("ImageOwnership",ImageOwnership); Group("ImageRegionsAndReuse",ImageRegionsAndReuse);
+        Group("RuntimeImages",RuntimeImages); Group("FrameSurfaces",FrameSurfaces); Group("Conversation",Conversation);
         std::puts("[LUI:GtkTest] Native mappings, canonical geometry, edit/input, sticky privacy, modular screens and lifecycle passed"); return 0;
     } catch(const std::exception& Error) {std::fprintf(stderr,"[LUI:GtkTest] %s\n",Error.what()); return 1;}
 }

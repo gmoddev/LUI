@@ -1,9 +1,32 @@
 # LuiWorkbench (next SDK development)
 
 Small optional Luau modules for editors and tools. Target: SDK
-`0.1.0-preview.2` development. Nothing is added to the released preview.1 SDK.
+`0.1.0-preview.3` candidate. This version is not in published preview.1/2 SDKs.
 The modules currently use existing runtime APIs and explicitly declared vendors.
 Importing a module starts no services, tasks, windows or subscriptions.
+
+## Nested desktop layouts
+
+`DockModel.New()` owns the split/tab graph and application panel identities. `DockHost.New(Model, Options)` presents it inside a caller-owned Window and Frame. The existing two-pane `Workspace` module remains available. [Contract](../../docs/decisions/0095-retained-dock-layout.md) · [Signal analysis example](../../examples/dock-workspace/Src/Main.luau) · [Field notebook example](../../examples/dock-editor/Src/Main.luau)
+
+```luau
+local Model=require("@LuiWorkbench/DockModel").New()
+local Desk=require("@LuiWorkbench/DockHost").New(Model,{Window=Main,Root=Body})
+assert(Desk:Register("Draft",{Title="Notes",Content=Editor,Focus=Editor,MinWidth=180}))
+assert(Desk:Register("Plot",{Title="Signal",Content=Plot}))
+assert(Desk:Restore({Version=1,Floats={},Main={Id="Desk",Axis="X",Ratio=.65,
+    First={Id="Editors",Tabs={"Draft"},Active="Draft"},Second={Id="View",Tabs={"Plot"},Active="Plot"}}}))
+```
+
+Drag a tab six logical units to reveal the local cross. Its center adds a tab. Its arms create local splits. Outer arrows split the window root. The tab strip accepts reordering. Escape, capture loss and focus loss cancel the gesture. Neutral space opens a native float. **Redock** and the floating window's normal close both return its contents.
+
+Use `Show`, `Hide`, `Activate`, `Move`, `Float`, `Redock`, `SetTitle` and `Unregister` for commands. `GetLocation(Id)` returns group ID, window ID and one-based slot. `IsVisible(Id)` tests active tab membership. Preflight/commit and `SetRatio` are available on the standalone model. When mounted, mutate through the host to keep chrome and gesture state consistent. `Cancel()` retires a pending pointer transaction.
+
+`Snapshot()` returns plain data suitable for a versioned preference entry. Register available panels before `Restore(Data)`. Omitted panels remain hidden. Check the returned boolean before accepting a preference. Invalid records and unknown references leave the last committed layout intact. Use `@Json/Json` to serialize records as in the signal analysis example. Save the latest snapshot at shutdown to capture current native window bounds.
+
+`OnAttachment(Id,WindowOrNil,Active)` binds or suspends a view-specific sink. `OnGeometry(Id,Window,Content)` runs after arranging active content. `OnChanged()` signals committed layout changes. `OnWindow(Id,Window,Added)` connects and retires per-window commands or metrics. Supply `CanInteract()` to guard modal or project transitions. Applications with a resize wake can set `TrackResize=false` and call `RefreshGeometry()`. Otherwise each mounted host observes native client size every 120 ms. Native proportional layout responds between observations.
+
+`Dispose()` releases dock chrome, floats, callbacks and the resize observer. Supplied controls return to their original parent, size, position and visibility. The caller owns their contents and application state. Dispose before destroying the main window or caller-owned parents.
 
 ```luau
 local Commands = require('@LuiWorkbench/Commands')
@@ -11,6 +34,7 @@ local Registry = Commands.New()
 local Remove = Registry:Register({
     Id = 'File.Save', Label = 'Save document', Category = 'File',
     Shortcut = {Key = 'S', Control = true},
+    AllowWhileEditing = true,
     Enabled = function() return HasEdits end,
     Execute = SaveDocument,
 })
@@ -41,7 +65,18 @@ from a command may build a palette without releasing the invocation fence.
 Disposal and unregister remain available. Callbacks must finish or use existing cancellation-aware LUI
 services. The registry does not own or cancel tasks started by a command.
 
-`Dispatch` ignores repeats and every shortcut while `TextEditing` is true.
+`Dispatch` ignores repeats. While `TextEditing` is true it ignores commands by
+default. Set `AllowWhileEditing = true` on a command such as Save to allow its
+explicit Control shortcut in a focused editor. This opt-in requires a shortcut
+with `Control = true` and no Alt modifier, protecting plain typing and AltGr.
+Shift is optional. The flag is copied at registration; changing the original
+definition afterward has no effect. Listed rows report the effective boolean.
+Reserved text editing chords cannot opt in, even when a local undo stack is
+empty: Control with A/C/V/X/Y/Z, Insert/Delete/Backspace, Home/End, arrow keys,
+PageUp/PageDown, Enter/Return or Tab (with or without Shift). Register such an
+application command without the flag to keep it available outside editing.
+Commands without the flag retain preview.2 behavior. The runtime still suppresses
+shortcuts during composition, and native editor-handled keys remain native.
 It uses the existing unhandled Window.Shortcut signal; it cannot consume native
 input. Bind palette buttons and menus to Execute as well. Native shortcut
 availability follows the host's existing shortcut mapping. Dispose drops all
@@ -194,6 +229,80 @@ data. Packaged and development copies also have separate data. See
 failure behavior and migration limits. Other embedders still install the provider
 explicitly. Published preview.1 does not support this manifest field.
 
+## Selected files (preview.3 candidate)
+
+`File:ByteLength(Callback)` returns the current length as an exact integer up to 2^53−1. `File:ReadRange(Position, Count, Callback)` reads from a zero-based absolute byte offset. Request 1–65,536 bytes at a time. A successful short buffer ends at EOF and an empty buffer means the offset is at or beyond EOF. Each callback receives a value and optional fixed error code. Each operation can be canceled. A sequence of reads can observe external changes between chunks. The whole-file `Read` and atomic `Write` methods keep their 4 MiB ceiling.
+
+A writable file returned by `Picker:SaveFile` supports `File:BeginWriter(function(Writer, Failure) ... end)`. Each writer prepares an empty replacement. Call `Writer:Write(Buffer, Callback)` for up to 65,536 bytes, `Writer:Seek(Offset)` for an idle zero-based cursor, and `Writer:Position()` for the next byte. `Writer:Commit(Callback)` publishes the draft. `Writer:Close()`, picker disposal, or canceling a pending writer operation aborts it. Each callback receives a failure code or nil. A writer retains its destination independently of closing the original file. A successful commit or failed write/commit retires the wrapper. Four writers may be open per FileService, each with a maximum logical length of 128 MiB. A freshly committed empty writer truncates or creates the file.
+
+```luau
+File:BeginWriter(function(Writer, Failure)
+    if not Writer or Failure then return end
+    local Draft = Writer
+    Draft:Write(buffer.fromstring("complete document"), function(WriteError)
+        if WriteError then return end
+        Draft:Commit(function(CommitError)
+            if CommitError then print("[LUI:Files] Save failed") end
+        end)
+    end)
+end)
+```
+
+Each commit checks the revision captured when its draft opened. A concurrent reader sees a complete old or new file at the selected name. A check followed by rename does not provide compare-and-swap against an external writer. An error or cancellation after rename can leave the replacement visible. Windows flushes the new file; Linux flushes it and the containing directory. Power-loss durability depends on the device and filesystem. On Linux an anonymous temporary file is preferred. A named fallback on a filesystem without anonymous files can leave a private draft after a hard crash. Windows marks its staged handle delete-pending until rename. The packaged `atomic-copy` example grants one explicit destination with `--write-file`.
+
+`Files.Reader(File, Offset?)` creates an independent cursor, initially at zero unless supplied. `Reader:Read(Count, Callback)` advances by the bytes delivered on success. `Position()` reports the next byte and `Seek(Offset)` repositions an idle reader. Canceling a read preserves the old position and suppresses its callback. `Reader:Close()` retires the cursor. The caller still owns and closes the file.
+
+The headless `file-summary` example takes an exact read-only file selected by the operator using `--read-file`. Desktop applications continue to use the native picker.
+
+Use `require('@LuiWorkbench/Files')` for documents selected by the user. This is
+separate from Preferences, which owns app-private state. The manifest needs
+Dialogs and the desktop host must provide FileService. Start with the complete
+`selected-files` SDK example or stage it with Stage-LibraryExample.py.
+
+```luau
+local Files = require('@LuiWorkbench/Files')
+local Picker = Files.New(app:GetService('FileService'))
+Picker:OpenFile(function(File, Failure)
+    if not File then return end -- Dismissal is nil/nil; inspect Failure for errors.
+    File:Read(function(Bytes, ReadFailure)
+        File:Close()
+        if Bytes then
+            local Text = buffer.tostring(Bytes)
+            -- Validate encoding/size before assigning text to an editor.
+        end
+    end)
+end)
+-- Call Picker:Dispose() when the owning window/application is destroyed.
+```
+
+OpenFile gives a read-only File with Name/Read/Close. SaveFile(SuggestedName,
+Complete) asks for one writable destination; use Write(buffer, Complete).
+OpenFolder returns a read-only Folder: List gives Name/IsDirectory/Size records,
+Open(Name, Complete) reads one regular child file, and Close releases the grant.
+No native paths, folder writes, recursive traversal or persisted grants.
+
+Every asynchronous method returns an Operation. Cancel returns true once while
+active and suppresses its callback; it cannot undo an already committed write.
+Dispose suppresses callbacks, cancels requests and closes owned resources.
+Resource Close and Dispose are idempotent. Dismissal returns nil/nil; native
+failures are fixed strings such as CapabilityDenied, LimitExceeded, Closed,
+DeadlineExceeded or ProviderFailure. Admission refusal maps to Unavailable.
+Callback errors are contained and newly delivered resources are closed.
+
+Limits are4MiB per buffer,32 provider resources/requests,256 listed entries and
+255-byte portable UTF-8 leaf names, plus native domain quotas. IO deadlines are
+30s; pickers120s. Close promptly: Windows selected handles can prevent rename.
+Symlinks, reparse paths, hardlinked files, devices and direct UNC paths are refused.
+Mounted/mapped network filesystems are unqualified, not detected portably.
+Save as uses a new data file and does not preserve ACLs/metadata. Cancellation or
+an error after replacement cannot guarantee the original file remains. Keep
+editor text when a save is uncertain. Native FileService's buffer/handle methods
+are an advanced provider interface, not the normal app workflow.
+
+Windows WinUI3 and Linux GTK4.10+ are the intended initial hosts; actual desktop
+qualification is recorded separately from source/owner checks. Browser/mobile
+and other desktop/file system profiles remain unsupported.
+
 ## Integrated example
 
 ```text
@@ -241,3 +350,7 @@ response, layout, native submission, working set and retained editor retirement.
 Windows scrolling measures explicit C API admission; GTK uses its native
 controller. Neither timing includes physical input/display or driver pacing.
 Real keyboard, pointer, clipboard and IME journeys require separate qualification.
+
+With `--write-directory DIRECTORY`, a packaged headless app's existing OpenFolder request receives direct-child write authority. An embedded host can grant it with Lui_CompleteWritableFolderV1. Ordinary native picker completion and `--read-directory` grant listing and reads. Folder:OpenOutput(Name, Callback) returns a writable file, creating or truncating only on a successful write or writer commit. Folder:CreateDirectory, RemoveDirectory and RemoveFile take one leaf name and a completion receiving an optional error. RemoveDirectory requires an empty directory. Folder:Rename(From, To, Callback) moves a file or directory within the same parent and refuses an occupied destination. No operation recursively removes data. All names are validated and relative to the anchored selection. Direct mutations address current names, so coordinate independent editors. Linux uses directory-relative operations with no final symlink traversal. Windows uses protected directory and entry handles. If an independent program swaps an entry concurrently, the Linux operation acts on the name it finds at the system call. It never follows a replacement link to its target. Mutations can finish before cancellation is observed, and a directory sync failure can report an error after publication. Inspect the directory before retrying.
+
+`Files.Copy(Source, Destination, Callback)` uses a 64 KiB reader and a temporary seekable writer to publish up to 128 MiB. Cancel suppresses the completion and discards an uncommitted draft. Both file handles remain caller-owned. Manually closing either terminates the copy with Closed. Disposing either picker cancels the copy and suppresses completion. Keep source bytes stable while copying; independent edits between chunk reads can appear in the copy. `Examples/folder-copy` demonstrates a complete application.

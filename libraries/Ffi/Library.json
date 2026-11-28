@@ -1,0 +1,42 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Ffi",
+  "TargetSdk": "0.1.0-preview.4-ffi.1",
+  "Status": "Development",
+  "Requires": [
+    "Json",
+    "Encoding"
+  ],
+  "NativeProvider": "Ffi",
+  "Modules": [
+    {
+      "Name": "Ffi",
+      "Summary": "Call C libraries with prepared fixed or variadic signatures in explicitly trusted applications.",
+      "Types": [
+        "Layout",
+        "CType",
+        "Field",
+        "CallResult",
+        "Foreign",
+        "Library",
+        "Pointer",
+        "Notification"
+      ],
+      "Functions": [
+        "System",
+        "Open",
+        "Packaged",
+        "Platform",
+        "Word64",
+        "Struct",
+        "Array",
+        "Describe",
+        "Allocate",
+        "Callback",
+        "SyncCallback",
+        "Poll",
+        "Stats"
+      ]
+    }
+  ]
+}

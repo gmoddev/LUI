@@ -1,14 +1,15 @@
-// The frozen base generator preserves released API identities and tutorial ZIPs.
+// Released source snapshots preserve API identities while canonical sources evolve.
 // This explicit, catalog-hashed editorial revision adds explanations/examples.
 import './Generate.mjs';
 import { readFile as ReadFile, writeFile as WriteFile, readdir as ReadDirectory, mkdir as MakeDirectory } from 'node:fs/promises';
 import { fileURLToPath as FilePath } from 'node:url';
 import Path from 'node:path';
-import { LoadReleases } from './Releases.mjs';
+import { LoadReleases, ReadText } from './Releases.mjs';
 import { Hash } from './Reference.mjs';
 import { ImproveReference, TagSearchPages } from './Documentation.mjs';
 import { ImproveLibraries } from './DocumentationLibraries.mjs';
 import { Examples, Globals } from './DocumentationExamples.mjs';
+import { GenerateCandidate } from './Candidate.mjs';
 
 const Site=Path.resolve(FilePath(new URL('..',import.meta.url)));const Repository=Path.dirname(Site);
 const Catalog=await LoadReleases(Repository);const Reports=[];
@@ -31,7 +32,7 @@ for(const Entry of Catalog.Releases) {
   if(Version===Catalog.Current)Object.assign(Templates,{'Libraries.md.in':'libraries.md','Layout.md.in':'layout.md','Modules.md.in':'modules.md','Capabilities.md.in':'capabilities.md'});
   const Banner='<div class="LuiRelease"><span>SDK '+Version+' · Experimental</span><a href="https://github.com/gmoddev/LUI/releases/tag/'+Entry.Metadata.Tag+'">Download &amp; release notes ↗</a></div>\n\n';
   for(const [Template,Destination] of Object.entries(Templates)) {
-    let Text=await ReadFile(Path.join(Site,'Content/Review',Template),'utf8');
+    let Text=await ReadText(Path.join(Site,'Content/Review',Template));
     Text=Text.replace(/\{\{(Example|GlobalExample):([^}]+)\}\}/g,(_,Kind,Name)=>{
       const Sample=(Kind==='Example'?Examples:Globals)[Name];if(!Sample)throw new Error('[LUI:Docs] Unknown guide example');return Fence(Sample.Code);
     });
@@ -40,7 +41,7 @@ for(const Entry of Catalog.Releases) {
     await WriteFile(Path.join(Root,'guides',Destination),Text);
   }
   let Libraries=null;
-  if(Entry.VersionedLibraries)Libraries=await ImproveLibraries(Repository,Site,Version);
+  if(Entry.VersionedLibraries)Libraries=await ImproveLibraries(Repository,Site,Version,Entry.SourceRepository);
   if(Version===Catalog.Current) {
     const First=Path.join(Root,'learn/first-project.md');let Text=await ReadFile(First,'utf8');
     Text=Text.replace('use **LUI: Stop App**, then **LUI: Run App**','use **LUI: Restart App**').replace('stop the native app and run it again after saving.','save the files and use Restart App.');
@@ -63,6 +64,7 @@ for(const File of await MarkdownFiles(Legacy)) {
 await TagSearchPages(Legacy,Catalog.Current,true);
 const Home=Path.join(Site,'src/content/docs/index.mdx');let Text=await ReadFile(Home,'utf8');
 Text=Text.replaceAll('Your first advanced project','Build a modular app').replace(/^(---\n[\s\S]*?\n---\n)/,'$1\n<span hidden data-pagefind-filter="SDK:'+Catalog.Current+'"></span>\n');await WriteFile(Home,Text);
+await GenerateCandidate(Repository,Site);
 const BuildReport=JSON.parse(await ReadFile(Path.join(Site,'BuildReport.json'),'utf8'));
 BuildReport.DocumentationRevision='2026-11-12';BuildReport.Documentation=Reports;
 BuildReport.Pages=(await MarkdownFiles(Path.join(Site,'src/content/docs'))).length+1;

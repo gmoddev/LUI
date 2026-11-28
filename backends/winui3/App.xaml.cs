@@ -8,11 +8,17 @@ public partial class App : Application
 {
     private WinUIBackend? Backend;
     private DispatcherTimer? PumpTimer;
+    private bool Exiting;
 
-    private void ExitCleanly()
+    private async void ExitCleanly()
     {
+        if (Exiting) return;
+        Exiting = true;
         PumpTimer?.Stop();
-        try { Backend?.Dispose(); }
+        try {
+            Backend?.Dispose();
+            if (Backend is not null) await Backend.WaitForImageRetirementAsync();
+        }
         catch (Exception Error) { LuiDiagnostics.Error("App", "Shutdown failed: " + Error); }
         Exit();
     }
@@ -58,9 +64,14 @@ public partial class App : Application
             string? QualificationReport=null;
             string? NativeProvider=null;
             string? ScriptArgument = null;
+            bool AllowNative = false;
             for (int Index = 1; Index < Arguments.Length; ++Index)
             {
-                if (Arguments[Index] is "--diagnostics" or "--native-qualification" or "--conversation-qualification" or "--workbench-qualification" or "--frame-qualification" or "--frame-observation" or "--owner-wake-qualification" or "--window-lifecycle-qualification" or "--native-text-host-qualification" or "--code-editor-qualification" or "--code-editor-observation" or "--code-editor-performance" or "--native-text-visual-qualification" or "--allow-native" or "--diagnostics-log") continue;
+                if (Arguments[Index]=="--allow-native") {
+                    if (AllowNative) throw new ArgumentException("Duplicate native trust argument");
+                    AllowNative=true; continue;
+                }
+                if (Arguments[Index] is "--diagnostics" or "--native-qualification" or "--conversation-qualification" or "--workbench-qualification" or "--frame-qualification" or "--frame-observation" or "--owner-wake-qualification" or "--window-lifecycle-qualification" or "--native-text-host-qualification" or "--code-editor-qualification" or "--code-editor-observation" or "--code-editor-performance" or "--native-text-visual-qualification" or "--diagnostics-log") continue;
                 if(Arguments[Index]=="--native-provider"){
                     if(NativeProvider is not null||++Index>=Arguments.Length)throw new ArgumentException("Invalid native provider argument");
                     NativeProvider=Arguments[Index];continue;
@@ -135,7 +146,7 @@ public partial class App : Application
                 if (ProjectArgument is not null || ManifestArgument is not null || ScriptArgument is not null || Qualification || ConversationQualification || QualificationReport is null)
                     throw new ArgumentException("Frame qualification requires only a report destination");
                 Backend=new WinUIBackend(); Backend.AllWindowsClosed+=ExitCleanly;
-                PumpTimer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(16)};PumpTimer.Tick+=(_,_)=>{if(!Backend.PauseFrameQualificationPump)Backend.Pump();};PumpTimer.Start();
+                PumpTimer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(16)};PumpTimer.Tick+=(_,_)=>{if(!Backend.FrameQualificationTimerPaused)Backend.Pump();};PumpTimer.Start();
                 Environment.ExitCode=await Backend.RunFrameQualificationAsync(QualificationReport,Arguments.Contains("--frame-observation"))?0:1;ExitCleanly();return;
             }
             if(ProjectArgument is not null) {
@@ -143,7 +154,7 @@ public partial class App : Application
                 long StartupAt=Stopwatch.GetTimestamp();
                 using PreparedProject Project=new(ProjectArgument,Path.Combine(AppContext.BaseDirectory,"LuiRuntime.dll"));
                 Backend=new WinUIBackend(Project); Backend.AllWindowsClosed+=ExitCleanly;
-                if(!Backend.RunProject(Project,Arguments.Contains("--allow-native"))) throw new InvalidOperationException(Backend.LastError);
+                if(!Backend.RunProject(Project,AllowNative)) throw new InvalidOperationException(Backend.LastError);
                 LuiDiagnostics.ApplicationRunning = true;
                 PumpTimer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(16)}; PumpTimer.Tick+=(_,_)=>Backend.Pump(); PumpTimer.Start();
                 if(QualificationReport is not null && !ConversationQualification && !WorkbenchQualification) throw new ArgumentException("Report requires workload qualification");
@@ -154,7 +165,7 @@ public partial class App : Application
             if(ConversationQualification) throw new ArgumentException("Conversation qualification requires a project");
             Backend = new WinUIBackend(); Backend.AllWindowsClosed += ExitCleanly;
             AppManifest? Manifest = ManifestArgument is null ? null : AppManifest.Load(ManifestArgument);
-            if (Manifest is not null) Backend.ConfigureManifest(Manifest);
+            if (Manifest is not null) Backend.ConfigureManifest(Manifest,AllowNative);
             string ScriptPath = Manifest?.ScriptPath ?? (ScriptArgument is not null
                 ? Path.GetFullPath(ScriptArgument)
                 : Qualification

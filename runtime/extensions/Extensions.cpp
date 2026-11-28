@@ -1,4 +1,5 @@
 #include "LuiRuntime.h"
+#include "../../native/ffi/Scoped.h"
 #include "../internal/Dispatch.h"
 #include "../internal/Extensions.h"
 #include "../internal/NativeServices.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -88,6 +90,16 @@ void CloseLibrary(void* Library) {
 }
 
 void RefreshSchema(LuiRuntime* Runtime);
+void AttachScopedFfi(LuiRuntime* Runtime, size_t First, const std::string& Name, void* Library) {
+    if (Name != "Ffi") return;
+    const auto Scoped = reinterpret_cast<LuiFfiScopedDispatchV1>(FindSymbol(Library, "LuiFfiDispatchScopedV1"));
+    if (!Scoped) return;
+    for (size_t Index = First; Index < Runtime->ExtensionMethods.size(); ++Index) {
+        auto& Method = *Runtime->ExtensionMethods[Index];
+        if (Method.ServiceName == "Ffi" && Method.Name == "Dispatch")
+            Method.ScopedFfi = Scoped;
+    }
+}
 int LUI_EXTENSION_CALL EmitSignal(void* HostContext, const char* ServiceName,
     const char* SignalName, const LuiValueV1* Arguments, uint32_t ArgumentCount);
 
@@ -353,8 +365,7 @@ int CallMethod(lua_State* State) {
     auto* Method = static_cast<ExtensionMethod*>(lua_touserdata(State, lua_upvalueindex(1)));
     const int Count = lua_gettop(State) - 1;
     if (Count < 0 || Count > 32) { luaL_error(State, "extension method accepts at most 32 arguments"); return 0; }
-    std::vector<LuiValueV1> Arguments;
-    Arguments.reserve(static_cast<size_t>(Count));
+    LuiValueV1 Arguments[32];
     for (int Index = 2; Index <= Count + 1; ++Index) {
         LuiValueV1 Value{};
         Value.StructSize = sizeof(Value);
@@ -388,7 +399,7 @@ int CallMethod(lua_State* State) {
             luaL_error(State, "extension method arguments must be nil, boolean, number, or string");
             return 0;
         }
-        Arguments.push_back(Value);
+        Arguments[Index - 2] = Value;
     }
     auto* Runtime = static_cast<LuiRuntime*>(lua_touserdata(State, lua_upvalueindex(2)));
     if (Runtime->Sandboxed && Method->ExtensionName == "Host" &&
@@ -401,7 +412,7 @@ int CallMethod(lua_State* State) {
     Result.StructSize = sizeof(Result);
     int Status = 0;
     try {
-        Status = Method->Callback(Method->Context, Arguments.data(), static_cast<uint32_t>(Arguments.size()), &Result);
+        Status = Method->Callback(Method->Context, Count ? Arguments : nullptr, static_cast<uint32_t>(Count), &Result);
     } catch (...) {
         Runtime->ExtensionError = "native method threw an exception";
     }
@@ -425,6 +436,80 @@ int CallMethod(lua_State* State) {
         return 1;
     default: luaL_error(State, "native method returned an unknown value type"); return 0;
     }
+}
+
+struct FfiScriptCall {
+    const char* Input;
+    size_t InputSize;
+    char* Output;
+    size_t Capacity;
+    size_t* OutputSize;
+};
+
+int RunFfiScript(lua_State* State) {
+    auto& Call = *static_cast<FfiScriptCall*>(lua_touserdata(State, 1));
+    lua_pushvalue(State, lua_upvalueindex(1));
+    lua_pushlstring(State, Call.Input, Call.InputSize);
+    lua_call(State, 1, 1);
+    if (lua_type(State, -1) == LUA_TSTRING) {
+        size_t Size = 0;
+        const char* Result = lua_tolstring(State, -1, &Size);
+        if (Result && Size && Size <= Call.Capacity) {
+            std::memcpy(Call.Output, Result, Size);
+            *Call.OutputSize = Size;
+        }
+    }
+    return 0;
+}
+
+struct FfiScriptScope {
+    lua_State* State;
+    int Runner;
+    std::thread::id Owner;
+};
+
+int LUI_EXTENSION_CALL ComputeFfi(void* Context, const char* Input, size_t InputSize,
+    char* Output, size_t Capacity, size_t* OutputSize) {
+    const auto& Scope = *static_cast<const FfiScriptScope*>(Context);
+    if (Scope.Owner != std::this_thread::get_id() || !Input || InputSize > 32768 ||
+        !Output || !Capacity || !OutputSize) return 0;
+    *OutputSize = 0;
+    // The original method preflights space and roots the runner. String
+    // allocation, Lua execution and error handling happen under the pcall.
+    auto* State = Scope.State;
+    const int Top = lua_gettop(State);
+    FfiScriptCall Call{Input, InputSize, Output, Capacity, OutputSize};
+    lua_pushvalue(State, Scope.Runner);
+    lua_pushlightuserdata(State, &Call);
+    const int Status = lua_pcall(State, 1, 0, 0);
+    lua_settop(State, Top);
+    return Status == LUA_OK && *OutputSize != 0;
+}
+
+int CallScopedFfi(lua_State* State) {
+    CheckModuleEffect(State);
+    auto* Method = static_cast<ExtensionMethod*>(lua_touserdata(State, lua_upvalueindex(1)));
+    if (lua_gettop(State) != 3 || !Method->ScopedFfi)
+        luaL_error(State, "[LUI:Ffi] InvalidScopedCall");
+    luaL_checktype(State, 2, LUA_TSTRING);
+    luaL_checktype(State, 3, LUA_TFUNCTION);
+    size_t Size = 0;
+    const char* Packet = lua_tolstring(State, 2, &Size);
+    if (Size > 131072 || !lua_checkstack(State, 4))
+        luaL_error(State, "[LUI:Ffi] InvalidScopedCall");
+    lua_pushvalue(State, 3);
+    lua_pushcclosure(State, RunFfiScript, "Ffi.Compute", 1);
+    FfiScriptScope Scope{State, lua_gettop(State), std::this_thread::get_id()};
+    LuiValueV1 Reply{};
+    Reply.StructSize = sizeof(Reply);
+    int Status = 0;
+    try {
+        Status = Method->ScopedFfi(Method->Context, Packet, Size, ComputeFfi, &Scope, &Reply);
+    } catch (...) { }
+    if (!Status || Reply.Type != LUI_VALUE_STRING || !Reply.Text || Reply.TextLength > 524288)
+        luaL_error(State, "[LUI:Ffi] ScopedDispatchFailed");
+    lua_pushlstring(State, Reply.Text, static_cast<size_t>(Reply.TextLength));
+    return 1;
 }
 
 std::string EscapeJson(const std::string& Value) {
@@ -489,6 +574,11 @@ int PushExtensionService(lua_State* State, LuiRuntime* Runtime, const std::strin
         lua_pushlightuserdata(State, Runtime);
         lua_pushcclosure(State, CallMethod, Method->Name.c_str(), 2);
         lua_setfield(State, -2, Method->Name.c_str());
+        if (Method->ScopedFfi) {
+            lua_pushlightuserdata(State, Method.get());
+            lua_pushcclosure(State, CallScopedFfi, "Ffi.DispatchScoped", 1);
+            lua_setfield(State, -2, "DispatchScoped");
+        }
     }
     for (const auto& Signal : Runtime->ExtensionSignals) {
         if (Signal->ServiceName != Name) continue;
@@ -575,6 +665,7 @@ extern "C" LUI_API int LUI_CALL Lui_LoadExtension(LuiRuntime* Runtime, const cha
             const std::string Error = Runtime->ExtensionError.empty() ? "extension initializer failed" : std::string(Runtime->ExtensionError);
             return Fail(Runtime, Error);
         }
+        AttachScopedFfi(Runtime, Pending.PreviousCount, Name, Library.Library);
         RefreshSchema(Runtime);
         Runtime->Extensions.push_back({Name, Library.Library, Shutdown, Pending.Context});
         Pending.Committed = true;
@@ -638,12 +729,18 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
     auto Failed=[&](const char* Code) {Runtime->LastError=std::string("[LUI:Modules] ")+Code; return 0;};
     if(!CheckOwner(Runtime)) return 0;
     if(!Options || Options->StructSize!=sizeof(*Options) || Options->AbiVersion!=LUI_PROJECT_NATIVE_ABI_VERSION ||
-        Options->Flags!=LUI_PROJECT_NATIVE_TRUSTED || Options->Reserved) return Failed("InvalidOptions");
+        (Options->Flags!=LUI_PROJECT_NATIVE_TRUSTED &&
+            Options->Flags!=(LUI_PROJECT_NATIVE_TRUSTED|LUI_PROJECT_NATIVE_TRUSTED_WORKERS)) ||
+        Options->Reserved) return Failed("InvalidOptions");
     if(!Runtime->DiagnosticMode || Runtime->ApplicationStarted || Runtime->InitializingExtension || Runtime->VmDepth ||
         Runtime->BackendDepth || Runtime->ShuttingDown || Runtime->ProjectNativeVerified || !Runtime->Extensions.empty() || Runtime->Sandboxed) return Failed("PolicyNotSupported");
     const auto Snapshot=GetProjectSnapshot(Project); if(!Snapshot) return Failed("InvalidInput");
     for (const auto& Service : Runtime->NativeServices) if (Service->IsExtension) return Failed("PolicyNotSupported");
     const auto& Declared=Snapshot->GetSources().GetDeclarations();
+    const bool TrustWorkers=(Options->Flags&LUI_PROJECT_NATIVE_TRUSTED_WORKERS)!=0;
+    const auto Ffi=Declared.NativeProviders.find("Ffi");
+    if(TrustWorkers&&(Ffi==Declared.NativeProviders.end()||Ffi->second.AbiVersion!=1))
+        return Failed("CapabilityDenied");
     for(const auto& Pair:Declared.NativeProviders) if(Pair.second.RequiredCapabilities & ~Runtime->GrantedCapabilities) return Failed("CapabilityDenied");
     try {
         Lui::Project::DeclarationSet Expected,Observed;
@@ -673,12 +770,13 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
         Runtime->ShuttingDown=true;
         while(!Runtime->Extensions.empty()) {
             auto& Value=Runtime->Extensions.back(); try {Value.Shutdown(Value.Context);} catch(...) {}
-            CloseLibrary(Value.Library); Runtime->Extensions.pop_back();
+            if(!Value.ImagePin) CloseLibrary(Value.Library);
+            Runtime->Extensions.pop_back();
         }
         Runtime->ExtensionMethods.resize(PreviousMethods); Runtime->ExtensionSignals.resize(PreviousSignals);
         {std::lock_guard<std::mutex> Lock(Runtime->CompletionMutex); Runtime->PendingUiCompletions.clear();}
         Runtime->ShuttingDown=false; Runtime->ExtensionError.clear();
-        Runtime->ProjectNativeVerified=false; Runtime->VerifiedProjectDigest.clear();
+        Runtime->ProjectNativeVerified=false; Runtime->VerifiedProjectDigest.clear(); Runtime->TrustedWorkerFfi={};
         try {RefreshSchema(Runtime);} catch(...) {Runtime->ExtensionSchemaJson.clear();}
     };
     try {
@@ -692,19 +790,19 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
             const auto& Binary=Snapshot->GetSources().GetNativeBinaries().at(Binding->second.Path);
             auto Image=std::make_shared<CapturedImage>(); Image->Prepare(Binary);
             LibraryGuard Library(OpenLibrary(Image->LoadPath)); if(!Library.Library) throw Lui::Project::Internal::Failure("LoadFailed");
+            auto* LoadedImage = Library.Library; Library.Release();
+            std::shared_ptr<void> Pin(LoadedImage, [Image](void* Value) { CloseLibrary(Value); });
             if (Pair.second.AbiVersion == 2) {
                 Lui::Project::NativeObservation Expected;
                 Expected.Name = Pair.first; Expected.Platform = Platform; Expected.BinaryHash = Binary.Hash;
                 Expected.AbiVersion = 2; Expected.Version = Pair.second.Version; Expected.RequiredCapabilities = Pair.second.RequiredCapabilities;
-                std::shared_ptr<void> Pin(Library.Library, [Image](void* Value) { CloseLibrary(Value); });
-                auto* LoadedImage = Library.Library; Library.Release();
                 const auto Status = LoadNativeImageV2(Runtime, LoadedImage, std::move(Pin), &Declared, &Expected);
                 if (Status) throw Lui::Project::Internal::Failure("RegistrationMismatch");
                 continue;
             }
-            auto Query=reinterpret_cast<LuiExtensionQueryV1>(FindSymbol(Library.Library,"LuiExtensionQuery"));
-            auto Init=reinterpret_cast<LuiExtensionInitV1>(FindSymbol(Library.Library,"LuiExtensionInit"));
-            auto Shutdown=reinterpret_cast<LuiExtensionShutdownV1>(FindSymbol(Library.Library,"LuiExtensionShutdown"));
+            auto Query=reinterpret_cast<LuiExtensionQueryV1>(FindSymbol(LoadedImage,"LuiExtensionQuery"));
+            auto Init=reinterpret_cast<LuiExtensionInitV1>(FindSymbol(LoadedImage,"LuiExtensionInit"));
+            auto Shutdown=reinterpret_cast<LuiExtensionShutdownV1>(FindSymbol(LoadedImage,"LuiExtensionShutdown"));
             if(!Query || !Init || !Shutdown) throw Lui::Project::Internal::Failure("IdentityMismatch");
             LuiExtensionInfoV1 Info{}; Info.StructSize=sizeof(Info); Info.AbiVersion=LUI_EXTENSION_ABI_VERSION;
             if(!Query(&Info) || Info.StructSize<sizeof(Info) || Info.AbiVersion!=1 || !IsIdentifier(Info.Name) ||
@@ -725,8 +823,10 @@ extern "C" LUI_API int LUI_CALL Lui_LoadProjectNative(LuiRuntime* Runtime,const 
                 const auto& Signal=*Runtime->ExtensionSignals[Index]; Observed.Services[Signal.ServiceName].Signals.emplace(Signal.Name,Lui::Project::ParseSignal(Signal.Type));
             }
             std::string Error; if(!Lui::Project::MatchNative(Declared,Observed,Error)) throw Lui::Project::Internal::Failure("RegistrationMismatch");
-            Runtime->Extensions.push_back({Pair.first,Library.Library,Shutdown,Pending.Context,Info.ExtensionVersion,Info.RequiredCapabilities,Binary.Hash,Image});
-            Pending.Committed=true; Library.Release();
+            AttachScopedFfi(Runtime, Pending.PreviousCount, Pair.first, LoadedImage);
+            Runtime->Extensions.push_back({Pair.first,LoadedImage,Shutdown,Pending.Context,Info.ExtensionVersion,Info.RequiredCapabilities,Binary.Hash,Pin});
+            Pending.Committed=true;
+            if(TrustWorkers&&Pair.first=="Ffi") Runtime->TrustedWorkerFfi={std::move(Pin),Init,Shutdown};
         }
         RefreshSchema(Runtime); Runtime->ProjectNativeVerified=true; Runtime->VerifiedProjectDigest=Snapshot->GetDigest(); Runtime->LastError.clear(); return 1;
     } catch(const Lui::Project::Internal::Failure& Error) {
@@ -747,9 +847,10 @@ void CloseExtensions(LuiRuntime* Runtime) {
     for (auto Current = Runtime->Extensions.rbegin(); Current != Runtime->Extensions.rend(); ++Current) {
         try { Current->Shutdown(Current->Context); }
         catch (...) { Report(Runtime, "Error", "[LUI:Extension] shutdown failed for " + Current->Name); }
-        CloseLibrary(Current->Library);
+        if(!Current->ImagePin) CloseLibrary(Current->Library);
     }
     Runtime->Extensions.clear();
+    Runtime->TrustedWorkerFfi={};
     Runtime->ExtensionMethods.clear();
     Runtime->ExtensionSignals.clear();
 }

@@ -1,0 +1,20 @@
+{
+  "Name": "Toml",
+  "Signals": [],
+  "Methods": [
+    {
+      "Name": "Decode",
+      "Arguments": [
+        "string"
+      ],
+      "Returns": "string"
+    },
+    {
+      "Name": "Format",
+      "Arguments": [
+        "string"
+      ],
+      "Returns": "string"
+    }
+  ]
+}

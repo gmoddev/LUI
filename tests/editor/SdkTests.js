@@ -2,7 +2,7 @@
 const Test = require('node:test');
 const Assert = require('node:assert/strict');
 const Path = require('node:path');
-const { Validate, ResolveSdk, GetBinding } = require('../../vscode/SdkClient');
+const { Validate, ResolveSdk, GetBinding, RestoreLockedPackages } = require('../../vscode/SdkClient');
 const { CreateProject } = require('../../vscode/Onboarding');
 const { TypeDiagnostics } = require('../../vscode/TypeDiagnostics');
 const { EventEmitter } = require('node:events');
@@ -42,6 +42,30 @@ function GetSdkFixture() {
         },
     };
 }
+
+Test('editor package restoration uses only the offline lock, keeps output bounded and requires workspace trust', async () => {
+    const Fixture = GetSdkFixture();
+    try {
+        Fixture.Install();
+        Fixture.Doctor(JSON.stringify(Fixture.Ready));
+        const Folder = { uri: { fsPath: Fixture.Root } };
+        const Manifest = Path.join(Fixture.Root, 'lui.json');
+        const Invoke = (Cli, Args, Options, Complete) => {
+            Assert.equal(Cli, Fixture.Cli);
+            Assert.deepEqual(Args, ['package', 'restore', Manifest, '--locked', 'true', '--sdk', Fixture.Root,
+                '--output', 'lui.resolved.json']);
+            Assert.equal(Options.shell, false);
+            Assert.equal(Options.windowsHide, true);
+            Complete(null, 'untrusted stdout', '');
+        };
+        Assert.equal(await RestoreLockedPackages(Folder, Fixture.Vscode, Invoke), 'lui.resolved.json');
+        await Assert.rejects(RestoreLockedPackages(Folder, Fixture.Vscode, (_Cli, _Args, _Options, Complete) =>
+            Complete(new Error('sensitive'), '', '[LUI:CLI] [LUI:Packages] PackageLockChanged sensitive')),
+        /Review the dependency changes/);
+        Fixture.Vscode.workspace.isTrusted = false;
+        await Assert.rejects(RestoreLockedPackages(Folder, Fixture.Vscode, Invoke), /trusted LUI project/);
+    } finally { Fixture.Dispose(); }
+});
 
 Test('failed SDK discovery settles with a fixed error for missing and nonzero CLI children', { timeout: 10000 }, async () => {
     for (const Mode of ['Missing', 'Nonzero']) {

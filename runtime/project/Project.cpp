@@ -78,7 +78,7 @@ void CheckLegacyFields(Json& Manifest) {
     if(!Declarations.empty() && !std::binary_search(Capabilities.begin(),Capabilities.end(),"HostServices") &&
         !std::binary_search(Capabilities.begin(),Capabilities.end(),"NativeExtensions")) Fail("InvalidManifest");
     Manifest["ExtensionDeclarations"] = Declarations;
-    auto Assets = Strings(Manifest["Assets"], 256, true);
+    auto Assets = Strings(Manifest["Assets"], 1024, true);
     for (const auto& Asset : Assets) {
         if (Asset.size() > 128 || Asset.find('/') != std::string::npos || !PathValid(Asset)) Fail("InvalidPath");
     }
@@ -130,6 +130,14 @@ void Visit(const std::string& Id, const std::map<std::string, Package>& Packages
 bool Hex(const std::string& Value, size_t Size) {
     if (Value.size() != Size) return false;
     return std::all_of(Value.begin(), Value.end(), [](char Character) { return (Character >= '0' && Character <= '9') || (Character >= 'a' && Character <= 'f'); });
+}
+
+void CheckGeneratedHash(const std::string& Path, std::string_view Prefix, const std::string& Bytes) {
+    if (Path.compare(0, Prefix.size(), Prefix) != 0) return;
+    if (Path.size() != Prefix.size() + 64 + 5 || Path.compare(Path.size() - 5, 5, ".json") != 0)
+        Fail("InvalidPackageMetadataPath");
+    const auto Expected = Path.substr(Prefix.size(), 64);
+    if (!Hex(Expected, 64) || Hash(Bytes) != Expected) Fail("PackageMetadataMismatch");
 }
 }
 
@@ -201,6 +209,7 @@ std::shared_ptr<const Snapshot> Internal::PrepareSources(const SourceReader& Fil
             const auto Name = Path.get<std::string>();
             auto File = Files.Read(Name,std::min<size_t>(256 * 1024,1024 * 1024 - DeclarationBytes),Settings.Canceled);
             if (!Physical.insert(File.Identity).second) Fail("DuplicateIdentity");
+            CheckGeneratedHash(Name, GeneratedDeclarationPrefix, File.Bytes);
             DeclarationBytes += File.Bytes.size(); AddDeclaration(Result->Declarations,Name,std::move(File.Bytes));
         }
         if (!Result->Declarations.Files.empty()) FinishDeclarations(Result->Declarations);
@@ -261,6 +270,7 @@ std::shared_ptr<const Snapshot> Internal::PrepareSources(const SourceReader& Fil
             if (!PathValid(Path)) Fail("InvalidPath");
             for (const auto& Pair : Packages) if (ContainsRoot(Pair.second.Data.Root, Path)) Fail("InvalidLock");
             Captured.emplace(Path, Files.Read(Path, Bounds.LockBytes, Settings.Canceled).Bytes);
+            CheckGeneratedHash(Path, GeneratedModuleLockPrefix, Captured.at(Path));
             Lock = Parse(Captured.at(Path));
             Shape(Lock, {"SchemaVersion","Packages"});
             if (Number(Lock["SchemaVersion"]) != 1 || !Lock["Packages"].is_array() || Lock["Packages"].size() != Packages.size() - 1)

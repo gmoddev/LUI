@@ -31,6 +31,31 @@ static auto Check(const Lui::Project::Snapshot& Snapshot,const std::string& Defi
     Require(bool(Result),Error.c_str()); return Result;
 }
 static void Cases(const Fs::path& Root,const std::string& Definitions) {
+    auto Constructors=Check(*Capture(Root/"Constructors",{{"Main.luau",
+        "local W:Window=Instance.new('Window',{Title='Editor',Size=UDim2.fromOffset(400,300)})\n"
+        "local T:TextBox=Instance.new('TextBox',{Parent=W,Multiline=true,Text='Example'})\n"
+        "local Name:'TextLabel'|'TextButton'=if math.random()>0.5 then 'TextLabel' else 'TextButton'\n"
+        "local Dynamic=Instance.new(Name,{Text='Allowed'}); local Props:any={Text='Dynamic'}; Instance.new('TextLabel',Props)\n"
+        "local Key:string='Text'; Instance.new('TextLabel',{[Key]='Runtime validated'})\n"
+        "local Instance={new=function(_Class:string,_Props:any):number return 4 end}; local N:number=Instance.new('TextBox',{MultiLine=true})"}}),Definitions);
+    Require(Constructors->Diagnostics.empty(),"valid/exact/union/dynamic/shadowed constructor calls rejected");
+    auto ConstructorErrors=Check(*Capture(Root/"ConstructorErrors",{{"Main.luau",
+        "Instance.new('TextBox',{MultiLine=true}); Instance.new('TextLabel',{AbsolutePosition=Vector2.new(0,0)})\n"
+        "Instance.new('TextLabel',{['Typo']='CANARY_INITIALIZER_PAYLOAD'})"}}),Definitions);
+    Require(ConstructorErrors->Diagnostics.size()==3,"literal constructor properties not validated");
+    Require(ConstructorErrors->Diagnostics[0].Code=="UnknownInitializerProperty" &&
+        ConstructorErrors->Diagnostics[1].Code=="ReadOnlyInitializerProperty" &&
+        ConstructorErrors->Diagnostics[2].Code=="UnknownInitializerProperty","constructor diagnostic codes lost");
+    for (const auto& Issue:ConstructorErrors->Diagnostics) Require(Issue.Message.find("CANARY")==std::string::npos,"constructor diagnostics leaked values");
+    auto ReboundInstance=Check(*Capture(Root/"ReboundInstance",{{"Main.luau",
+        "local Fake:any={}; Instance=Fake; Instance.new('TextBox',{MultiLine=true})"}}),Definitions);
+    for (const auto& Issue:ReboundInstance->Diagnostics) Require(Issue.Code!="UnknownInitializerProperty","rebound constructor interpreted as builtin");
+    for (const auto& Text:{
+        "local Fake:any={new=function(_C:string,_P:any) return 4 end}; rawset(getfenv(),'Instance',Fake); Instance.new('TextBox',{MultiLine=true})",
+        "local function F(Instance:any) Instance.new('TextBox',{MultiLine=true}) end; F({new=function() end})"}) {
+        const auto Shadowed=Check(*Capture(Root/"EnvironmentInstance",{{"Main.luau",Text}}),Definitions);
+        for (const auto& Issue:Shadowed->Diagnostics) Require(Issue.Code!="UnknownInitializerProperty","environment/parameter constructor treated as builtin");
+    }
     const std::map<std::string,std::string> Files{
         {"Main.luau","local Data=require('./Data'); local N:number=Data.Count; local F=require('./Sub/Factory'); local W:Window=F(); assert(W); local Types=require('./Types'); local Value:Types.Record={Count=9}"},
         {"Data.luau","return {Count=17, Name='Typed'}"},

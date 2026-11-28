@@ -1,0 +1,28 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Workers",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [
+    "Messages"
+  ],
+  "Modules": [
+    {
+      "Name": "Workers",
+      "Summary": "Run captured Luau modules on isolated compute threads.",
+      "Types": [
+        "Options",
+        "Actor",
+        "Pool",
+        "Job"
+      ],
+      "Functions": [
+        "Handler",
+        "Start",
+        "StartTrusted",
+        "Pool",
+        "PoolTrusted"
+      ]
+    }
+  ]
+}

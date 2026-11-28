@@ -1,0 +1,24 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Language",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [
+    "Process",
+    "Json"
+  ],
+  "Modules": [
+    {
+      "Name": "Language",
+      "Summary": "Inspect and compile bounded Luau source with the selected SDK checker.",
+      "Types": [
+        "Diagnostic",
+        "Import",
+        "Report"
+      ],
+      "Functions": [
+        "Analyze"
+      ]
+    }
+  ]
+}

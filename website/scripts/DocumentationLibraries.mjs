@@ -1,6 +1,7 @@
 import { readFile as ReadFile, writeFile as WriteFile, mkdir as MakeDirectory } from 'node:fs/promises';
 import Path from 'node:path';
 import { ModuleDeclarations } from './LibraryReference.mjs';
+import { ReadText } from './Releases.mjs';
 
 const Start = `local Window = Instance.new("Window", {Title = "Library example", Size = UDim2.fromOffset(640, 300)})
 local Status = Instance.new("TextLabel", {Parent = Window, Text = "Ready",
@@ -113,17 +114,17 @@ function Contract(Name, Guides) {
   return Text.trim();
 }
 
-export async function ImproveLibraries(Repository, Site, Version) {
+export async function ImproveLibraries(Repository, Site, Version, SourceRepository = Repository) {
   const Base='/LUI/docs/sdk-'+Version;const Root=Path.join(Site,'src/content/docs/docs/sdk-'+Version);
-  const Guides={};for(const Name of ['LuiWorkbench','Json','JsonClient','LuiUI']) Guides[Name]=await ReadFile(Path.join(Repository,'libraries',Name,'README.md'),'utf8');
+  const Guides={};for(const Name of ['LuiWorkbench','Json','JsonClient','LuiUI']) Guides[Name]=await ReadText(Path.join(SourceRepository,'libraries',Name,'README.md'));
   const Reports=[];
   for(const Library of ['LuiWorkbench','Json','JsonClient','LuiUI']) {
-    const Catalog=JSON.parse(await ReadFile(Path.join(Repository,'libraries',Library,'Library.json'),'utf8'));
+    const Catalog=JSON.parse(await ReadFile(Path.join(SourceRepository,'libraries',Library,'Library.json'),'utf8'));
     const Directory=Path.join(Root,'libraries',Library.toLowerCase());await MakeDirectory(Directory,{recursive:true});
     let Index='---\ntitle: '+Library+'\ndescription: '+JSON.stringify(Library==='LuiWorkbench'?'Commands, documents, two-pane layout and ordinary preferences.':Intros[Catalog.Modules[0].Name])+'\n---\n\n**Optional source libraries included in SDK '+Version+'.** These modules are not built-in services and are not loaded into your app until you declare/import them.\n\nStart with [using the bundled libraries]('+Base+'/guides/libraries/) for complete projects and the manifest/lock files.\n\n';
     for(const Module of Catalog.Modules) {
       const Name=Module.Name;const Sample=LibraryExamples[Name];if(!Sample)throw new Error('[LUI:Docs] Missing library example: '+Name);
-      const Source=await ReadFile(Path.join(Repository,'libraries',Library,Name+'.luau'),'utf8');const Types=ModuleDeclarations(Source);
+      const Source=await ReadFile(Path.join(SourceRepository,'libraries',Library,Name+'.luau'),'utf8');const Types=ModuleDeclarations(Source);
       if(Types.size!==Module.Types.length||Module.Types.some(Name=>!Types.has(Name)))throw new Error('[LUI:Docs] Library types differ');
       const Functions=(Module.Functions||['New']).map(Name=>Source.split(/\r?\n/).find(Line=>Line.startsWith('function '+Module.Name+'.'+Name+'('))?.replace(/^function /,''));
       if(Functions.some(Value=>!Value))throw new Error('[LUI:Docs] Library function differs');

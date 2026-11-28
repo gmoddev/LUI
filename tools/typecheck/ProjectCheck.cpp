@@ -1,6 +1,7 @@
 #include "ProjectCheck.h"
 #include "Imports.h"
 #include "Files.h"
+#include "Schema.h"
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/ConfigResolver.h"
 #include "Luau/Frontend.h"
@@ -16,6 +17,7 @@
 #include <thread>
 #include <set>
 #include <tuple>
+#include <cstring>
 
 namespace Lui::TypeCheck {
 namespace {
@@ -65,6 +67,62 @@ void Add(Result& Output, const Lui::Project::Snapshot& Sources, const std::strin
     }
     Output.Diagnostics.push_back(std::move(Value));
 }
+bool InstanceGlobal(Luau::AstExpr* Expression) {
+    auto* Global = Expression->as<Luau::AstExprGlobal>();
+    return Global && !std::strcmp(Global->name.value,"Instance");
+}
+bool InstanceWrite(Luau::AstExpr* Expression) {
+    if (InstanceGlobal(Expression)) return true;
+    if (auto* Field = Expression->as<Luau::AstExprIndexName>()) {
+        auto* Global = Field->expr->as<Luau::AstExprGlobal>();
+        return InstanceGlobal(Field->expr) || (Global && !std::strcmp(Global->name.value,"_G") && !std::strcmp(Field->index.value,"Instance"));
+    }
+    if (auto* Field = Expression->as<Luau::AstExprIndexExpr>()) {
+        if (InstanceGlobal(Field->expr)) return true;
+        auto* Global = Field->expr->as<Luau::AstExprGlobal>();
+        auto* Name = Field->index->as<Luau::AstExprConstantString>();
+        return Global && !std::strcmp(Global->name.value,"_G") && Name && std::string_view(Name->value.data,Name->value.size)=="Instance";
+    }
+    return false;
+}
+struct InstanceWrites : Luau::AstVisitor {
+    bool Rebound = false;
+    bool visit(Luau::AstExprGlobal* Node) override {
+        // Environment aliases can replace builtins indirectly. This optional
+        // literal check makes no claims once a source accesses that escape hatch.
+        Rebound |= !std::strcmp(Node->name.value,"getfenv") || !std::strcmp(Node->name.value,"setfenv") || !std::strcmp(Node->name.value,"_G");
+        return true;
+    }
+    bool visit(Luau::AstStatAssign* Node) override { for (auto* Variable:Node->vars) Rebound |= InstanceWrite(Variable); return true; }
+    bool visit(Luau::AstStatFunction* Node) override { Rebound |= InstanceWrite(Node->name); return true; }
+    bool visit(Luau::AstStatCompoundAssign* Node) override { Rebound |= InstanceWrite(Node->var); return true; }
+};
+struct Initializers : Luau::AstVisitor {
+    Result& Output;
+    const Lui::Project::Snapshot& Sources;
+    const std::string& Id;
+    Initializers(Result& Output,const Lui::Project::Snapshot& Sources,const std::string& Id):Output(Output),Sources(Sources),Id(Id) {}
+    bool visit(Luau::AstExprCall* Call) override {
+        if (Output.Truncated) return false;
+        auto* Method=Call->func->as<Luau::AstExprIndexName>();
+        if (!Method || Call->self || Call->args.size!=2 || !InstanceGlobal(Method->expr) || std::strcmp(Method->index.value,"new")) return true;
+        auto* Class=Call->args.data[0]->as<Luau::AstExprConstantString>();
+        auto* Properties=Call->args.data[1]->as<Luau::AstExprTable>();
+        if (!Class || !Properties) return true;
+        const std::string Name(Class->value.data,Class->value.size);
+        const auto* Definition=LuiSchema::FindClass(Name);
+        if (!Definition || !Definition->Creatable) return true;
+        for (const auto& Item:Properties->items) {
+            auto* Key=Item.key ? Item.key->as<Luau::AstExprConstantString>() : nullptr;
+            if (!Key) continue; // Dynamic keys/tables and value types retain their runtime checks.
+            const auto* Property=LuiSchema::FindProperty(Name,std::string(Key->value.data,Key->value.size));
+            if (!Property) Add(Output,Sources,Id,"type","UnknownInitializerProperty","[LUI:TypeCheck] Unknown initializer property",Key->location);
+            else if (Property->ReadOnly) Add(Output,Sources,Id,"type","ReadOnlyInitializerProperty","[LUI:TypeCheck] Readonly initializer property",Key->location);
+            if (Output.Truncated) break;
+        }
+        return true;
+    }
+};
 struct Resolver : Luau::FileResolver {
     Resolver(const Lui::Project::Snapshot& Sources, Result& Output) : Sources(Sources), Output(Output) {}
     const Lui::Project::Snapshot& Sources;
@@ -81,6 +139,10 @@ struct Resolver : Luau::FileResolver {
                 Info.Rebound = Lui::Project::RequireRebound(Parsed.root);
                 Sites Visitor; Parsed.root->visit(&Visitor); Info.TypeFunction=Visitor.TypeFunction;
                 if (!Info.Rebound) Info.Sites=std::move(Visitor.Positions);
+                if (Parsed.errors.empty()) {
+                    InstanceWrites Writes; Parsed.root->visit(&Writes);
+                    if (!Writes.Rebound) { Initializers Constructors(Output,Sources,Name); Parsed.root->visit(&Constructors); }
+                }
             }
             Imports.emplace(Name,std::move(Info));
         }
@@ -150,7 +212,8 @@ std::shared_ptr<const Result> Check(const Lui::Project::Snapshot& Sources, const
         const auto EffectiveDefinitions=Lui::Project::MergeDefinitions(Sources.GetDeclarations(),Definitions);
         auto Output=std::make_shared<Result>(); Output->SourceDigest=Sources.GetDigest(); Output->DefinitionsDigest=Lui::Project::Hash(EffectiveDefinitions);
         Output->Digest=Lui::Project::Hash(Json{{"SourceDigest",Output->SourceDigest},{"DefinitionsDigest",Output->DefinitionsDigest},
-            {"Profile","ProjectTypesV1"},{"LuauRevision",Json::parse(Sources.GetDescriptor()).at("LuauRevision")}}.dump());
+            {"Profile","ProjectTypesV1"},{"InitializerValidation",1},{"ConstructorSchema",Lui::Project::Hash(LuiSchema::GetJson())},
+            {"LuauRevision",Json::parse(Sources.GetDescriptor()).at("LuauRevision")}}.dump());
         // Refuse known cycles before asking the analyzer to infer cyclic exports.
         std::string Validation; Lui::Project::Options Bounds; Bounds.Canceled=Canceled;
         if (!Lui::Project::ValidateImports(Sources,Bounds,Validation) && ProjectCode(Validation)==std::string("Cycle")) {

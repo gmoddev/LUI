@@ -1,0 +1,15 @@
+{
+  "SchemaVersion": 1,
+  "AbiVersion": 1,
+  "Provider": "Host",
+  "Services": [{
+    "Name": "DesktopWindowMetrics",
+    "Methods": [
+      {"Name":"Read","Arguments":["string","number"],"Returns":"number"},
+      {"Name":"Place","Arguments":["string","number","number","number","number"],"Returns":"number"},
+      {"Name":"Own","Arguments":["string","string"],"Returns":"number"},
+      {"Name":"At","Arguments":["number","number"],"Returns":"number"}
+    ],
+    "Signals": []
+  }]
+}

@@ -14,12 +14,14 @@ void RegisterNetworkTypes(lua_State*) {}
 void RegisterNativeTypes(lua_State*) {}
 void PushNetworkService(lua_State* State) { Unsupported(State); }
 void PushHttpService(lua_State* State) { Unsupported(State); }
+void PushWebSocketService(lua_State* State) { Unsupported(State); }
 void PushHttpServerService(lua_State* State) { Unsupported(State); }
 // Ordinary task.spawn/defer/delay coroutines have no hosted-network owner.
 bool NetworkTaskReady(LuiRuntime*, int) { return true; }
 bool CompleteNetworkTask(LuiRuntime*, int, lua_State*, int) { return false; }
 int DrainNetworkCompletions(LuiRuntime*) { return 0; }
 void CloseNetwork(LuiRuntime*) {}
+bool NetworkHasPendingWork(LuiRuntime*) { return false; }
 int ConfigureNetworkTls(LuiRuntime*, const LuiTlsOptionsV1*) { return 0; }
 bool HasExtensionService(const LuiRuntime*, const std::string&) { return false; }
 int PushExtensionService(lua_State* State, LuiRuntime*, const std::string&) { return Unsupported(State); }
@@ -31,6 +33,7 @@ bool NativeServiceNeedsHostGrant(const LuiRuntime*, const std::string&) { return
 int PushNativeService(lua_State* State, LuiRuntime*, const std::string&) { return Unsupported(State); }
 int DrainNativeServices(LuiRuntime*, size_t, std::chrono::steady_clock::time_point) { return 0; }
 void CloseNativeServices(LuiRuntime*) {}
+bool NativeHasPendingWork(LuiRuntime*) { return false; }
 void ObserveNativeServices(const LuiRuntime*, Lui::Project::DeclarationSet&, bool) {}
 void PumpDesktopServices(LuiRuntime*) {}
 void RetireDesktopServices(LuiRuntime*) {}

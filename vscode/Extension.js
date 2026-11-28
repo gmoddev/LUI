@@ -7,7 +7,7 @@ const { PreviewClient } = require('./PreviewClient');
 const { InspectorProvider } = require('./InspectorProvider');
 const { NativePreview, ResolveNativeHost } = require('./NativePreview');
 const { TypeDiagnostics } = require('./TypeDiagnostics');
-const { UsesSdk, GetBinding, ResolveSdk, GetRoot, GetManifest } = require('./SdkClient');
+const { UsesSdk, GetBinding, ResolveSdk, GetRoot, GetManifest, RestoreLockedPackages } = require('./SdkClient');
 const { ChooseSdk, CreateProject } = require('./Onboarding');
 const { ProjectFiles } = require('./ProjectFiles');
 const { ReadManifest, GetSettingsIdentity, HasFolder, SetupMessage } = require('./ProjectSetup');
@@ -153,6 +153,17 @@ class EditorController {
             Vscode.commands.registerCommand('lui.startPreview', () => this.Start()),
             Vscode.commands.registerCommand('lui.chooseSdk', () => ChooseSdk(Vscode, this.Output)),
             Vscode.commands.registerCommand('lui.createProject', () => CreateProject(Vscode, this.Output, Context)),
+            Vscode.commands.registerCommand('lui.restoreLockedPackages', async () => {
+                const Folder = GetFolder();
+                try {
+                    const Output = await RestoreLockedPackages(Folder, Vscode);
+                    this.Log('Locked packages restored. Select ' + Output + ' with lui.manifestPath to check or run it.');
+                    if (Path.basename(GetManifest(Folder, Vscode)) === Output) this.Types.Check(Folder, true);
+                } catch (Error) {
+                    this.Log(Error.message);
+                }
+                this.Output.show(true);
+            }),
             Vscode.commands.registerCommand('lui.addProjectFile', Uri => this.ProjectFiles.AddFile(Uri)),
             Vscode.commands.registerCommand('lui.reloadPreview', () => this.Client?.RequestReload()),
             Vscode.commands.registerCommand('lui.stopPreview', () => this.Stop()),

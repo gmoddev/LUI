@@ -234,6 +234,10 @@ FRAME_EXPORT int __cdecl LuiWinUI_FramePollV1(Frame* Value) noexcept {
     if(!Value)return -2;const int Status=Value->Status();
     if(Status==1)Value->ReleaseUpload();return Status;
 }
+FRAME_EXPORT HRESULT __cdecl LuiWinUI_FrameNotifyFenceV1(Frame* Value,HANDLE Event) noexcept {
+    if(!Value||!Event||!Value->Submitted||!Value->FenceValue)return E_INVALIDARG;
+    return Value->Owner->Fence->SetEventOnCompletion(Value->FenceValue,Event);
+}
 FRAME_EXPORT int __cdecl LuiWinUI_FrameReleaseV1(Frame* Value) noexcept {
     if(!Value)return 1;
     if(Value->Source||Value->CopyState.load()==1)return 0;

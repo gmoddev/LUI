@@ -1,0 +1,77 @@
+--!strict
+local DockModel=require("@LuiWorkbench/DockModel")
+local DockHost=require("@LuiWorkbench/DockHost")
+local Json=require("@Json/Json")
+local M=DockModel.New()
+for _,Id in {"Editor","Inspector","Tools","Log","Plot"} do assert(M:Register(Id,110,70)) end
+local Original={Version=1,Main={Id="Outer",Axis="X",Ratio=.3,
+    First={Id="Left",Tabs={"Inspector"},Active="Inspector"},
+    Second={Id="Inner",Axis="Y",Ratio=.7,First={Id="Center",Tabs={"Editor","Plot"},Active="Editor"},
+        Second={Id="Bottom",Tabs={"Log","Tools"},Active="Log"}}},Floats={}}
+assert(M:Restore(Original))
+assert(M:Restore(Json.Decode(Json.Encode(M:Snapshot()))))
+local BeforeTear=Json.Encode(M:Snapshot())
+assert(M:Float("Inspector"))
+local Torn=M:Snapshot()
+local Hint=Torn.Floats[1].OriginSplit
+assert(Hint and Hint.First and Hint.Anchor=="Inner")
+assert(M:Restore(Json.Decode(Json.Encode(Torn))))
+assert(M:Redock(Torn.Floats[1].Id))
+assert(Json.Encode(M:Snapshot())==BeforeTear)
+assert(M:Hide("Inspector"))
+assert(M:Restore(Json.Decode(Json.Encode(M:Snapshot()))) and M:Show("Inspector"))
+assert(Json.Encode(M:Snapshot())==BeforeTear)
+assert(M:Hide("Inspector") and M:Show("Inspector","Center"))
+assert(M:GetLocation("Inspector")=="Center")
+assert(M:Restore(Original))
+Original.Main.Ratio=.12
+assert((M:View().Main :: any).Ratio==.3)
+local Before=M:View()
+local Broken=M:Snapshot()
+;(Broken.Main :: any).Second.First.Tabs={"Editor","Editor"}
+assert(not M:Restore(Broken) and M:View()==Before)
+assert(not M:Restore({Version=1,Main={Id="Loop",Axis="Z",Ratio=0/0},Floats={}}))
+local P=assert(M:PrepareMove("Inspector","Main","Center","Bottom"))
+assert(M:View()==Before and P.Group and M:Commit(P))
+assert(M:GetLocation("Inspector")==P.Group and not M:Commit(P))
+assert(M:Restore(Original))
+assert(M:Move("Editor","Main","Center","Tab",3))
+local _,_,Slot=M:GetLocation("Editor")
+assert(Slot==2)
+local Projection=M:Arrange(M:View().Main,900,600)
+assert(Projection.Left.Width>=110 and Projection.Center.Height>=102)
+local Small=M:Arrange(M:View().Main,12,10)
+for _,R in Small do assert(R.Width>=0 and R.Height>=0) end
+assert(M:Float("Inspector") and M:Float("Plot"))
+assert(#M:Snapshot().Floats==2)
+local _,F=M:GetLocation("Plot")
+assert(F and M:Redock(F) and #M:Snapshot().Floats==1)
+assert(M:Hide("Log") and not M:GetLocation("Log") and M:Show("Log","Center"))
+assert(M:Hide("Tools"))
+local Insert=assert(M:PrepareMove("Tools","Main","Center","Tab"))
+assert(M:Unregister("Tools") and not M:Commit(Insert))
+
+local Window=Instance.new("Window",{Title="Dock lifetime",Size=UDim2.fromOffset(900,600)})
+local Root=Instance.new("Frame",{Parent=Window,Size=UDim2.fromScale(1,1)})
+local A=Instance.new("TextBox",{Parent=Root,Text="draft",Multiline=true})
+local B=Instance.new("TextLabel",{Parent=Root,Text="log"})
+local Seen={}
+local UI=DockHost.New(DockModel.New(),{Window=Window,Root=Root,TrackResize=false,
+    OnAttachment=function(Id,W,Visible) table.insert(Seen,{Id,W,Visible}) end})
+assert(UI:Register("A",{Title="Draft",Content=A,Focus=A}))
+assert(UI:Register("B",{Title="Log",Content=B}))
+assert(UI:Show("A") and UI:Show("B"))
+local Group=UI:GetLocation("A")
+assert(UI:Move("A","Main",Group,"Top"))
+A.Text="unsaved edit"
+assert(UI:Float("A"))
+local _,Float=UI:GetLocation("A")
+assert(Float and Float~="Main" and A.Text=="unsaved edit")
+local Saved=UI:Snapshot()
+assert(UI:Redock(Float) and #UI:Snapshot().Floats==0)
+assert(UI:Restore(Saved) and A.Text=="unsaved edit" and #UI:Snapshot().Floats==1)
+assert(UI:Hide("A") and UI:Show("A") and UI:IsVisible("A") and #Seen>=6)
+assert(UI:Unregister("B") and B.Parent==Root)
+UI:Dispose()
+assert(A.Parent==Root and A.Text=="unsaved edit")
+Window:Destroy()

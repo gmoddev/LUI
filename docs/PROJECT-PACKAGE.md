@@ -1,5 +1,9 @@
 # Schema v2 content staging
 
+For local dependency resolution and reusable Luau archives, see the
+[package developer guide](PACKAGES.md). Its generated manifest is an
+ordinary input to the staging commands below.
+
 `LuiProjectTool` captures and stages declared application/dependency sources, assets, native binaries and metadata without executing Luau or loading a DLL. The CLI forwards to this shared component. `build --mode project` additionally composes a Windows platform host with captured content under `Application/` and `Start-LUI.cmd`; [the modular sample](../examples/modular/README.md) documents self-contained publishing.
 
 ## Commands

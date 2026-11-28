@@ -32,6 +32,8 @@ struct Owner {
 struct NativeBinary { std::string Provider, Platform, Path, Hash, Bytes; };
 class Snapshot;
 namespace Internal {
+inline constexpr std::string_view GeneratedModuleLockPrefix = ".lui/Packages/ModuleLock-";
+inline constexpr std::string_view GeneratedDeclarationPrefix = ".lui/Packages/NativeDeclaration-";
 class SourceReader;
 std::shared_ptr<const Snapshot> PrepareSources(const SourceReader&, const std::string&, const Options&, std::string&,
     std::map<std::string, std::string>* Metadata = nullptr);

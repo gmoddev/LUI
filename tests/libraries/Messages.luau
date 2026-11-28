@@ -1,0 +1,28 @@
+--!strict
+local M = require("@Messages/Messages")
+local Q = M.Mailbox(2, 25)
+local Source = {Key=7}
+assert(Q:Send(Source)); Source.Key = 11
+local Bytes = buffer.fromstring("abc")
+assert(Q:Send(Bytes)); buffer.writeu8(Bytes,0,120)
+local Ok, Why = Q:Send("full")
+assert(not Ok and Why == "Full")
+assert(Q:Receive().Key == 7)
+local Copied = Q:Receive()
+assert(buffer.tostring(Copied) == "abc")
+assert(not Q:Send(buffer.create(21)))
+local N, Size = Q:Usage(); assert(N == 0 and Size == 0)
+assert(Q:Send(true)); Q:Close(); Q:Close()
+assert(select(2,Q:Receive()) == "Closed" and select(2,Q:Send(true)) == "Closed")
+assert(not pcall(M.Decode, "LUM2J[]") and not pcall(M.Encode, buffer.create(65532)))
+assert(not pcall(M.Encode, function() end) and not pcall(M.Encode, app:GetService("PlatformService")))
+local Cycle: any = {}; Cycle.self = Cycle; assert(not pcall(M.Encode, Cycle))
+assert(buffer.len(M.Decode(M.Encode(buffer.create(65531)))) == 65531)
+local New = M.Mailbox :: any
+assert(not pcall(New,false,5) and not pcall(New,1,0) and not pcall(New,0/0,5))
+assert(not pcall(New,65,262144) and not pcall(New,64,262145))
+New(64,262144):Close()
+local Ring=M.Mailbox(2,100)
+assert(Ring:Send(1) and Ring:Send(2) and Ring:Receive()==1)
+assert(Ring:Send(3) and Ring:Receive()==2 and Ring:Receive()==3)
+Ring:Close()

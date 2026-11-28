@@ -1,0 +1,8 @@
+{
+  "SchemaVersion": 1,
+  "Packages": [{
+    "Alias": "Json",
+    "Provenance": {"Kind": "LocalVendor", "Id": "Json-0.1.0-preview.3"},
+    "Files": [{"Path": "Json.luau", "Sha256": "cf9ea6594a8b090535324bf16de433b926c1b425c759bf981548b4cdbacd58bb"}]
+  }]
+}

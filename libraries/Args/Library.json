@@ -1,0 +1,20 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Args",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Args",
+      "Summary": "Parse declared CLI switches and positional arguments.",
+      "Types": [
+        "Options",
+        "Parsed"
+      ],
+      "Functions": [
+        "Parse"
+      ]
+    }
+  ]
+}

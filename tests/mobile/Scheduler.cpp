@@ -1,4 +1,5 @@
 #include "../../native/abi/LuiRuntime.h"
+#include "../../native/abi/LuiExecution.h"
 #include "../../runtime/internal/State.h"
 #include "../../runtime/internal/Scheduler.h"
 #include <chrono>
@@ -13,7 +14,11 @@ int main() {
         LuiCapabilityDeclarationV1 Grants{sizeof(Grants), 1, 0};
         LuiSandboxLimitsV1 Limits{sizeof(Limits), 1, 32 * 1024 * 1024, 10000};
         Check(Lui_DeclareCapabilities(Runtime, &Grants) && Lui_ConfigureSandbox(Runtime, &Limits));
+        Check(Lui_HasPendingWorkV1(Runtime) == 0);
         Check(ConfigureBoundedTasks(Runtime, 4) && !ConfigureBoundedTasks(Runtime, 4));
+        Check(Lui_RunScript(Runtime,
+            "local Ok,Failure=pcall(function() return app:GetService('WebSocketService') end); "
+            "assert(not Ok and string.find(Failure,'NetworkClientRequired',1,true))", "MobileNetworkRefusal"));
         Check(Lui_RunScript(Runtime,
             "assert(not pcall(task.delay,31536001,function() end)); "
             "assert(not pcall(task.delay,math.huge,function() end))", "DelayLimit"));
@@ -21,6 +26,7 @@ int main() {
             "Order=''; task.defer(function() Order..='A'; task.defer(function() Order..='D' end) end); "
             "task.defer(function() Order..='B' end); task.delay(0,function() Order..='C' end); "
             "Future=false; task.delay(100,function() Future=true end); assert(not pcall(task.defer,function() end))", "Bounded"));
+        Check(Lui_HasPendingWorkV1(Runtime) == 1);
         auto Step = [&](size_t Entries) {
             size_t Count = 99;
             Check(PumpBoundedTasks(Runtime, Entries, std::chrono::steady_clock::now() + std::chrono::seconds(1), &Count));
@@ -54,6 +60,7 @@ int main() {
         Check(Lui_RunScript(Runtime, "N=0; for I=1,100 do task.defer(function() N+=1 end) end", "Legacy"));
         Check(Lui_Pump(Runtime) == 100);
         Check(Lui_RunScript(Runtime, "assert(N==100)", "LegacyResult"));
+        Check(Lui_HasPendingWorkV1(Runtime) == 0);
         Lui_Destroy(Runtime);
         std::cout << "[LUI:TaskTest] FIFO, sliced/nested rounds, future cutoff, pending limits, deadline, retirement and legacy pump passed\n";
         return 0;

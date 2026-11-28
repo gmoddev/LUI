@@ -31,6 +31,8 @@ internal sealed partial class WinUIBackend
         Pattern()
         """;
     private int FrameQualificationStep;
+    private bool FrameQualificationCompletionWake;
+    internal bool FrameQualificationTimerPaused => PauseFrameQualificationPump || FrameQualificationCompletionWake;
     private void FrameRun(string Source) {
         ++FrameQualificationStep;
         if (Native.Lui_RunScript(Runtime, Source, "FrameQualification") != 1) throw new InvalidOperationException("PublicSubmission");
@@ -58,6 +60,20 @@ internal sealed partial class WinUIBackend
         Pump();
         await WaitRetiredFramesAsync();
     }
+    private async Task QualifyFrameCompletionWakeAsync() {
+        FrameQualificationCompletionWake=true;
+        try {
+            FrameRun(FrameScene);
+            Pump();
+            var Target=SurfaceView();
+            var Upload=Target.PreparedFrame ?? throw new InvalidOperationException("CompletionWakeAdmission");
+            await Upload.Finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            long Started=Stopwatch.GetTimestamp();
+            while(!ReferenceEquals(Target.DisplayedFrame,Upload)&&Stopwatch.GetElapsedTime(Started).TotalSeconds<5)
+                await Task.Delay(5);
+            if(!ReferenceEquals(Target.DisplayedFrame,Upload))throw new InvalidOperationException("CompletionWakeDelivery");
+        } finally {FrameQualificationCompletionWake=false;}
+    }
     private static object Aggregate(IEnumerable<double> Values) {
         double[] Sorted=Values.Order().ToArray();
         double Rank(double Fraction) => Sorted.Length==0?0:Sorted[Math.Clamp((int)Math.Ceiling(Fraction*Sorted.Length)-1,0,Sorted.Length-1)];
@@ -84,6 +100,32 @@ internal sealed partial class WinUIBackend
         if (Math.Abs(Pixels[At]-B)>Tolerance || Math.Abs(Pixels[At+1]-G)>Tolerance || Math.Abs(Pixels[At+2]-R)>Tolerance)
             throw new InvalidOperationException("PixelCorrectness");
     }
+    private async Task QualifyImageRegionPixelsAsync(string DirectoryPath, FrameworkElement Root) {
+        FrameRun("""
+            assert(app:GetService('PlatformService'):Supports('RuntimeImages'))
+            local Bytes=buffer.create(32)
+            for Index=0,7 do buffer.writeu32(Bytes,Index*4,if Index%4<2 then 0xffff0000 else 0xff00ff00) end
+            local Atlas=assert(app:GetService('AssetService'):FromPixels(Bytes,4,2,16,'BGRA8Premultiplied'))
+            Cropped=Instance.new('ImageLabel',{Parent=Root,Position=UDim2.fromOffset(245,20),Size=UDim2.fromOffset(75,75),
+                ImageResource=Atlas,SourceRectOffset=Vector2.new(2,0),SourceRectSize=Vector2.new(2,2)})
+            Full=Instance.new('ImageLabel',{Parent=Root,Position=UDim2.fromOffset(380,20),Size=UDim2.fromOffset(80,80),ImageResource=Atlas})
+            Atlas:Close()
+            """);
+        await FrameUntilAsync(()=>Views.Values.Count(Target=>Target.ClassName=="ImageLabel"&&Target.ImageResource is not null)==2);
+        FrameRun("assert(Cropped.LoadState=='Ready' and Full.LoadState=='Ready')");
+        var Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"02-atlas-crop.png"),Root);
+        CheckPixel(Pixels,Root,282,55,0,255,0);
+        CheckPixel(Pixels,Root,400,55,255,0,0);
+        CheckPixel(Pixels,Root,440,55,0,255,0);
+        FrameRun("Cropped.SourceRectOffset=Vector2.new(4096,4096); assert(Cropped.LoadState=='Ready')");
+        Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"02-atlas-empty.png"),Root);
+        CheckPixel(Pixels,Root,282,55,255,255,255);
+        FrameRun("Cropped.SourceRectSize=Vector2.new(0,0)");
+        Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"02-atlas-reset.png"),Root);
+        CheckPixel(Pixels,Root,263,55,255,0,0);
+        CheckPixel(Pixels,Root,303,55,0,255,0);
+        FrameRun("Cropped:Destroy(); Full:Destroy()");
+    }
     public async Task<bool> RunFrameQualificationAsync(string ReportPath, bool Observation=false) {
         string DirectoryPath=Path.GetDirectoryName(Path.GetFullPath(ReportPath))!; Directory.CreateDirectory(DirectoryPath);
         var Passed=new List<string>(); object? Comparison=null;
@@ -92,7 +134,9 @@ internal sealed partial class WinUIBackend
         void Pass(string Name){Passed.Add(Name);}
         try {
             Require(Marshal.SizeOf<Native.FrameView>()==56&&Marshal.SizeOf<Native.FrameCallbacks>()==48&&Marshal.SizeOf<Native.FrameStats>()==104,"PrivateAbi");
-            FrameRun(FrameScene); await FlushFrameAsync(); await WaitForPresentationAsync();
+            await QualifyFrameCompletionWakeAsync();
+            Pass("Completed upload publishes with the polling timer paused");
+            await WaitForPresentationAsync();
             var Window=Views.Values.Single(Value=>Value.Window is not null).Window!;
             var Root=(FrameworkElement)Window.Content;
             var Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"01-pattern.png"),Root);
@@ -105,6 +149,8 @@ internal sealed partial class WinUIBackend
             byte[] Bytes=new byte[32];Marshal.Copy(Raw.Pixels,Bytes,0,32);Require(Bytes[8]==0&&Bytes[9]==128&&Bytes[11]==128&&Raw.RowStride==16,"AlphaStride");
             FrameRun("buffer.fill(B,0,0)");Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"02-immutable.png"),Root);CheckPixel(Pixels,Root,50,40,255,0,0);
             Pass("BGRA/alpha/orientation/stride/caller mutation");
+            await QualifyImageRegionPixelsAsync(DirectoryPath,Root);
+            Pass("Runtime image atlas crop/full/clipped/reset pixels at the worker DPI");
             FrameRun("S.Size=UDim2.fromOffset(200,200); S.ScaleMode='Fit'");
             Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"03-fit.png"),Root);CheckPixel(Pixels,Root,50,30,255,255,255);CheckPixel(Pixels,Root,50,90,255,0,0);
             FrameRun("S.ScaleMode='Fill'");Pixels=await CaptureFrameAsync(Path.Combine(DirectoryPath,"04-fill.png"),Root);CheckPixel(Pixels,Root,50,30,255,0,0);
@@ -238,7 +284,7 @@ internal sealed partial class WinUIBackend
             File.WriteAllText(ReportPath,JsonSerializer.Serialize(new {Success=true,Scope="NativeFixture",Platform=RuntimeInformation.OSDescription,Architecture=RuntimeInformation.ProcessArchitecture.ToString(),Framework=RuntimeInformation.FrameworkDescription,DpiScale=Root.XamlRoot.RasterizationScale,Passed,Comparison,WorkloadSeconds,WorkloadPublished,WorkloadHz=1000/WorkloadSeconds,Admission=AdmissionAggregate,Upload=UploadAggregate,Submission=SubmissionAggregate,BaselineBytes=Baseline,PeakBytes=Peak,WholeProcessPeakBytes=WholeProcessPeak,ObservedPeakPixels=FramePeakPixels,ObservedPeakStaging=FramePeakStaging,ObservedPeakAccounted=FramePeakAccounted,ObservedMaxPending=FrameMaxPending,ObservedMaxInFlight=FrameMaxInFlight,ObservedMaxAllocations=FrameMaxAllocations,Accepted=Burst.Accepted,Replaced=Burst.Replaced,Rejected=Burst.Rejected,Stale=Burst.Stale,Published=BenchmarkPublished,ObservationPublished=FramePublished-BenchmarkPublished,NativeFailures=FrameUploadFailures,InjectedFailures=8,StagingRefusals=FrameStagingRefusals,DeviceLosses=FrameDeviceLosses,Recoveries=FrameRecoveries,Gpu=FrameGpuMetrics(),Metrics=Metrics.RootElement.Clone()}));
             return true;
         } catch(Exception Error) {
-            string[] Codes={"PrivateAbi","PublicSubmission","FrameStats","PixelCorrectness","AlphaStride","Opacity","ResizeGeometry","StalePublication","ClearSource","DestroyRelease","GenerationRetirement","ResourceBudget","LatestWins","AdmissionBudget","SubmissionBudget","InputBudget","LayoutBudget","ProcessBudget","Quiescence","CallbackAllocationFailure","DetachFailureAccounting","DetachFailureRecovery","CancelBeforePreparation","OrdinaryCapabilityGate","NativeStagingQuota","MultiSurfaceRetirement"};
+            string[] Codes={"PrivateAbi","PublicSubmission","FrameStats","CompletionWakeAdmission","CompletionWakeDelivery","PixelCorrectness","AlphaStride","Opacity","ResizeGeometry","StalePublication","ClearSource","DestroyRelease","GenerationRetirement","ResourceBudget","LatestWins","AdmissionBudget","SubmissionBudget","InputBudget","LayoutBudget","ProcessBudget","Quiescence","CallbackAllocationFailure","DetachFailureAccounting","DetachFailureRecovery","CancelBeforePreparation","OrdinaryCapabilityGate","NativeStagingQuota","MultiSurfaceRetirement"};
             string Code=Error is FrameQualificationFailure Failure?Failure.Check:Codes.Contains(Error.Message)?Error.Message:"FrameQualificationFailed";
             File.WriteAllText(ReportPath,JsonSerializer.Serialize(new {Success=false,Code,ExceptionType=Error.GetType().Name,Error.HResult,Step=FrameQualificationStep,NativeError=LastError,FrameLastHResult,Gpu=FrameGpuMetrics(),Passed,FramePublished,FrameUploadFailures,FrameDeviceLosses,FrameRecoveries,FrameStagingRefusals,Resources=FrameResources.Select(Value=>new{Value.Canceled,Value.Working,Value.Retiring,Value.NeedsRecovery,Value.Ready,Value.Completed,Value.Epoch,Value.Sequence,Gpu=Value.Gpu!=IntPtr.Zero}),InFlight=FrameUploadsInProgress,Comparison}));
             return false;

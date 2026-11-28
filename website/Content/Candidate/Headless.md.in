@@ -1,0 +1,172 @@
+---
+title: Run a headless application
+description: Run a service or finite network tool without creating desktop UI.
+---
+
+<span hidden data-pagefind-filter="SDK:preview.3 candidate"></span>
+
+**Unreleased preview.3 candidate.** Published preview.1/2 SDKs do not include this
+component. Use a prepared candidate SDK that passes `lui doctor`; no new public
+download is implied here. [Networking examples](../networking/) use the same
+runtime and public Luau services as desktop applications.
+
+A headless entry does not create UI Instances. It can run scheduled tasks, make
+requests, listen for clients and finish when its work is done. The host pumps the
+existing owner scheduler, waits for native wake notifications and drains resource
+retirement. Application code does not implement that loop.
+
+## Run the complete echo example
+
+Copy `Examples/websocket-echo` from the candidate SDK to a sibling directory.
+From that project, invoke the candidate CLI with:
+
+```powershell
+lui doctor
+lui check
+lui run --mode headless --grant network.client,network.server --http-origin http://127.0.0.1:18083 --diagnostics development
+```
+
+The manifest declares client/server capabilities and loopback port18083. The
+command separately grants them and limits outbound HTTP/WebSocket authority to
+that exact origin. Port18083 must be free. A matching message is received before
+the app prints success, closes its listener and exits with zero native resources.
+
+`--http-origin` takes an exact http/https scheme, ASCII host and effective port;
+it does not accept a path, credentials or wildcard. ws/wss uses its http/https
+equivalent for this policy. For a client intended to access public endpoints,
+`--http-public-only true` instead rejects private, loopback and other nonpublic
+resolved addresses. It is unsuitable for the local echo example. Manifest address
+and port restrictions remain additional restrictions. Configuring a policy never
+grants a capability by itself. The direct native host supports multiple exact
+origins; the current CLI option accepts one.
+
+## Defaults and stopping
+
+The default timeout is30 seconds, maximum3,600,000ms. A finite tool exits once
+scheduled work, pending requests and listeners finish. An open listener keeps it
+alive. Close a listener deliberately when a finite journey completes.
+
+Use `--timeout-ms 60000` to allow a minute. `--poll-ms` controls the maximum wait
+between owner checks, default16ms, range1–1,000ms; it does not add another
+scheduler. Native completion notifications can wake the host sooner. Ctrl+C
+requests interruption where the platform supports it.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Work completed and native resources retired |
+| 1 | Startup, app execution or cleanup failed |
+| 124 | Timeout reached |
+| 130 | Interrupted |
+
+Diagnostics default to Restricted. Development mode permits explicit app prints;
+those prints are application disclosure. The host's errors use bounded fixed
+codes, and the CLI translates only known codes into advice. Raw stderr, private
+source, paths and exception details are not forwarded as startup explanations.
+Windows argument handling preserves Unicode project paths and creates no extra
+console or error window.
+
+## Common failures
+
+- **CapabilityDenied:** pass `--grant` for each declared capability. Service names
+  such as HttpService are not capability tokens.
+- **HttpPolicyRequired:** choose an exact outbound origin or public-only policy.
+- **PresentationUnsupported:** use an entry without UI Instances, or use the
+  desktop host for the app's graphical entry.
+- **ProjectPreparationFailed:** check the manifest, declared files and module lock.
+- **TimedOut:** close ongoing work or choose a longer timeout. A listener is work.
+
+Use `--stdio true` for byte-preserving pipelines, `--read-file path` for an operator-selected read-only document, and `--grant Storage` for app-private persistence. Network grants remain explicit. Select SDK-provided native libraries with `--providers Crypto,Compression,SQLite`. Each application declares its required capabilities and provider images. The host checks the captured image against its compiled target digest.
+
+`app:GetService("PlatformService").OperatingSystem` reports the OS family. `Architecture` reports the process architecture and `BackendName` identifies the selected host. These read-only strings require no capability. Use `PerformanceService:GetTime()` to measure elapsed milliseconds.
+
+The SDK inventories the headless host separately. The CLI validates the selected host against that inventory. See the [Stdio](../libraries/stdio/), [Compression](../libraries/compression/), [SQLite](../libraries/sqlite/) and [Crypto](../libraries/crypto/) APIs and the packaged examples. `json-lines` processes UTF-8 JSON records from stdin. `file-summary`, `digest`, `codec` and `records` demonstrate the selected file, crypto, compression and database APIs.
+
+Windows/Linux headless liveness, real networking, denial, Unicode-path launch and
+CLI failure advice have source integration checks. An SDK recipient and physical
+desktop input are separate qualification gates. This is not a browser runtime or
+a claim of mobile support.
+
+## For native embedders
+
+`LuiExecution.h` exposes a versioned pending-work query; `LuiOwnerWake.h` and the
+native domain support wake/retirement. These are host/framework integration APIs,
+not application-side event loops. Existing extension callback tables remain
+unchanged. Keep owner-thread access, bounded resources and teardown ordering when
+building a custom host.
+
+The `live-records` notebook accepts concurrent clients. Supply `--providers SQLite --database-root DIRECTORY` to grant a dedicated private directory. Use `-- add "first record"`, `-- list` or `-- check` after the host options. Snapshot applications continue to use the existing Storage grant.
+
+Optional text providers ship with standalone examples. `regex-filter` compiles a PCRE2 byte expression once and filters streamed lines. `toml-config` reads TOML settings and applies the Config library's schema and defaults. Select `--providers Regex` or `--providers Toml` respectively. Each target package includes its dependency license.
+## Persistent services and standalone applications
+
+Build a portable headless application with `lui build lui.json --mode headless --sdk SDK_DIRECTORY --output NEW_DIRECTORY`. Run its `Start-LUI.exe` (Windows) or `Start-LUI.sh` (Linux) directly. That launcher uses native-host switches such as `--stdio` and repeated `--provider NAME`. The development CLI uses `--stdio true` and `--providers NAME,OTHER`.
+
+| SDK example | Operator selection | Behavior |
+| --- | --- | --- |
+| atomic-copy | `--write-file DESTINATION` | Streams stdin into an atomic replacement. |
+| folder-copy | `--write-directory DIRECTORY` | Copies between two direct children using bounded memory. |
+| live-records | `--providers SQLite --database-root PRIVATE_DIRECTORY` | Commits one notebook operation at a time across cooperating processes. |
+| regex-filter | `--providers Regex -- PATTERN` | Writes matching input lines. |
+| toml-config | `--providers Toml` | Validates TOML input with Config and applies defaults. |
+| tool-check | `--tool EXECUTABLE --tool-cwd DIRECTORY -- ARGUMENT` | Runs a trusted native tool with literal arguments and bounded output. |
+
+The headless operator can grant individual parent environment keys to Context with `--context true --env-keys NAME`. Child environment keys use the separate `--child-env-keys NAME` switch. The child starts with an empty environment. The selected program runs with the OS user's filesystem and networking permissions. See the packaged Process documentation for platform-specific descendant behavior. Args parses application arguments. Messages encodes small isolated values and provides a bounded mailbox. The desktop `message-viewer` example validates and displays a message interactively.
+
+Native Release builds can additionally select `LUI_STANDARD_REGEX` and `LUI_STANDARD_TOML`. Each generated application carries its selected provider and redistribution notices.
+
+See the [Process](../libraries/process/), [Context](../libraries/context/), [Args](../libraries/args/), [Messages](../libraries/messages/), [Regex](../libraries/regex/) and [Toml](../libraries/toml/) API references for signatures and examples.
+
+## Parallel computation and development tools
+
+The Windows x64 and Linux x64 candidates include six standalone projects and three optional libraries for this workflow. Create a pinned command-line project with `lui new MyTests --template spec-cli --sdk <sdk>` or `lui new MyWorkers --template parallel-data --sdk <sdk>`. The other example folders can be copied together with their module lockfiles. Use the SDK's normal `check`, `stage`, `verify`, and `build` commands.
+
+| Example | Run it | What to observe |
+| --- | --- | --- |
+| `parallel-data` | Headless with standard I/O | Two isolated worker VMs calculate a checksum and exit. |
+| `parallel-viewer` | Desktop project mode | Edit the text field while the batch count advances, then stop both workers. |
+| `source-inspect` | Headless with standard I/O, the packaged `Tools/LuiTypeCheck` executable and an explicit working directory | Send a Luau document on stdin for syntax diagnostics, literal imports and compiled size. Use the Windows checker’s `.exe` suffix on Windows. |
+| `tool-session` | Headless with standard I/O, a selected Git executable and repository working directory | Send one Git object query per input line and receive a reply from the same child. |
+| `tool-pipeline` | The same Git selection | Two concurrent Git stages calculate a fingerprint of the tracked path list. |
+| `spec-cli` | Headless with standard I/O and application arguments after `--` | List named cases with `--list`, select a literal substring with `--filter`, or use `--repeat 10` for timings. |
+
+The Workers, Process, Language, Spec and Random directories under `Libraries` include API signatures, limits and examples. CPU workers use independent VM memory and share the host's process. A selected executable runs under the operator's OS account. Its working directory and explicit environment grant are part of the invocation.
+
+## Runtime consolidation candidate
+
+The private Preview.5 SDK adds a bounded ordinary-actor FIFO through
+`Workers.Pool`. Reuse the pool for measured parallel workloads and handle
+`WouldBlock` when the queue fills.
+
+The same SDK supports `lui package init`, `pack`, `verify` and `restore`.
+Declare aliases and version requirements in `LuiDependencies.json`, then
+run `lui package restore lui.json --source Catalog`. Run the ordinary
+`check`, `run` and `build` commands on `lui.resolved.json`. Keep the
+authored manifest and package lock. Subsequent restores can use cached
+content offline.
+
+Preview.5 consolidation.2 adds `NativeProviders` to package descriptors.
+Each package can carry provider declarations and pinned Windows x64 and
+Linux x64 binaries. Name the provider in the application's `Extensions`
+list, declare its required capabilities, and restore with
+`--trusted-native true`. The host still requires its own provider selection
+at launch. See `PackageGuide.md` in the SDK.
+
+`Spec.Benchmark` records bounded warmup and measured batches for
+synchronous Luau operations. See the Spec library guide for counts,
+percentiles and how to choose a batch size.
+
+Explicitly trusted workers are experimental in the Preview.5 headless
+profile. Use both `--trusted-ffi true` and `--trusted-ffi-workers true` on
+`lui run`, then select `Workers.StartTrusted` in the app. Each trusted actor
+owns its FFI session and shares the process and OS privileges.
+
+The Preview.5 release-review SDK includes five complete application
+journeys. Start with `Examples/DeveloperJourneys/README.md` for a desktop
+SQLite app, a shell pipeline, a loopback service, a native CodeEditor
+workbench, or a reusable native package.
+
+Add or remove a dependency with `lui package add` or `lui package remove`.
+Use `lui package inspect` to review the frozen graph. After a deliberate
+change, use `lui package update`. Use `lui package restore --locked true`
+for repeatable builds. The SDK guide covers explicit HTTPS and Git imports,
+optional modules, target profiles and native authority.

@@ -3,6 +3,7 @@ import Path from 'node:path';
 import { Validate, Hash } from './Reference.mjs';
 import { ProjectFiles } from './Tutorials.mjs';
 import { Recipes } from './Recipes.mjs';
+import { ReleaseInput, ReadText } from './Releases.mjs';
 import { Summaries, Members, Advanced, BaseClasses, UsageNotes } from './DocumentationContent.mjs';
 import { Examples, Globals, TypeExample } from './DocumentationExamples.mjs';
 
@@ -47,8 +48,8 @@ export async function ImproveReference(Repository, Site, Entry) {
   const Base = '/LUI/docs/sdk-' + Version;
   const Output = Path.join(Site, 'src/content/docs/docs/sdk-' + Version);
   const Source = 'https://github.com/gmoddev/LUI/blob/' + Release.PublicCommit;
-  const SchemaText = await ReadFile(Path.join(Repository,'types/schema.json'),'utf8');
-  const Definitions = await ReadFile(Path.join(Repository,'types/LUI.d.luau'),'utf8');
+  const SchemaText = await ReadText(ReleaseInput(Repository,Entry,'types/schema.json'));
+  const Definitions = await ReadText(ReleaseInput(Repository,Entry,'types/LUI.d.luau'));
   if (Hash(SchemaText) !== Release.SchemaSha256) throw new Error('[LUI:Docs] Documentation schema differs from SDK');
   const Schema = JSON.parse(SchemaText);
   const Parsed = Validate(Schema, Definitions, Release, Summaries);

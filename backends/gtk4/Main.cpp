@@ -58,6 +58,15 @@ int main(int Count,char** Arguments) {
             uint64_t Requested=0; for(const auto& Name:Manifest.at("Capabilities")) Requested|=Known.at(Name.get<std::string>());
             if((Requested&1) && !NativeAllowed) {Diagnostics.Report("[LUI:Project] CapabilityDenied"); throw std::runtime_error("native trust");}
             LuiCapabilityDeclarationV1 Caps{sizeof(Caps),1,Requested}; if(!Lui_DeclareCapabilities(Runtime,&Caps)) throw std::runtime_error("grants");
+            if ((Requested & LUI_CAPABILITY_HOST_SERVICES) && Manifest.contains("ExtensionDeclarations")) {
+                for (const auto& Declared : Manifest.at("ExtensionDeclarations")) {
+                    if (std::filesystem::path(Declared.get<std::string>()).filename() == "DesktopWindowMetrics.json") {
+                        Host.StartWindowMetrics();
+                        break;
+                    }
+                }
+            }
+            Host.StartFiles();
             if(Manifest.contains("Storage")) {
                 Phase="StorageUnavailable";
                 const auto* Home=std::getenv("HOME"); const auto Root=Path.parent_path().u8string();
@@ -83,6 +92,11 @@ int main(int Count,char** Arguments) {
         }
         Diagnostics.Running = true;
         while(Host.HasWindows()) {Host.Pump(); g_usleep(16000);}
-        Host.Stop(); return 0;
+        const char* ImageDiagnostics=std::getenv("LUI_IMAGE_DIAGNOSTICS");
+        const bool ReportImages=PolicyMode==LUI_DIAGNOSTICS_DEVELOPMENT && ImageDiagnostics && std::string_view(ImageDiagnostics)=="1";
+        if(ReportImages) std::fprintf(stdout,"[LUI:ImageResources] BeforeStop %s\n",Host.ImageMetrics().c_str());
+        Host.Stop();
+        if(ReportImages) std::fprintf(stdout,"[LUI:ImageResources] AfterStop %s\n",Host.ImageMetrics().c_str());
+        return 0;
     } catch(...) {if (!Diagnostics.StartupReported) Diagnostics.Report("[LUI:Diagnostics] StartupFailed"); std::fprintf(stderr,"[LUI:GTK] StartupFailed %s\n",Phase); return 1;}
 }

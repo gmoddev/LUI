@@ -1,0 +1,9 @@
+{
+    global:
+        LuiExtensionQuery;
+        LuiExtensionInit;
+        LuiExtensionShutdown;
+        LuiFfiDispatchScopedV1;
+    local:
+        *;
+};

@@ -1,0 +1,10 @@
+--!strict
+task.spawn(function()
+    local Socket = app:GetService("WebSocketService"):ConnectAsync("ws://127.0.0.1:18081/echo")
+    Socket:SendAsync("Hello")
+    local Message = Socket:ReceiveAsync()
+    assert(Message and not Message.Binary and Message.Data == "Hello")
+    Socket:Close()
+    assert(Socket:ReceiveAsync() == nil)
+    print("[LUI:Example] Minimal WebSocket passed")
+end)

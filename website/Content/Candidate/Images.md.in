@@ -1,0 +1,131 @@
+---
+title: Images and icon atlases
+description: Show declared images, reuse icons in virtualized lists, and display an atlas region.
+---
+
+<span hidden data-pagefind-filter="SDK:development image resources"></span>
+
+This page describes the unreleased desktop image-resource work. Check your
+host with `PlatformService:Supports("ImageRegion")` before using an atlas.
+
+## Show one image
+
+Add `"Logo.png"` to the `Assets` list in `lui.json` and place the PNG beside the
+manifest. This fragment assumes an existing `Window`.
+
+```luau
+local Logo = Instance.new("ImageLabel", {
+    Parent = Window,
+    Source = "Logo.png",
+    Size = UDim2.fromOffset(32, 32),
+    AccessibilityLabel = "Application logo",
+})
+```
+
+The host starts loading after the property assignment. Read `LoadState` or
+subscribe to `LoadChanged` if the application needs to show a fallback.
+
+## Show one tile from an atlas
+
+Declare both `Toolbar.png` and `Save.png` in `Assets`. This example uses a
+24×24 tile whose top-left pixel is at (48, 24) in `Toolbar.png`.
+
+```luau
+local Platform = app:GetService("PlatformService")
+local SaveIcon = Instance.new("ImageLabel", {
+    Parent = Window,
+    Size = UDim2.fromOffset(20, 20),
+    Source = "Save.png",
+    AccessibilityLabel = "Save",
+})
+
+if Platform:Supports("ImageRegion") then
+    SaveIcon.SourceRectOffset = Vector2.new(48, 24)
+    SaveIcon.SourceRectSize = Vector2.new(24, 24)
+    SaveIcon.Source = "Toolbar.png"
+end
+```
+
+WinUI and GTK fit the selected region inside the control while preserving its
+aspect ratio. Source coordinates use physical pixels and control geometry uses
+logical units. Values must be whole numbers from 0 through 4096. Set
+`SourceRectSize` to `Vector2.new(0, 0)` to display the full image again. An
+out-of-bounds region is blank while the source retains its loading state.
+Reserve a gutter of matching edge pixels around each atlas tile to reduce
+color bleed at fractional display scales.
+
+## Virtualized and thumbnail-heavy views
+
+- Recycle visible row controls and update `Source` when a row's asset changes.
+  Controls that reference the same name share the decoded source. Keep the
+  number of outstanding loads under 32 by requesting visible rows first.
+- An independent icon is a good default. An atlas can reduce first-use
+  decodes and the number of asset declarations for a stable icon set. Changing
+  the displayed tile does not request a new decode.
+- Declare static thumbnails at their presentation sizes. Desktop decoding
+  admits PNG and JPEG up to 1 MiB encoded, 4,096 pixels per side, and 1,048,576
+  pixels total. Inactive large images retire when no control uses them. Clear
+  `Source` or destroy the view when an image leaves the live UI.
+- The private desktop profiles keep an application-wide 32 MiB decoded pixel
+  budget. There is no app cache configuration. Use a supported FrameSurface
+  for a continuously updated viewport. A FileService selection grants file
+  access through that service and does not assign a new ImageLabel asset name.
+
+## Show a generated thumbnail
+
+```luau
+local Assets = app:GetService("AssetService")
+local Pixels = buffer.create(32 * 32 * 4)
+-- An opaque gray BGRA pixel has alpha 255 and identical color channels.
+for Offset = 0, buffer.len(Pixels) - 4, 4 do
+    buffer.writeu32(Pixels, Offset, 0xff808080)
+end
+local Thumbnail, Failure = Assets:FromPixels(Pixels, 32, 32, 128, "BGRA8Premultiplied")
+if Thumbnail then
+    local Label = Instance.new("ImageLabel", {
+        Parent = Window,
+        Size = UDim2.fromOffset(32, 32),
+        ImageResource = Thumbnail,
+    })
+    -- Bind other visible rows to Thumbnail while it is open.
+    -- Close when the app has finished making new bindings to this resource.
+    Thumbnail:Close()
+end
+```
+
+Check `PlatformService:Supports("RuntimeImages")` for desktop presentation.
+The handle owns a copy of your buffer. Existing labels keep their bindings
+after the handle closes. Destroy a label or clear its `ImageResource` to drop
+that binding. To reuse a thumbnail after scrolling off-screen, keep its
+handle open while it remains in your model.
+
+## Show a user-selected image
+
+Use the `Files` module with the existing `Dialogs` grant. After
+`Picker:OpenFile` supplies a `Document`, pass its authorized bytes to the
+same asset service.
+
+```luau
+local Assets = app:GetService("AssetService")
+Document:Read(function(Bytes, ReadFailure)
+    Document:Close()
+    if not Bytes then return end
+    local Resource, DecodeFailure = Assets:FromEncoded(Bytes)
+    if Resource then
+        Preview.ImageResource = Resource
+        Resource:Close()
+    end
+end)
+```
+
+Handle read and source-creation errors in the app's status UI. Use
+`LoadChanged` and `LoadState` to handle full decode failures, even when
+`FromEncoded` recognized valid dimensions. A virtualized view can cancel
+the file operation and clear or replace its label while scrolling.
+
+In a large workbench, keep only viewport rows and a short look-ahead pool
+bound to image controls. Reuse immutable thumbnail handles for entries the
+user may revisit, and close handles when their model entries retire. Use a
+generation or row identity when applying a late result so a recycled row
+keeps its current preview. Keep thumbnail generation and result delivery
+bounded independently from the FrameSurface viewport.

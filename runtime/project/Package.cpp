@@ -49,8 +49,12 @@ struct PackageCapture {
             Result->Files.emplace(Path, std::move(File));
         };
         Add("lui.json", Manifest.dump(), Metadata);
-        if (Manifest.at("Modules").contains("Lock"))
-            Add(Manifest.at("Modules").at("Lock").get<std::string>(), Descriptor.at("Lock").dump(), Metadata);
+        if (Manifest.at("Modules").contains("Lock")) {
+            const auto LockPath = Manifest.at("Modules").at("Lock").get<std::string>();
+            // Generated lock paths authenticate the original captured bytes.
+            const bool Generated = LockPath.compare(0, GeneratedModuleLockPrefix.size(), GeneratedModuleLockPrefix) == 0;
+            Add(LockPath, Generated ? CapturedMetadata.at(LockPath) : Descriptor.at("Lock").dump(), Metadata);
+        }
         if (Staged) for (const auto& Pair : Result->Files)
             if (CapturedMetadata.at(Pair.first) != Pair.second.Bytes) Fail("PackageMismatch");
         for (const auto& Pair : Sources->GetDeclarations().Files) Add(Pair.first,Pair.second.Bytes,Metadata);

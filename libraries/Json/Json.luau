@@ -102,19 +102,22 @@ function Json.Encode(Input: any, Options: Limits?): string
         elseif type(Item) == "string" then Quote(Item)
         elseif type(Item) == "number" then
             if Item ~= Item or Item == math.huge or Item == -math.huge then Fail("InvalidValue") end
-            Append(string.format("%.17g", Item))
+            Append(if Item == 0 and 1 / Item < 0 then "-0.0" else string.format("%.17g", Item))
         elseif type(Item) == "table" then
             local Meta = getmetatable(Item)
             if Meta ~= nil and Meta ~= ArrayMeta and Meta ~= ObjectMeta then Fail("InvalidValue") end
             if Active[Item] then Fail("Cycle") end
             Active[Item] = true
-            local Count, Largest, HasNumber, HasString = 0, 0, false, false
+            local Count, Largest, KeyBytes, HasNumber, HasString = 0, 0, 0, false, false
             for Key in next, Item do
                 Count += 1
                 if Count > MaxNodes - Nodes then Fail("LimitExceeded") end
                 if type(Key) == "number" and Key % 1 == 0 and Key >= 1 and Key <= MaxNodes then
                     HasNumber = true; Largest = math.max(Largest, Key)
-                elseif type(Key) == "string" then HasString = true
+                elseif type(Key) == "string" then
+                    KeyBytes += #Key
+                    if KeyBytes > MaxBytes - Bytes then Fail("LimitExceeded") end
+                    HasString = true
                 else Fail("InvalidValue") end
             end
             local IsArray = Meta == ArrayMeta or (Meta == nil and HasNumber)

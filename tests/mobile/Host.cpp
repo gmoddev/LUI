@@ -34,7 +34,34 @@ std::map<std::string, std::string> Controls() {
 }
 int main(int Count, char** Args) {
     try {
-        const auto Input = Files();
+        auto Input = Files();
+        if (Count == 2 && std::string(Args[1]) == "--portable-libraries") {
+            const std::string Root = std::string(LUI_MOBILE_FIXTURE) + "/../../..";
+            auto Manifest = Json::parse(Input.at("lui.json"));
+            std::string Entry;
+            for (const std::string Name : {"Random", "Spec"}) {
+                const auto File = Name + ".luau";
+                Manifest["Modules"]["Files"].push_back(File);
+                Input["Src/" + File] = Read(Root + "/libraries/" + Name + "/" + File);
+                auto Test = Read(Root + "/tests/libraries/" + File);
+                const auto Alias = "@" + Name + "/" + Name;
+                Test.replace(Test.find(Alias), Alias.size(), "./" + Name);
+                Entry += "local function Test" + Name + "()\n" + Test + "\nend\nTest" + Name + "()\n";
+            }
+            Input["lui.json"] = Manifest.dump();
+            Input["Src/Main.luau"] = Entry + Input.at("Src/Main.luau");
+            Lui::Mobile::Host Host(1);
+            Check(Host.Start(Lui::Mobile::Host::PrepareBundle(Input)));
+            Check(Host.Attach(1, 360, 640));
+            const auto Frame = Json::parse(Host.Take());
+            const auto& Nodes = Frame.at("Nodes");
+            Check(std::any_of(Nodes.begin(), Nodes.end(), [](const Json& Node) {
+                return Node.at("Name") == "CounterButton";
+            }));
+            Check(Host.Retire());
+            std::cout << "[LUI:MobileTest] Portable Spec and Random suites passed on the native mobile host\n";
+            return 0;
+        }
         const auto Bundle = Lui::Mobile::Host::PrepareBundle(Input);
         if (Count == 3 && std::string(Args[1]) == "--bundle") {
             auto Android = Controls();

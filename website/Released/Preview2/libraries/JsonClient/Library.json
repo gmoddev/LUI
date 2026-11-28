@@ -1,0 +1,10 @@
+{
+  "SchemaVersion": 1,
+  "Name": "JsonClient",
+  "TargetSdk": "0.1.0-preview.2",
+  "Status": "Development",
+  "Requires": ["Json"],
+  "Modules": [
+    {"Name": "JsonClient", "Summary": "Send and receive JSON through the existing capability-gated HTTP service.", "Types": ["RequestOptions", "Client"], "Functions": ["Open"]}
+  ]
+}

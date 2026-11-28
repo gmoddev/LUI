@@ -27,7 +27,8 @@ internal static class ProjectPackager
                 string[] Codes = ["InvalidInput", "InvalidOptions", "InvalidJson", "InvalidManifest", "UnknownCapability", "DuplicateCapability", "InvalidDeclaration", "InvalidSchema", "InvalidPath", "InvalidLock",
                     "UnsupportedFeature", "LimitExceeded", "Canceled", "Cycle", "MissingModule", "MissingFile", "CaseMismatch", "LinkedPath",
                     "NotRegularFile", "FileChanged", "IoError", "DependencyMismatch", "DuplicateIdentity", "UnknownAlias", "ForbiddenImport",
-                    "EntryImportDenied", "InvalidSource", "CompileFailed", "OutputExists", "PackageMismatch", "ProviderUnavailable", "BinaryMismatch", "CapabilityMismatch", "UnsupportedPlatform"];
+                    "EntryImportDenied", "InvalidSource", "CompileFailed", "OutputExists", "PackageMismatch", "ProviderUnavailable", "BinaryMismatch",
+                    "CapabilityMismatch", "UnsupportedPlatform", "PackageMetadataMismatch", "InvalidPackageMetadataPath"];
                 Match Code = Regex.Match(Message, @"^\[LUI:Project\] ([A-Za-z]{1,64})$", RegexOptions.CultureInvariant);
                 throw new InvalidDataException(Code.Success && Codes.Contains(Code.Groups[1].Value, StringComparer.Ordinal)
                     ? Message : "[LUI:Project] ToolFailed");
@@ -70,6 +71,6 @@ internal static class ProjectPackager
         }
         Require(Result.GetProperty("SourceCount").ValueKind == JsonValueKind.Number && Result.GetProperty("AssetCount").ValueKind == JsonValueKind.Number);
         Require(Result.GetProperty("SourceCount").TryGetInt32(out int Sources) && Sources is > 0 and <= 256);
-        Require(Result.GetProperty("AssetCount").TryGetInt32(out int Assets) && Assets is >= 0 and <= 256);
+        Require(Result.GetProperty("AssetCount").TryGetInt32(out int Assets) && Assets is >= 0 and <= 1024);
     }
 }

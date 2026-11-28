@@ -144,6 +144,9 @@ export type ProgressBar = GuiObject & {
 
 export type ImageLabel = GuiObject & {
     Source: string,
+    ImageResource: ImageResource?,
+    SourceRectOffset: Vector2,
+    SourceRectSize: Vector2,
     read LoadState: string,
     read LoadChanged: Signal,
 }
@@ -195,6 +198,32 @@ export type StorageService = {
     read Remove: (Self: StorageService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
 }
 
+export type FileService = {
+    read OpenFile: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read SaveFile: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read OpenFolder: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Read: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Write: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read List: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Open: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read ReadRange: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read ByteLength: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read BeginWriter: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read WriteAt: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read CommitWriter: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read OpenOutput: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read CreateDirectory: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read RemoveDirectory: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read RemoveFile: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Rename: (Self: FileService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+}
+
+export type WorkerService = {
+    read Start: (Self: WorkerService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read StartTrusted: (Self: WorkerService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+    read Send: (Self: WorkerService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
+}
+
 export type NotificationService = {
     read Show: (Self: NotificationService, Input: buffer, Handle: NativeHandle?, Complete: (buffer?, NativeHandle?, string?) -> (), Progress: ((buffer) -> ())?) -> NativeRequest,
 }
@@ -215,6 +244,8 @@ export type WindowService = {
 
 export type PlatformService = {
     read BackendName: string,
+    read OperatingSystem: string,
+    read Architecture: string,
     read Supports: (Self: PlatformService, Capability: string) -> boolean,
 }
 
@@ -234,6 +265,8 @@ export type DialogService = {
 
 export type AssetService = {
     read Has: (Self: AssetService, Name: string) -> boolean,
+    read FromEncoded: (Self: AssetService, Data: buffer) -> (ImageResource?, string?),
+    read FromPixels: (Self: AssetService, Data: buffer, Width: number, Height: number, Stride: number, Format: string) -> (ImageResource?, string?),
 }
 
 export type NetworkService = {
@@ -246,10 +279,22 @@ export type HttpService = {
     read RequestAsync: (Self: HttpService, Options: HttpRequestOptions) -> HttpResponse,
     read GetAsync: (Self: HttpService, Url: string) -> HttpResponse,
     read CancelAll: (Self: HttpService) -> (),
+    read CreateCancellationToken: (Self: HttpService) -> HttpCancellationToken,
+}
+
+export type WebSocketService = {
+    read ConnectAsync: (Self: WebSocketService, Url: string, Options: WebSocketOptions?) -> WebSocket,
 }
 
 export type HttpServerService = {
     read CreateServer: (Self: HttpServerService, Options: HttpServerOptions) -> HttpServer,
+}
+
+export type ImageResource = {
+    read Width: number,
+    read Height: number,
+    read IsClosed: boolean,
+    read Close: (Self: ImageResource) -> (),
 }
 
 export type NativeHandle = {
@@ -348,6 +393,11 @@ export type HttpHeader = {
     read Value: string,
 }
 
+export type HttpCancellationToken = {
+    read IsCanceled: boolean,
+    read Cancel: (Self: HttpCancellationToken) -> (),
+}
+
 export type HttpRequestOptions = {
     Url: string,
     Method: string?,
@@ -355,6 +405,7 @@ export type HttpRequestOptions = {
     Body: (string | buffer)?,
     TimeoutMs: number?,
     MaxResponseBytes: number?,
+    CancellationToken: HttpCancellationToken?,
 }
 
 export type HttpResponse = {
@@ -400,12 +451,59 @@ export type HttpServer = {
     read Port: number,
     read IsListening: boolean,
     read BoundEndpoints: {NetworkEndpoint},
+    read RouteWebSocket: (Self: HttpServer, Path: string, Handler: (Socket: WebSocket, Request: HttpRequest) -> (), Options: WebSocketServerOptions?) -> (),
     read Route: (Self: HttpServer, Method: string, Path: string, Handler: (Request: HttpRequest) -> HttpReplyOptions) -> (),
     read Start: (Self: HttpServer) -> (),
     read Close: (Self: HttpServer) -> (),
 }
 
-export type App = (((({ read GetService: (Self: App, Name: "StorageService") -> StorageService } & { read GetService: (Self: App, Name: "NotificationService") -> NotificationService }) & ({ read GetService: (Self: App, Name: "TrayService") -> TrayService } & { read GetService: (Self: App, Name: "PerformanceService") -> PerformanceService })) & (({ read GetService: (Self: App, Name: "WindowService") -> WindowService } & { read GetService: (Self: App, Name: "PlatformService") -> PlatformService }) & ({ read GetService: (Self: App, Name: "ThemeService") -> ThemeService } & { read GetService: (Self: App, Name: "ClipboardService") -> ClipboardService }))) & ((({ read GetService: (Self: App, Name: "DialogService") -> DialogService } & { read GetService: (Self: App, Name: "AssetService") -> AssetService }) & ({ read GetService: (Self: App, Name: "NetworkService") -> NetworkService } & { read GetService: (Self: App, Name: "HttpService") -> HttpService })) & { read GetService: (Self: App, Name: "HttpServerService") -> HttpServerService }))
+export type WebSocketOptions = {
+    ConnectTimeoutMs: number?,
+    CloseTimeoutMs: number?,
+    IdleTimeoutMs: number?,
+    PingIntervalMs: number?,
+    PongTimeoutMs: number?,
+    MaxMessageBytes: number?,
+    MaxFrameBytes: number?,
+    MaxQueuedBytes: number?,
+    MaxQueuedMessages: number?,
+    Origin: string?,
+    Protocols: {string}?,
+    Headers: {HttpHeader}?,
+    CancellationToken: HttpCancellationToken?,
+}
+
+export type WebSocketServerOptions = {
+    MaxMessageBytes: number?,
+    MaxFrameBytes: number?,
+    MaxQueuedBytes: number?,
+    MaxQueuedMessages: number?,
+    CloseTimeoutMs: number?,
+    IdleTimeoutMs: number?,
+    PingIntervalMs: number?,
+    PongTimeoutMs: number?,
+    Protocols: {string}?,
+    Origins: {string}?,
+    Authorize: ((Request: HttpRequest) -> boolean)?,
+}
+
+export type WebSocket = {
+    read State: "Connecting" | "Open" | "Closing" | "Closed",
+    read Subprotocol: string,
+    read CloseCode: number?,
+    read CloseReason: string,
+    read SendAsync: (Self: WebSocket, Data: string | buffer, Binary: boolean?) -> (),
+    read ReceiveAsync: (Self: WebSocket) -> WebSocketMessage?,
+    read Close: (Self: WebSocket, Code: number?, Reason: string?) -> (),
+    read Cancel: (Self: WebSocket) -> (),
+}
+
+export type WebSocketMessage = {
+    read Data: string,
+    read Binary: boolean,
+}
+
+export type App = (((({ read GetService: (Self: App, Name: "StorageService") -> StorageService } & { read GetService: (Self: App, Name: "FileService") -> FileService }) & ({ read GetService: (Self: App, Name: "WorkerService") -> WorkerService } & { read GetService: (Self: App, Name: "NotificationService") -> NotificationService })) & (({ read GetService: (Self: App, Name: "TrayService") -> TrayService } & { read GetService: (Self: App, Name: "PerformanceService") -> PerformanceService }) & ({ read GetService: (Self: App, Name: "WindowService") -> WindowService } & { read GetService: (Self: App, Name: "PlatformService") -> PlatformService }))) & ((({ read GetService: (Self: App, Name: "ThemeService") -> ThemeService } & { read GetService: (Self: App, Name: "ClipboardService") -> ClipboardService }) & ({ read GetService: (Self: App, Name: "DialogService") -> DialogService } & { read GetService: (Self: App, Name: "AssetService") -> AssetService })) & (({ read GetService: (Self: App, Name: "NetworkService") -> NetworkService } & { read GetService: (Self: App, Name: "HttpService") -> HttpService }) & ({ read GetService: (Self: App, Name: "WebSocketService") -> WebSocketService } & { read GetService: (Self: App, Name: "HttpServerService") -> HttpServerService }))))
 
 export type WindowInit = {
     Name: string?,
@@ -693,6 +791,9 @@ export type ImageLabelInit = {
     ZIndex: number?,
     ClipsDescendants: boolean?,
     Source: string?,
+    ImageResource: ImageResource?,
+    SourceRectOffset: Vector2?,
+    SourceRectSize: Vector2?,
 }
 
 export type FrameSurfaceInit = {

@@ -6,6 +6,7 @@ local function Reject(Callback: () -> any, Code: string?)
     if Code then assert(Error == "[LUI:Json] " .. Code) end
     assert(not string.find(tostring(Error), "SENSITIVE_RESPONSE_CANARY", 1, true))
 end
+assert(Json.Encode(-0.0) == "-0.0" and 1 / Json.Decode("-0.0") < 0)
 assert(Json.Version == "0.1.0")
 assert(#Json.RequiredCapabilities == 0 and table.isfrozen(Json.RequiredCapabilities))
 assert(Json.Encode(Json.Array()) == "[]" and Json.Encode(Json.Object()) == "{}")

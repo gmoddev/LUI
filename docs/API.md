@@ -225,6 +225,9 @@ Base: `GuiObject`. Creatable: `true`.
 | Property | Type | Default | Read only |
 | --- | --- | --- | --- |
 | `Source` | `string` |  | No |
+| `ImageResource` | `ImageResource?` | nil | No |
+| `SourceRectOffset` | `Vector2` | 0,0; top-left source pixel | No |
+| `SourceRectSize` | `Vector2` | 0,0; display the full image | No |
 | `LoadState` | `string` | Idle; Loading, Ready, Failed, Canceled or Unavailable | Yes |
 
 | Signal | Type |
@@ -308,6 +311,8 @@ Base: `Frame`. Creatable: `true`.
 ## Services
 
 - `StorageService`: Open, Read, Write, Remove
+- `FileService`: OpenFile, SaveFile, OpenFolder, Read, Write, List, Open, ReadRange, ByteLength, BeginWriter, WriteAt, CommitWriter, OpenOutput, CreateDirectory, RemoveDirectory, RemoveFile, Rename
+- `WorkerService`: Start, StartTrusted, Send
 - `NotificationService`: Show
 - `TrayService`: Create, Watch
 - `PerformanceService`: GetStats, GetTime
@@ -316,12 +321,20 @@ Base: `Frame`. Creatable: `true`.
 - `ThemeService`: ThemeChanged
 - `ClipboardService`: WriteText, ReadText
 - `DialogService`: OpenFile
-- `AssetService`: Has
+- `AssetService`: Has, FromEncoded, FromPixels
 - `NetworkService`: ListenTcp, ConnectTcp, BindUdp
-- `HttpService`: RequestAsync, GetAsync, CancelAll
+- `HttpService`: RequestAsync, GetAsync, CancelAll, CreateCancellationToken
+- `WebSocketService`: ConnectAsync
 - `HttpServerService`: CreateServer
 
 ## Networking value and resource types
+
+### ImageResource
+
+- `Width`: `number`
+- `Height`: `number`
+- `IsClosed`: `boolean`
+- `Close`: `(Self: ImageResource) -> ()`
 
 ### NativeHandle
 
@@ -419,6 +432,11 @@ Base: `Frame`. Creatable: `true`.
 - `Name`: `string`
 - `Value`: `string`
 
+### HttpCancellationToken
+
+- `IsCanceled`: `boolean`
+- `Cancel`: `(Self: HttpCancellationToken) -> ()`
+
 ### HttpRequestOptions
 
 - `Url`: `string`
@@ -427,6 +445,7 @@ Base: `Frame`. Creatable: `true`.
 - `Body`: `(string | buffer)?`
 - `TimeoutMs`: `number?`
 - `MaxResponseBytes`: `number?`
+- `CancellationToken`: `HttpCancellationToken?`
 
 ### HttpResponse
 
@@ -472,6 +491,53 @@ Base: `Frame`. Creatable: `true`.
 - `Port`: `number`
 - `IsListening`: `boolean`
 - `BoundEndpoints`: `{NetworkEndpoint}`
+- `RouteWebSocket`: `(Self: HttpServer, Path: string, Handler: (Socket: WebSocket, Request: HttpRequest) -> (), Options: WebSocketServerOptions?) -> ()`
 - `Route`: `(Self: HttpServer, Method: string, Path: string, Handler: (Request: HttpRequest) -> HttpReplyOptions) -> ()`
 - `Start`: `(Self: HttpServer) -> ()`
 - `Close`: `(Self: HttpServer) -> ()`
+
+### WebSocketOptions
+
+- `ConnectTimeoutMs`: `number?`
+- `CloseTimeoutMs`: `number?`
+- `IdleTimeoutMs`: `number?`
+- `PingIntervalMs`: `number?`
+- `PongTimeoutMs`: `number?`
+- `MaxMessageBytes`: `number?`
+- `MaxFrameBytes`: `number?`
+- `MaxQueuedBytes`: `number?`
+- `MaxQueuedMessages`: `number?`
+- `Origin`: `string?`
+- `Protocols`: `{string}?`
+- `Headers`: `{HttpHeader}?`
+- `CancellationToken`: `HttpCancellationToken?`
+
+### WebSocketServerOptions
+
+- `MaxMessageBytes`: `number?`
+- `MaxFrameBytes`: `number?`
+- `MaxQueuedBytes`: `number?`
+- `MaxQueuedMessages`: `number?`
+- `CloseTimeoutMs`: `number?`
+- `IdleTimeoutMs`: `number?`
+- `PingIntervalMs`: `number?`
+- `PongTimeoutMs`: `number?`
+- `Protocols`: `{string}?`
+- `Origins`: `{string}?`
+- `Authorize`: `((Request: HttpRequest) -> boolean)?`
+
+### WebSocket
+
+- `State`: `"Connecting" | "Open" | "Closing" | "Closed"`
+- `Subprotocol`: `string`
+- `CloseCode`: `number?`
+- `CloseReason`: `string`
+- `SendAsync`: `(Self: WebSocket, Data: string | buffer, Binary: boolean?) -> ()`
+- `ReceiveAsync`: `(Self: WebSocket) -> WebSocketMessage?`
+- `Close`: `(Self: WebSocket, Code: number?, Reason: string?) -> ()`
+- `Cancel`: `(Self: WebSocket) -> ()`
+
+### WebSocketMessage
+
+- `Data`: `string`
+- `Binary`: `boolean`

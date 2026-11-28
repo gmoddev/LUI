@@ -1,0 +1,13 @@
+{
+  "Name": "Ffi",
+  "Signals": [],
+  "Methods": [
+    {
+      "Name": "Dispatch",
+      "Arguments": [
+        "string"
+      ],
+      "Returns": "string"
+    }
+  ]
+}

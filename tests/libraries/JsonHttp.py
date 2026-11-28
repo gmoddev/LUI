@@ -98,6 +98,14 @@ task.spawn(function()
         assert(not Accepted and not string.find(tostring(Failure), 'SENSITIVE_RESPONSE_CANARY', 1, true))
         assert(not pcall(function() Client:RequestAsync(Origin .. '/limit', {MaxResponseBytes = 16}) end))
         assert(not pcall(function() Client:RequestAsync(Origin .. '/slow', {TimeoutMs = 10}) end))
+        local Token = app:GetService('HttpService'):CreateCancellationToken()
+        Token:Cancel()
+        local TokenOk, TokenFailure = pcall(function()
+            Client:RequestAsync(Origin .. '/must-not-send', {CancellationToken = Token})
+        end)
+        assert(not TokenOk and type(TokenFailure) == 'string' and string.match(TokenFailure, '%[LUI:Http%] Canceled$'))
+        local Unrelated = Client:GetAsync(Origin .. '/echo')
+        assert((Unrelated :: any).Value == 'omitted', 'one token cancelled unrelated work')
         -- Each refusal must happen before network admission.
         local Cycle: any = {}; Cycle.Self = Cycle
         assert(not pcall(function() Client:RequestAsync(Origin .. '/must-not-send', {Value = Cycle}) end))
@@ -201,7 +209,7 @@ def Main():
         Results.append(Execute(Library, Root, Pending, 16, Arguments.checker, Pending=True))
     finally:
         Server.shutdown(); Server.server_close(); Thread.join()
-    assert len(Handler.Requests) == 11 and not any(Item['Path'] == '/must-not-send' for Item in Handler.Requests), Handler.Requests
+    assert len(Handler.Requests) == 12 and not any(Item['Path'] == '/must-not-send' for Item in Handler.Requests), Handler.Requests
     Report = {'Status': 'PASS', 'RuntimeSha256': hashlib.sha256(Arguments.runtime.read_bytes()).hexdigest(), 'Cases': Results, 'Requests': len(Handler.Requests), 'PendingRequestPeerClosedOnDestroy': Handler.PeerClosed, 'PeerCloseKind': Handler.PeerCloseKind}
     Arguments.output.write_text(json.dumps(Report, indent=2) + '\n')
     print('[LUI:JsonHttp] Native HTTP, grant refusal, invalid inputs and retirement passed')

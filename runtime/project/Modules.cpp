@@ -114,7 +114,8 @@ bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::C
     auto Fail = [Runtime](const char* Code) { Runtime->LastError = std::string("[LUI:Modules] ") + Code; return false; };
     try {
         if (!Snapshot || !Options || Options->StructSize != sizeof(*Options) || Options->AbiVersion != LUI_PROJECT_RUN_ABI_VERSION ||
-            (Options->Flags != LUI_PROJECT_RUN_DEVELOPMENT_DIAGNOSTICS && !(Runtime->DiagnosticMode && Options->Flags==0)) || Options->Reserved || Options->MaxImportDepth > 64)
+            (Options->Flags != LUI_PROJECT_RUN_DEVELOPMENT_DIAGNOSTICS && !(Runtime->DiagnosticMode &&
+            (Options->Flags==0 || Options->Flags==LUI_PROJECT_RUN_SANDBOX_NATIVE_SCRIPT))) || Options->Reserved || Options->MaxImportDepth > 64)
             return Fail("InvalidOptions");
         const auto Manifest = nlohmann::json::parse(Snapshot->GetDescriptor()).at("Manifest");
         if(Manifest.at("Diagnostics").at("Mode")=="Restricted") {
@@ -131,6 +132,8 @@ bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::C
         for (const auto& Name : Manifest.at("Capabilities")) Requested |= Capabilities.at(Name.get<std::string>());
         if (Requested & ~Runtime->GrantedCapabilities) return Fail("CapabilityDenied");
         const bool Native=Requested & LUI_CAPABILITY_NATIVE_EXTENSIONS;
+        const bool FreezeNativeScript=Options->Flags==LUI_PROJECT_RUN_SANDBOX_NATIVE_SCRIPT;
+        if(FreezeNativeScript && !Native) return Fail("InvalidOptions");
         if((Native || !Runtime->Extensions.empty()) && (!Runtime->DiagnosticMode || !Runtime->ProjectNativeVerified ||
             Runtime->VerifiedProjectDigest!=Snapshot->GetDigest())) return Fail("UnsupportedFeature");
         const auto& Declared = Snapshot->GetSources().GetDeclarations();
@@ -176,11 +179,16 @@ bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::C
         }
         if (Context->Snapshot->GetRetainedBytes() > 128 * 1024 * 1024 - Context->Records.size() * 2048 - sizeof(ModuleContext))
             return Fail("LimitExceeded");
-        uint64_t Memory = 16 * 1024 * 1024, Interrupts = 10000;
+        // The Ffi facade marshals bounded JSON on its owner VM. Its native
+        // declaration and captured project digest have already been verified.
+        const bool TrustedFfi = Native && Declared.NativeProviders.count("Ffi") != 0;
+        uint64_t Memory = 16 * 1024 * 1024, Interrupts = TrustedFfi ? 1000000 : 10000;
         if (Manifest.contains("Sandbox")) {
             Memory = Manifest.at("Sandbox").at("MaxMemoryBytes").get<uint64_t>();
             Interrupts = Manifest.at("Sandbox").at("MaxInterrupts").get<uint64_t>();
         }
+        if (TrustedFfi && Runtime->MaxInterrupts)
+            Interrupts = std::min(Interrupts, Runtime->MaxInterrupts);
         if (Runtime->Sandboxed) {
             if (Memory < Runtime->VmBytes) return Fail("LimitExceeded");
             Runtime->VmLimitBytes = std::min(Runtime->VmLimitBytes, Memory);
@@ -190,6 +198,12 @@ bool ConfigureProject(LuiRuntime* Runtime, std::shared_ptr<const Lui::Project::C
                 // Quotas bound Luau allocations/execution only. Trusted native
                 // code remains privileged, as in the existing extension ABI.
                 if(Memory<Runtime->VmBytes) return Fail("LimitExceeded");
+                if(FreezeNativeScript) {
+                    luaL_sandbox(Runtime->State);
+                    luaL_sandboxthread(Runtime->State);
+                    if(Memory<Runtime->VmBytes) return Fail("LimitExceeded");
+                    Runtime->Sandboxed=true;
+                }
                 Runtime->VmLimitBytes=Memory; Runtime->MaxInterrupts=Interrupts;
             } else {
                 LuiSandboxLimitsV1 Limits{sizeof(Limits),LUI_EXTENSION_ABI_VERSION,Memory,Interrupts};
@@ -211,4 +225,35 @@ int ProjectEntry(lua_State* State) {
     lua_pushvalue(State, LUA_GLOBALSINDEX); Context.CoreReference = lua_ref(State, -1); lua_pop(State, 1);
     auto& Entry = Context.Records.at(Context.Snapshot->GetSources().GetEntry());
     lua_pushlightuserdata(State, &Entry); Evaluate(State); lua_settop(State, 0); return 0;
+}
+// A compute VM has its own module records, core globals and export references.
+// The only shared object is the immutable captured project.
+int WorkerModuleEntry(lua_State* State) {
+    auto* Record = static_cast<ModuleRecord*>(lua_touserdata(State, 1));
+    auto* Runtime = RuntimeOf(State);
+    auto& Context = *Runtime->Modules;
+    lua_pushvalue(State, LUA_GLOBALSINDEX);
+    Context.CoreReference = lua_ref(State, -1);
+    lua_pop(State, 1);
+    Record->Status = ModuleRecord::State::Evaluating;
+    Context.Stack.push_back(Record);
+    ++Runtime->ModuleDepth;
+    const int Status = lua_cpcall(State, Initialize, Record);
+    --Runtime->ModuleDepth;
+    Context.Stack.pop_back();
+    if (Status != LUA_OK || Record->Status == ModuleRecord::State::Failed) {
+        if (Status == LUA_ERRMEM) Record->Failure = "LimitExceeded";
+        Record->Status = ModuleRecord::State::Failed;
+        return Raise(State, Record->Failure);
+    }
+    lua_getref(State, Record->ExportReference);
+    if (!lua_isfunction(State, -1)) {
+        lua_unref(State, Record->ExportReference);
+        Record->ExportReference = 0;
+        Record->Failure = "InvalidResult";
+        Record->Status = ModuleRecord::State::Failed;
+        return Raise(State, Record->Failure);
+    }
+    Record->Status = ModuleRecord::State::Loaded;
+    return 0;
 }

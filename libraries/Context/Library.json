@@ -1,0 +1,19 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Context",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Context",
+      "Summary": "Read individually granted environment values and portable runtime information.",
+      "Types": [],
+      "Functions": [
+        "Get",
+        "Platform",
+        "Elapsed"
+      ]
+    }
+  ]
+}

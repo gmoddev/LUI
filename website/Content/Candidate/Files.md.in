@@ -1,0 +1,107 @@
+---
+title: Open and save selected documents
+description: Read a document, save a copy and browse one selected folder without native paths.
+---
+
+<span hidden data-pagefind-filter="SDK:preview.3 candidate"></span>
+
+**Unreleased preview.3 candidate.** These APIs are absent from the published
+preview.2 SDK. Keep its released declarations and packages unchanged. There is
+no new public SDK download on this page.
+
+Use the optional `@LuiWorkbench/Files` module for documents the user selects.
+
+Use `File:ByteLength(Callback)` for the current byte length and `File:ReadRange(Position, Count, Callback)` to process a large document incrementally. Position is zero-based. Count is 1–65,536. The callback receives a buffer and an optional failure code. Offsets at or beyond EOF produce an empty buffer. A file may change between reads. The headless `file-summary` SDK example accepts an operator-selected file through `--read-file`.
+For uncommitted writes to a selected save destination, use `File:BeginWriter(Callback)`. Its seekable writer accepts 64 KiB chunks, up to 128 MiB per draft. `Commit` replaces the destination; `Close` discards an unfinished draft. See the packaged `atomic-copy` example.
+
+A headless host can fulfill OpenFolder with an explicitly writable directory using `--write-directory DIRECTORY`. Use `Folder:OpenOutput`, `CreateDirectory`, `RemoveFile`, `RemoveDirectory` (empty only) and `Rename(From, To, Callback)` for direct children. Rename refuses an existing destination. The `--read-directory` grant and desktop folder pickers expose reads and listing. `Files.Copy(Source, Destination, Callback)` streams 64 KiB at a time and publishes the replacement on commit. Closing either file ends the copy. Disposing either picker cancels it. See the candidate's `folder-copy` project.
+
+For sequential work, create a cursor with `Files.Reader(File, Offset?)`. Each successful `Reader:Read(Count, Callback)` advances its position by the delivered length. `Reader:Position()` and `Reader:Seek(Offset)` use zero-based byte offsets. Canceling a pending read preserves its starting position. Close each cursor, then close the file when all readers finish.
+
+Use Preferences for app-private settings or a scratchpad. The two grants serve
+different purposes; a native path string from preview.2's legacy picker does not
+grant filesystem access.
+
+The complete candidate `Examples/selected-files` project includes its vendor
+files, module lock and `Dialogs` capability. Copy the whole folder outside the
+SDK, then run `lui check` and `lui run --mode project` with that candidate SDK.
+The native WinUI3/GTK4.10+ host needs a visible parent window for a picker.
+Ordinary apps need no C++ code, provider registration or native file paths.
+
+```luau
+{{Example}}
+```
+
+Open file returns a read-only File. Save as asks for a destination and returns a
+writable File; Write accepts a buffer and reports completion through its callback.
+This example captures text before opening the picker and keeps newer edits when
+the operation finishes. File Desk adds app-private storage and dirty-close guards.
+Always close a delivered File/Folder, and dispose the Picker when its owner is
+destroyed. Native handles can keep files or folders from being renamed on Windows.
+Close is safe to repeat. A closed wrapper can stay in your recent-files list;
+the module drops its owned handle reference. Native token reclamation still
+depends on ordinary garbage collection and the host's retirement pump.
+
+Open folder returns a read-only Folder. `Folder:List(Complete)` returns records
+with Name, IsDirectory and Size. `Folder:Open(Name, Complete)` opens one regular
+child file for reading. Pass one leaf name, such as `note.txt`; traversal, nested
+paths, folder writes and recursive walking are not part of this profile. Folder
+grants are not saved across application restarts.
+
+Every async method returns an Operation. `Operation:Cancel()` returns true once
+while active and suppresses that module callback; Picker Dispose also cancels
+operations and closes owned resources. A user's picker dismissal calls Complete
+with nil/nil. Other failures arrive as a fixed code: Unavailable for admission
+refusal, or native CapabilityDenied, InvalidArgument, Unsupported, WouldBlock, LimitExceeded, Canceled,
+DeadlineExceeded, Closed or ProviderFailure. Catch expected programming errors
+with pcall; calling Read after Close or Write on a read-only File throws a fixed
+`[LUI:Files]` error. Callback failures are contained and newly delivered resources
+are closed; raw application errors are not printed by the module.
+Cancellation settles the request before native dialog teardown necessarily ends.
+Starting another picker during teardown can report WouldBlock; keep the editor
+text and let the user retry rather than treating it as a lost document.
+
+File buffers are limited to4MiB, with32 provider resources/requests plus existing
+native domain quotas. A folder list has at most256 entries, scanning at most1024;
+oversize directories fail instead of silently returning a partial list. Leaf names
+use at most255 UTF-8 bytes and portable filename rules. IO has a30s deadline and
+pickers120s. These are service ceilings; editors should choose smaller UI limits.
+
+The qualified target is local regular files. Links/reparse paths, hardlinked files,
+whole-drive roots, direct UNC paths and devices are refused. Mounted/mapped network
+filesystems are not detected portably and remain unqualified. Link-backed/cloud-only
+documents, browser/mobile hosts and other file system profiles are unsupported.
+Windows/Linux owner and filesystem tests are distinct from real picker, keyboard,
+clipboard and physical desktop qualification; consult the candidate's evidence.
+
+Save as atomically replaces one selected data entry using a new file. It does
+not preserve the old file's ACLs, ownership, extended attributes or other metadata.
+An observed external change refuses the save; this is not compare-and-swap against
+another process racing the final rename. Cancellation cannot undo a committed
+write, and an error after replacement can leave the new file in place. Keep the
+editor text and report an uncertain save without claiming that nothing changed.
+
+The candidate project checker also catches unknown or readonly keys in direct
+literal `Instance.new('Class', {Properties})` calls. Dynamic tables/classes, aliases,
+value compatibility and legacy single-file checking still require runtime
+validation. The Properties:any declaration is not full initializer type checking.
+
+<details>
+<summary>Files module types for application authors</summary>
+
+{{Declarations}}
+
+</details>
+
+<details>
+<summary>Advanced native provider surface</summary>
+
+FileService uses the established owned-buffer, NativeHandle and NativeRequest
+protocol. These methods are for framework/provider integrations; ordinary app code
+should use the Files module above. A trusted desktop host installs the additive
+LuiFiles.h picker bridge before application entry. Dialogs is checked again after
+project authority is narrowed. Providers never accept an app-supplied native path.
+
+{{Native}}
+
+</details>

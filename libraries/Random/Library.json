@@ -1,0 +1,19 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Random",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Random",
+      "Summary": "Create independent repeatable random sequences for simulations and tests.",
+      "Types": [
+        "Generator"
+      ],
+      "Functions": [
+        "New"
+      ]
+    }
+  ]
+}

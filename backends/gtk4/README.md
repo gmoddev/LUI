@@ -38,6 +38,10 @@ Nine native classes use canonical logical geometry, queued owner-thread signals,
 
 VS Code **LUI: Open Native Preview** supports Linux schema v2 projects. Set `lui.nativeHostPath` to the GTK executable/build directory or installed prefix, or use discovery at `build/gtk4/backends/gtk4/lui-gtk`. The local workspace must be trusted; no manifest grants native-code trust. Native providers require manual owner launch with `--allow-native` (CLI option: `--allow-native true`). Linux schema v1 native launch is explicitly refused.
 
+### CPU frame surfaces
+
+`PlatformService:Supports("FrameSurface")` is available on GTK4. A surface accepts bounded immutable `BGRA8Premultiplied` buffers through `SubmitFrame`. It uses a `GtkPicture` with contain, cover or fill sizing for `Fit`, `Fill` or `Stretch`. Submission prepares a `GdkMemoryTexture`. The runtime checks sequence, epoch and visibility before the picture adopts the texture. GTK retains the CPU backing lease for as long as it can read those pixels. Clearing the surface detaches the prepared and displayed textures. Frame statistics include a conservative staging allowance per prepared backing. [Presentation and ownership](../../docs/WORKBENCH-PRESENTATION.md)
+
 ## Application folders
 
 Build CLI with .NET 10, then install and compose a schema v2 package:

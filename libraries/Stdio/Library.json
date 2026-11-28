@@ -1,0 +1,27 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Stdio",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "HostDeclaration": "Host.json",
+  "Modules": [
+    {
+      "Name": "Stdio",
+      "Summary": "Read and write bounded byte streams on the headless host.",
+      "Types": [
+        "Completion"
+      ],
+      "Functions": [
+        "Read",
+        "ReadLine",
+        "Write",
+        "WriteError",
+        "Cancel",
+        "Arguments",
+        "IsTerminal",
+        "SetExitStatus"
+      ]
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 namespace Lui.WinUI;
 internal sealed partial class WinUIBackend {
     private static partial class Native {
@@ -28,6 +29,7 @@ internal sealed partial class WinUIBackend {
         [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FrameGpuGateForTestV1(IntPtr Upload,int Enable);
         [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FrameSubmitCopyV1(IntPtr Upload);
         [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FramePollV1(IntPtr Upload);
+        [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FrameNotifyFenceV1(IntPtr Upload,SafeWaitHandle Event);
         [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FrameReleaseV1(IntPtr Upload);
         [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FrameGpuStatsV1(ref FrameGpuStats Stats);
         [DllImport("LuiWinUIFrames.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern int LuiWinUI_FrameSurfaceCreateV1(IntPtr Upload);

@@ -1,0 +1,22 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Encoding",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [],
+  "Modules": [
+    {
+      "Name": "Encoding",
+      "Summary": "Convert binary strings to and from Base64, hexadecimal and URL components.",
+      "Types": [],
+      "Functions": [
+        "Base64Encode",
+        "Base64Decode",
+        "HexEncode",
+        "HexDecode",
+        "UrlEncode",
+        "UrlDecode"
+      ]
+    }
+  ]
+}

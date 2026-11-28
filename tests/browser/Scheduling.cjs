@@ -7,6 +7,21 @@ const Playwright = require(process.env.LUI_PLAYWRIGHT_MODULE || 'playwright');
 const Build = Path.resolve(process.argv[2]);
 const Files = {};
 for (const Name of ['lui.json', 'Src/Main.luau', 'Src/Counter.luau']) Files[Name] = Fs.readFileSync(Path.join(__dirname, 'fixture', Name), 'utf8');
+if (process.argv.includes('--portable-libraries')) {
+    const Root = Path.resolve(__dirname, '../..');
+    const Manifest = JSON.parse(Files['lui.json']);
+    const Tests = [];
+    for (const Name of ['Spec', 'Random']) {
+        const File = Name + '.luau';
+        Manifest.Modules.Files.push(File);
+        Files['Src/' + File] = Fs.readFileSync(Path.join(Root, 'libraries', Name, File), 'utf8');
+        const Body = Fs.readFileSync(Path.join(Root, 'tests/libraries', File), 'utf8')
+            .replace('"@' + Name + '/' + Name + '"', '"./' + Name + '"');
+        Tests.push('local function Test' + Name + '()\n' + Body + '\nend\nTest' + Name + '()');
+    }
+    Files['lui.json'] = JSON.stringify(Manifest);
+    Files['Src/Main.luau'] = Tests.join('\n') + '\n' + Files['Src/Main.luau'];
+}
 const Types = { '.html': 'text/html', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css' };
 const Server = Http.createServer((Request, Response) => {
     const File = Path.resolve(Build, '.' + new URL(Request.url, 'http://localhost').pathname);

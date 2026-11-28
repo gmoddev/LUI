@@ -12,11 +12,13 @@ namespace { int Unsupported(lua_State* State) { luaL_error(State, "[LUI:Mobile] 
 void RegisterNetworkTypes(lua_State*) {}
 void PushNetworkService(lua_State* State) { Unsupported(State); }
 void PushHttpService(lua_State* State) { Unsupported(State); }
+void PushWebSocketService(lua_State* State) { Unsupported(State); }
 void PushHttpServerService(lua_State* State) { Unsupported(State); }
 bool NetworkTaskReady(LuiRuntime*, int) { return true; }
 bool CompleteNetworkTask(LuiRuntime*, int, lua_State*, int) { return false; }
 int DrainNetworkCompletions(LuiRuntime*) { return 0; }
 void CloseNetwork(LuiRuntime*) {}
+bool NetworkHasPendingWork(LuiRuntime*) { return false; }
 int ConfigureNetworkTls(LuiRuntime*, const LuiTlsOptionsV1*) { return 0; }
 bool HasExtensionService(const LuiRuntime*, const std::string&) { return false; }
 int PushExtensionService(lua_State* State, LuiRuntime*, const std::string&) { return Unsupported(State); }

@@ -37,6 +37,13 @@ LUI_API uint32_t LUI_CALL Lui_AcknowledgeNativeWakeV1(LuiNativeDomainV2* Domain,
    busy; -1 owner-observed terminal/failed runtime. Hosts defer nested wakes to
    fallback and skip terminal runtimes rather than starving healthy siblings. */
 LUI_API int LUI_CALL Lui_IsOwnerPumpReadyV1(LuiRuntime* Runtime);
+/* Optional WinUI presentation helpers. Use only on the authoritative owner.
+   Returns microseconds until the next eligible delayed legacy task, or -1
+   without a near deadline and visible frame work. The owner still uses Lui_Pump.
+   Settlement publishes or retires only completed frames. A return of 0
+   asks the host to defer to a normal pump with canonical layout processing. */
+LUI_API int LUI_CALL Lui_GetFrameTaskDelayV1(LuiRuntime* Runtime);
+LUI_API int LUI_CALL Lui_SettleFrameUploadsV1(LuiRuntime* Runtime);
 #ifdef __cplusplus
 }
 #endif

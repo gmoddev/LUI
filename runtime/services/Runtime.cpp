@@ -85,6 +85,8 @@ int Call(lua_State* State) {
     auto* Binding = static_cast<NativeServiceBinding*>(lua_touserdata(State, lua_upvalueindex(2)));
     const auto Method = static_cast<uint32_t>(lua_tointeger(State, lua_upvalueindex(3)));
     auto* Session = Binding->Host.Session;
+    if (Lui::Native::Name(Session)=="FileService" && !(Runtime->GrantedCapabilities&LUI_CAPABILITY_DIALOGS))
+        return Raise(State,LUI_NATIVE_CAPABILITY_DENIED);
     if (Runtime->ShuttingDown || Runtime->PendingAsyncReferences.size() + Runtime->PendingNativeRequests >= 128)
         return Raise(State, LUI_NATIVE_LIMIT_EXCEEDED);
     if (lua_gettop(State) < 4 || lua_gettop(State) > 5 || !lua_isbuffer(State, 2))
@@ -179,6 +181,12 @@ int PushNativeService(lua_State* State, LuiRuntime* Runtime, const std::string& 
     }
     return 0;
 }
+bool NativeHasPendingWork(LuiRuntime* Runtime) {
+    std::array<LuiNativeSessionV2*, Lui::Native::SessionLimit> Sessions{};
+    if (Runtime->NativeServices.size() > Sessions.size()) return true;
+    for (size_t Index = 0; Index < Runtime->NativeServices.size(); ++Index) Sessions[Index] = Runtime->NativeServices[Index]->Host.Session;
+    return Lui::Native::HasPending(Runtime->NativeDomain, Sessions.data(), static_cast<uint32_t>(Runtime->NativeServices.size()));
+}
 int DrainNativeServices(LuiRuntime* Runtime, size_t Maximum, std::chrono::steady_clock::time_point Deadline) {
     if (!Runtime->NativeDomain) return 0;
     Runtime->UiCompletionRunning = true;
@@ -187,11 +195,12 @@ int DrainNativeServices(LuiRuntime* Runtime, size_t Maximum, std::chrono::steady
     std::array<LuiNativeSessionV2*,Lui::Native::SessionLimit> Sessions{};
     if (Runtime->NativeServices.size() > Sessions.size()) return 0;
     for (size_t Index = 0; Index < Runtime->NativeServices.size(); ++Index) Sessions[Index] = Runtime->NativeServices[Index]->Host.Session;
+    const auto SessionCount=static_cast<uint32_t>(Runtime->NativeServices.size());
     int Count = 0;
     while (Count < 64 && static_cast<size_t>(Count) < Maximum && std::chrono::steady_clock::now() < Deadline) {
         LuiNativeDeliveryV2 Value{sizeof(Value), 2};
         uint32_t Index = 0;
-        if (Lui::Native::Take(Runtime->NativeDomain,Sessions.data(),static_cast<uint32_t>(Runtime->NativeServices.size()),&Index,&Value)) break;
+        if (Lui::Native::Take(Runtime->NativeDomain,Sessions.data(),SessionCount,&Index,&Value)) break;
         auto* Selected = Runtime->NativeServices[Index].get();
         auto Found = Selected->Waiters.find(Value.Request.Value);
         if (Found != Selected->Waiters.end()) {
@@ -214,7 +223,7 @@ int DrainNativeServices(LuiRuntime* Runtime, size_t Maximum, std::chrono::steady
         if (Value.Handle.Value) Selected->Host.ReleaseHandle(Selected->Host.Session, Value.Handle);
         ++Count;
     }
-    if(Count==64)Lui::Native::WakePending(Runtime->NativeDomain,Sessions.data(),static_cast<uint32_t>(Runtime->NativeServices.size()));
+    if(Count==64)Lui::Native::WakePending(Runtime->NativeDomain,Sessions.data(),SessionCount);
     return Count;
 }
 void CloseNativeServices(LuiRuntime* Runtime) {
@@ -310,19 +319,32 @@ uint32_t LoadNativeImageV2(LuiRuntime* Runtime, void* Image, std::shared_ptr<voi
         Lui_RetireNativeSessionV2(Host.Session); Runtime->NativeServices.pop_back();
         Lui::Native::Pump(Runtime->NativeDomain); return LUI_NATIVE_PROVIDER_FAILURE;
     }
+    if (Expected && std::strcmp(Service.Name,"SQLite")==0) {
+        auto& Binding=*Runtime->NativeServices.back();
+        Binding.GrantDatabase=reinterpret_cast<decltype(Binding.GrantDatabase)>(Symbol("LuiSQLiteGrantV1"));
+        Binding.DatabaseContext=Context;
+    }
     return 0;
 }
 
+extern "C" LUI_API uint32_t LUI_CALL Lui_GrantSQLiteDirectoryV1(LuiRuntime* Runtime,const char* Directory) {
+    if (!CheckOwner(Runtime) || !Directory || !*Directory || Runtime->ApplicationStarted || Runtime->ShuttingDown ||
+        Runtime->VmDepth || Runtime->BackendDepth || !Runtime->ProjectNativeVerified) return LUI_NATIVE_INVALID_ARGUMENT;
+    for (const auto& Binding : Runtime->NativeServices)
+        if (Binding->GrantDatabase) return Binding->GrantDatabase(Binding->DatabaseContext,Directory);
+    return LUI_NATIVE_CAPABILITY_DENIED;
+}
+
 extern "C" LUI_API uint32_t LUI_CALL Lui_SetNativeDomainV2(LuiRuntime* Runtime, LuiNativeDomainV2* Domain) {
-    if (!CanRegister(Runtime) || !Domain || !Runtime->NativeServices.empty()) return LUI_NATIVE_INVALID_ARGUMENT;
+    if (!CanRegister(Runtime) || !Domain || !Runtime->NativeServices.empty() || Runtime->Network) return LUI_NATIVE_INVALID_ARGUMENT;
     auto Value = Lui::Native::GetDomain(Domain);
     // Pump validates the owner without exposing the domain implementation.
     if (Lui_PumpNativeDomainV2(Domain)) return LUI_NATIVE_INVALID_ARGUMENT;
     Runtime->NativeDomain = std::move(Value); return 0;
 }
 static uint32_t RegisterService(LuiRuntime* Runtime, const LuiNativeServiceV2* Service,
-    const LuiNativeProviderV2* Provider, void* Context, LuiNativeHostV2* Host, bool Platform) {
-    if (!CanRegister(Runtime) || !Service || Service->StructSize != sizeof(*Service) || Service->AbiVersion != 2 || !Service->Name || !Host ||
+    const LuiNativeProviderV2* Provider, void* Context, LuiNativeHostV2* Host, bool Platform, bool Worker=false) {
+    if ((!Worker && !CanRegister(Runtime)) || !Service || Service->StructSize != sizeof(*Service) || Service->AbiVersion != 2 || !Service->Name || !Host ||
         Host->StructSize != sizeof(*Host) || Host->AbiVersion != 2) return LUI_NATIVE_INVALID_ARGUMENT;
     size_t Length = 0; while (Length < 65 && Service->Name[Length]) ++Length;
     if (!Length || Length == 65) return LUI_NATIVE_INVALID_ARGUMENT;
@@ -347,6 +369,12 @@ static uint32_t RegisterService(LuiRuntime* Runtime, const LuiNativeServiceV2* S
 uint32_t RegisterPlatformNativeService(LuiRuntime* Runtime, const LuiNativeServiceV2* Service,
     const LuiNativeProviderV2* Provider, void* Context, LuiNativeHostV2* Host) {
     return RegisterService(Runtime, Service, Provider, Context, Host, true);
+}
+uint32_t RegisterWorkerService(LuiRuntime* Runtime,const LuiNativeServiceV2* Service,
+    const LuiNativeProviderV2* Provider,void* Context,LuiNativeHostV2* Host) {
+    if (!CheckOwner(Runtime) || Runtime->ShuttingDown || !Runtime->Modules || !Runtime->VmDepth ||
+        !Service || std::strcmp(Service->Name,"WorkerService")) return LUI_NATIVE_INVALID_ARGUMENT;
+    return RegisterService(Runtime,Service,Provider,Context,Host,true,true);
 }
 extern "C" LUI_API uint32_t LUI_CALL Lui_RegisterNativeServiceV2(LuiRuntime* Runtime, const LuiNativeServiceV2* Service,
     const LuiNativeProviderV2* Provider, void* Context, LuiNativeHostV2* Host) {

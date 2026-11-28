@@ -1,0 +1,130 @@
+---
+title: HTTP cancellation and WebSockets
+description: Scope a request, exchange messages and host an echo route using the existing scheduler.
+---
+
+<span hidden data-pagefind-filter="SDK:preview.3 candidate"></span>
+
+**Unreleased preview.3 candidate.** These APIs are absent from the published
+preview.2 download. Its [HTTP reference](/LUI/docs/sdk-0.1.0-preview.2/api/services/httpservice/)
+keeps the released contract. Candidate SDK packaging and native desktop journeys
+have their own qualification gates; this page does not publish a new download.
+
+Use `HttpService` for a request/response. Use WebSocket when both sides need to
+send messages on one connection. Both use `task.spawn` and the existing LUI
+scheduler; application code does not create threads or pump a message loop.
+
+## Cancel one action
+
+Create a token with `HttpService:CreateCancellationToken()`, pass it in request
+options, and retain it with the action's Cancel button or owner. Cancel is
+idempotent. A cancelled token stays cancelled; create another for another action.
+
+```luau
+local Http = app:GetService('HttpService')
+local Token = Http:CreateCancellationToken()
+task.spawn(function()
+    local Ok, Response = pcall(function()
+        return Http:RequestAsync({Url = 'https://example.com/', CancellationToken = Token})
+    end)
+    if Ok then print('[LUI:Example] HTTP status', Response.StatusCode)
+    else print('[LUI:Example] Request failed or was cancelled') end
+end)
+-- From the action's Cancel callback: Token:Cancel()
+```
+
+This needs `network.client` and host permission for the destination. HTTPS validates
+certificates; do not disable verification to make an example connect. The optional
+JsonClient's `RequestAsync` accepts the same token. Cancellation affects only
+requests or WebSocket work that intentionally shares the token. The existing
+`CancelAll()` still cancels earlier HTTP requests runtime-wide; later requests
+survive. Foreign tokens are refused and at most128 live tokens may be retained.
+
+Expected network failures are catchable. HTTP error statuses are received
+responses: inspect `Response.Success` and `StatusCode`. A failed connection,
+timeout or cancellation throws instead. Do not treat all failures as invalid JSON
+or print a private response body into framework diagnostics.
+
+## Send and receive a real message
+
+Copy `Examples/websocket-echo` from the prepared candidate SDK to a sibling project.
+It has no optional dependencies. Use `lui check`, then:
+
+```powershell
+lui run --mode headless --grant network.client,network.server --http-origin http://127.0.0.1:18083 --diagnostics development
+```
+
+Port18083 must be free. This complete entry file runs both sides, verifies an actual
+echo and closes the server. It does not report success from connection alone.
+
+```luau
+{{Example}}
+```
+
+`ConnectAsync`, `SendAsync` and `ReceiveAsync` yield; call them in scheduled tasks
+or a hosted route handler, which is already scheduled. `network.client` permits
+outbound connections; `network.server` permits hosted routes. Existing address and
+port restrictions still apply. A WebSocket route shares its HTTP listener and is
+registered before Start. Native upgrade validation completes before its handler
+owns the socket. An optional Authorize callback must return true. It runs as a
+scheduled hosted task and may yield on supported scheduler operations within the
+shared request deadline. Failure refuses the upgrade without exposing callback
+error text.
+
+Received messages are readonly `{Data: string, Binary: boolean}` values. Strings
+send text by default; buffers send binary. An optional Binary boolean overrides
+that choice. Text must be valid UTF-8. Data received before your first receive
+waits in a bounded inbox, in order. Only one receive can be outstanding per socket.
+
+`Close()` starts a graceful handshake; accepted sends may finish within its
+deadline. Continue receiving to observe an orderly close as nil. `Cancel()` aborts
+immediately and is useful during owner teardown. Both are idempotent. State is
+Connecting/Open/Closing/Closed. CloseCode and CloseReason describe the peer;
+messages and reasons are untrusted application data.
+
+## Defaults and optional controls
+
+| Control | Default | Maximum |
+| --- | --- | --- |
+| ConnectTimeoutMs | 10,000ms | 60,000ms |
+| CloseTimeoutMs | 5,000ms | 10,000ms |
+| MaxMessageBytes / MaxFrameBytes | 1MiB each | Host ceilings, at most1MiB each |
+| MaxQueuedBytes | 4MiB per direction | Host ceiling, at most4MiB |
+| MaxQueuedMessages | 16 per direction | Host ceiling, at most16 |
+| IdleTimeoutMs / PingIntervalMs | 0, disabled | 600,000ms |
+| PongTimeoutMs | 10,000ms | 60,000ms |
+
+Smaller options narrow the host's ceilings. Protocols selects offered subprotocols;
+Headers and Origin supply application handshake data. CancellationToken scopes
+connection work. Hosted options additionally accept Origins and Authorize. An
+Origin-bearing request is rejected unless its Origin is explicitly listed;
+originless native clients remain allowed. Origin policy is not authentication.
+Use Authorize for application authorization.
+There are eight retained socket handles per runtime, including closed handles
+until released by the VM. Drop obsolete references; closing does not force GC.
+Payload reservations are bounded separately from total OS/TLS or VM memory.
+
+Saturated queues reject work; messages are not silently replaced. An inbox flood
+closes the connection. A successful send means the complete frame was written,
+not that a peer processed it. Outbound fragmentation, compression, automatic
+reconnect, HTTP/2/3 upgrades and browser transports are outside this profile.
+The app chooses retry, credentials, JSON schema and reconnection policy.
+
+## Availability and deeper host controls
+
+Windows/Linux native protocol, client/server, denial, cancellation, quotas and
+headless journeys have integration tests. Desktop UI, physical input and a
+packaged SDK recipient are distinct checks. Unsupported browser hosts refuse
+these native services; raw backend objects never enter Luau.
+
+Ordinary app authors use the services and declared grants above. Native embedders
+may additionally narrow exact origins, resolved public addresses, concurrency and
+reservation budgets through versioned `LuiHttp.h`/`LuiWebSocket.h` APIs. Those are
+host/framework integration controls, not extra setup every Luau application needs.
+
+<details>
+<summary>Candidate API signatures and option records</summary>
+
+{{Declarations}}
+
+</details>

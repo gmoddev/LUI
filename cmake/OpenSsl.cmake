@@ -14,9 +14,11 @@ if(WIN32)
     file(MAKE_DIRECTORY "${LuiSslRoot}/install/include")
     # OpenSSL's static C libraries use /Zl and do not bind a CRT. Consumers use
     # their own configured CRT. This cache is shared by Debug/Release consumers.
-    file(GENERATE OUTPUT "${LuiSslRoot}/Configure.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\n\"${LuiPerl}\" Configure VC-WIN64A no-shared no-module no-asm no-tests no-docs no-comp no-legacy --prefix=\"${LuiSslRoot}/install\" --libdir=lib\r\nexit /b %errorlevel%\r\n")
+    # Keep the logical prefix and source diagnostics independent of the build
+    # machine. Override only the install destination when staging development files.
+    file(GENERATE OUTPUT "${LuiSslRoot}/Configure.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\n\"${LuiPerl}\" Configure VC-WIN64A no-shared no-module no-asm no-tests no-docs no-comp no-legacy no-filenames --prefix=\"C:/Program Files/Common Files/SSL\" --libdir=lib\r\nexit /b %errorlevel%\r\n")
     file(GENERATE OUTPUT "${LuiSslRoot}/Build.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\nnmake /nologo build_libs\r\nexit /b %errorlevel%\r\n")
-    file(GENERATE OUTPUT "${LuiSslRoot}/Install.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\nnmake /nologo install_dev\r\nexit /b %errorlevel%\r\n")
+    file(GENERATE OUTPUT "${LuiSslRoot}/Install.cmd" CONTENT "@echo off\r\ncall \"${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat\" >nul\r\nif errorlevel 1 exit /b 1\r\nnmake /nologo install_dev \"INSTALLTOP=${LuiSslRoot}/install\"\r\nexit /b %errorlevel%\r\n")
     ExternalProject_Add(LuiOpenSslBuild
         URL https://github.com/openssl/openssl/releases/download/openssl-${LuiOpenSslVersion}/openssl-${LuiOpenSslVersion}.tar.gz
         URL_HASH SHA256=${LuiOpenSslSha256}

@@ -1,0 +1,26 @@
+{
+  "SchemaVersion": 1,
+  "Name": "Process",
+  "TargetSdk": "0.1.0-preview.3",
+  "Status": "Development",
+  "Requires": [
+    "Json"
+  ],
+  "Modules": [
+    {
+      "Name": "Process",
+      "Summary": "Run the operator-selected native tool with explicit arguments, input and environment.",
+      "Types": [
+        "Options",
+        "Result",
+        "Request",
+        "Session"
+      ],
+      "Functions": [
+        "Run",
+        "Open",
+        "Pipeline"
+      ]
+    }
+  ]
+}

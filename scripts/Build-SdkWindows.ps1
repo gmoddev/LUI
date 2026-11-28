@@ -28,7 +28,7 @@ foreach ($Part in @(
 )) {
     # Keep SDK resources separate from ordinary builds. A reused framework-dependent
     # WinUI PRI can omit the self-contained theme resources despite a successful publish.
-    & dotnet publish (Join-Path $Root $Part.Project) --configuration Release --runtime win-x64 --self-contained true --artifacts-path $ManagedBuild `
+    & dotnet publish (Join-Path $Root $Part.Project) --configuration Release --runtime win-x64 --self-contained true --artifacts-path $ManagedBuild -m:2 `
         -p:Platform=x64 -p:LuiProductionPackage=true -p:WindowsAppSDKSelfContained=true `
         -p:PublishTrimmed=false -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=None -p:DebugSymbols=false `
         "-p:LuiNativeDll=$(Join-Path $Native 'LuiRuntime.dll')" --output (Join-Path $Output $Part.Directory)
@@ -36,6 +36,9 @@ foreach ($Part in @(
 }
 New-Item -ItemType Directory -Path (Join-Path $Output 'Tools') | Out-Null
 Copy-Item -LiteralPath (Join-Path $Native 'LuiTypeCheck.exe'),(Join-Path $Native 'LuiProjectTool.exe') -Destination (Join-Path $Output 'Tools')
+if ($SdkVersion -eq '0.1.0-preview.3') {
+    Copy-Item -LiteralPath (Join-Path $Native 'LuiHeadlessHost.exe') -Destination (Join-Path $Output 'Native')
+}
 Copy-Item -LiteralPath (Join-Path $Root 'types/LUI.d.luau') -Destination (Join-Path $Output 'Tools/LUI.d.luau')
 & python (Join-Path $Root 'scripts/Package-Sdk.py') --root $Root --sdk $Output --version $SdkVersion --native-build (Split-Path $Native) --cpp-runtime $CppRuntime
 if ($LASTEXITCODE -ne 0) { throw '[LUI:SDK] SDK inventory/extension packaging failed' }
